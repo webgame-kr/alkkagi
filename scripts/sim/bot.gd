@@ -7,6 +7,7 @@ const PartsData = preload("res://scripts/sim/parts_data.gd")
 const POWERS := [0.45, 0.7, 0.95]
 const ANGLES_DEG := [-5.0, 0.0, 5.0]
 const MAX_TARGETS := 4
+const MAX_CANDIDATES := 40    # 웹(느린 환경)에서도 1초 안팎에 끝나도록 후보 수를 제한한다
 
 var match_ref
 var pid := -1
@@ -38,12 +39,17 @@ func begin(m, player_id: int, seed_value: int) -> void:
 			var base: Vector2 = (t.pos - s.pos).normalized()
 			for ang in ANGLES_DEG:
 				for pw in POWERS:
-					candidates.append({"stone": s.id, "dir": base.rotated(deg_to_rad(ang)), "power": pw})
+					# 유망도: 가까운 상대일수록, 그 상대가 판 끝에 가까울수록, 정면(0도)일수록 먼저 본다
+					var h: float = t.pos.distance_to(s.pos) + w.edge_distance(t.pos) * 1.5 + absf(ang) * 6.0 + absf(pw - 0.7) * 40.0
+					candidates.append({"stone": s.id, "dir": base.rotated(deg_to_rad(ang)), "power": pw, "h": h})
 		# 자석팔은 상대 옆을 스치는 샷이 핵심이라 옆으로 비껴 쏘는 후보를 더한다.
 		if s.parts["aux"] == "magnet" and not targets.is_empty():
 			var base2: Vector2 = (targets[0].pos - s.pos).normalized()
 			for ang2 in [-35.0, 35.0]:
-				candidates.append({"stone": s.id, "dir": base2.rotated(deg_to_rad(ang2)), "power": 0.6})
+				candidates.append({"stone": s.id, "dir": base2.rotated(deg_to_rad(ang2)), "power": 0.6, "h": 0.0})
+	candidates.sort_custom(func(a, b): return a["h"] < b["h"])
+	if candidates.size() > MAX_CANDIDATES:
+		candidates = candidates.slice(0, MAX_CANDIDATES)
 	if candidates.is_empty() and not mine.is_empty():
 		candidates.append({"stone": mine[0].id, "dir": (-mine[0].pos).normalized(), "power": 0.2})
 
@@ -73,7 +79,7 @@ func evaluate(c: Dictionary) -> float:
 	for p in m.players:
 		before[p.id] = w.alive_stones_of(p.id).size()
 	w.launch(c["stone"], c["dir"], c["power"], {"charged": true})
-	w.run_until_settled(8.0)
+	w.run_until_settled(5.0)
 	w.end_shot()
 	var score := 0.0
 	for p in m.players:
@@ -151,3 +157,10 @@ static func choose_draft(m, player_id: int, rand: RandomNumberGenerator) -> Dict
 				best_val = val
 				best_choice = {"part": part, "stone": s.id, "side": 1 if rand.randf() < 0.5 else -1}
 	return best_choice
+
+
+## 시간이 다 됐을 때: 지금까지 본 것 중 가장 좋은 후보로 끝낸다.
+func finish_now() -> void:
+	if best.is_empty() and index < candidates.size():
+		think_step(1)
+	index = candidates.size()

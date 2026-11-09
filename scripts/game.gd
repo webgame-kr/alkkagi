@@ -80,6 +80,7 @@ var accum := 0.0
 var bot = null
 var bot_wait := 0.0
 var bot_us := 0
+var bot_started := 0
 var draft_wait := 0.0
 var fx: Array = []
 var banner := ""
@@ -438,6 +439,7 @@ func _start_match(seed_value := -1) -> void:
 	waiting_req = false
 	fx.clear()
 	vis.clear()
+	last_shot.clear()
 	round_picks.clear()
 	toast_picks.clear()
 	confetti.clear()
@@ -621,6 +623,7 @@ func _update_cpu(delta: float, pid: int) -> void:
 			break
 		bot = Bot.new()
 		bot.begin(m, pid, randi())
+		bot_started = Time.get_ticks_msec()
 		return
 	# 프레임당 약 6ms 만큼만 생각한다 (화면이 멈추지 않게).
 	var t0 := Time.get_ticks_usec()
@@ -628,6 +631,10 @@ func _update_cpu(delta: float, pid: int) -> void:
 	while not finished and Time.get_ticks_usec() - t0 < 3000:
 		finished = bot.think_step(1)
 	bot_us += Time.get_ticks_usec() - t0
+	# 느린 기기(웹)에서도 CPU가 오래 멈춰 보이지 않게, 1초가 지나면 지금까지 본 최선으로 쏜다
+	if not finished and Time.get_ticks_msec() - bot_started > 1000:
+		bot.finish_now()
+		finished = true
 	if finished:
 		var r: Dictionary = bot.result()
 		bot_us = 0
@@ -670,6 +677,16 @@ func _on_phase_changed() -> void:
 			draft_part = ""
 			draft_stone = -1
 			draft_wait = _sp("think") + 0.4
+			if online == "":
+				# 혼자 할 때도 동시에 고르는 것처럼: 사람이 먼저 고르고, CPU는 바로 이어서 고른다 (공개는 바퀴 끝에 함께)
+				draft_wait = 0.08
+				if m.draft_queue.size() == m.order.size():
+					var people: Array = []
+					var cpus: Array = []
+					for q in m.draft_queue:
+						(cpus if m.players[q].cpu else people).append(q)
+					m.draft_queue = people + cpus
+					pid = m.current_drafter()
 			if m.draft_queue.size() == m.order.size():
 				_banner("%d바퀴" % m.round_no, ACCENT, "부품을 하나 골라요")
 				if m.round_no > 1:
@@ -758,6 +775,7 @@ func _consume_events() -> void:
 			"launch":
 				var ls = m.world.get_stone(m.world.shot.stone_id) if m.world.shot != null else null
 				if ls != null:
+					last_shot[ls.owner] = ls.id
 					var vv: Dictionary = vis.get(ls.id, {})
 					vv["pop_t"] = time
 					vv["sq_dir"] = m.world.shot.dir
@@ -1115,10 +1133,10 @@ func _draw_inner() -> void:
 	_draw_draft_marks()
 	_perf_sec["fx"] = _perf_sec.get("fx", 0.0) + float(Time.get_ticks_usec() - _ts)
 	_ts = Time.get_ticks_usec()
-	_draw_hud(vs)
-	_perf_sec["hud"] = _perf_sec.get("hud", 0.0) + float(Time.get_ticks_usec() - _ts)
 	if banner_t > 0.0:
 		_draw_banner(vs)
+	_draw_hud(vs)
+	_perf_sec["hud"] = _perf_sec.get("hud", 0.0) + float(Time.get_ticks_usec() - _ts)
 	_draw_confetti()
 
 
@@ -1488,6 +1506,12 @@ func _draw_devices() -> void:
 				var a2 := p
 				var b2 := w2s(d.pos + d.dir * d.length)
 				var hw := PartsData.num("roller", "width") * 0.5 * k
+				# 펠트 안으로 잘라서 그린다 (레일 밖으로 나가지 않게)
+				var cl := Arena.clip_segment(a2, b2, view_center + shake_off, m.world.size * view_scale - hw, m.world.shape != "circle")
+				if cl.is_empty():
+					continue
+				a2 = cl[0]
+				b2 = cl[1]
 				var nn: Vector2 = d.dir.orthogonal() * hw
 				draw_colored_polygon(PackedVector2Array([a2 + nn, b2 + nn, b2 - nn, a2 - nn]), Color("8FD0C8", 0.22))
 				draw_line(a2 + nn, b2 + nn, Color("8FD0C8", 0.55), 1.5, true)
@@ -1501,6 +1525,11 @@ func _draw_devices() -> void:
 				var a3 := p
 				var b3 := w2s(d.pos + d.dir * d.length)
 				var n3: Vector2 = d.dir.orthogonal() * 5.0 * k
+				var cl3 := Arena.clip_segment(a3, b3, view_center + shake_off, m.world.size * view_scale - 6.0 * k, m.world.shape != "circle")
+				if cl3.is_empty():
+					continue
+				a3 = cl3[0]
+				b3 = cl3[1]
 				draw_line(a3 + n3, b3 + n3, Color(0, 0, 0, 0.45), 3.0, true)
 				draw_line(a3 - n3, b3 - n3, Color(0, 0, 0, 0.45), 3.0, true)
 				var dd: Vector2 = (b3 - a3).normalized()
@@ -1832,14 +1861,24 @@ func _draw_draft_marks() -> void:
 		var p := w2s(s.pos)
 		var pulse := 0.5 + 0.5 * sin(time * 6.0)
 		draw_arc(p, (World.STONE_R + 8 + pulse * 4) * view_scale, 0, TAU, 40, Color(BRASS, 0.95), 3.0, true)
+		if hover_stone != s.id:
+			continue
+		# 손을 올린 퍽 하나에만 말풍선
 		var cur: String = s.parts[slot]
-		var t := "%s: %s" % [PartsData.SLOT_LABEL[slot], "비어 있음" if cur == "" else PartsData.part_name(cur) + " → 교체"]
-		_small_label(p + Vector2(0, (World.STONE_R + 26) * view_scale + 8), t, TEXT)
+		var lines: Array = ["%s: %s" % [PartsData.SLOT_LABEL[slot], "비어 있음" if cur == "" else PartsData.part_name(cur) + " → 교체"]]
 		var sid_set := PartsData.set_of(draft_part)
 		if sid_set != "":
 			var tmp: Dictionary = s.parts.duplicate()
 			tmp[slot] = draft_part
-			_small_label(p + Vector2(0, (World.STONE_R + 26) * view_scale + 24), PartsData.set_label(tmp, sid_set), POWER)
+			lines.append(PartsData.set_label(tmp, sid_set))
+		var bw := 0.0
+		for ln in lines:
+			bw = maxf(bw, font_semi.get_string_size(ln, HORIZONTAL_ALIGNMENT_LEFT, -1, 13).x)
+		var br := Rect2(p + Vector2(-bw * 0.5 - 10, -(World.STONE_R + 22) * view_scale - 20 * lines.size() - 10), Vector2(bw + 20, 20 * lines.size() + 10))
+		_round_rect(br, Color(SOLID, 0.95), 8, ACCENT)
+		draw_colored_polygon(PackedVector2Array([Vector2(p.x - 6, br.end.y), Vector2(p.x + 6, br.end.y), Vector2(p.x, br.end.y + 7)]), ACCENT)
+		for k in lines.size():
+			draw_string(font_semi, Vector2(br.position.x, br.position.y + 20 + k * 20), lines[k], HORIZONTAL_ALIGNMENT_CENTER, br.size.x, 13, TEXT if k == 0 else POWER)
 		if draft_stone == s.id:
 			draw_arc(p, (World.STONE_R + 16) * view_scale, 0, TAU, 40, POWER, 3.0, true)
 
@@ -1904,7 +1943,16 @@ func _focus_stone():
 			return h
 	if not cpu_aim.is_empty():
 		return m.world.get_stone(cpu_aim["stone"])
+	# 움직이는 중이면 쏜 퍽, 아니면 그 사람이 마지막으로 쏜 퍽
+	if m.phase == "moving" and m.world.shot != null:
+		var sh = m.world.get_stone(m.world.shot.stone_id)
+		if sh != null and sh.alive:
+			return sh
 	var pid := m.current_player() if m.phase != "draft" else m.current_drafter()
+	if pid >= 0 and last_shot.has(pid):
+		var ls = m.world.get_stone(last_shot[pid])
+		if ls != null and ls.alive:
+			return ls
 	if pid >= 0:
 		var mine: Array = m.world.alive_stones_of(pid)
 		if not mine.is_empty():
@@ -2159,6 +2207,13 @@ func _draw_aimed(r: Rect2) -> void:
 	if s == null:
 		return
 	_hud_icon(Vector2(r.end.x - 28, r.position.y + 22), 22, m.players[s.owner].color, s.owner)
+	# 지금 보여주는 퍽을 판 위에 표시: 작은 점선 고리
+	if drag_stone < 0 and m.phase != "draft":
+		var fp := w2s(s.pos)
+		var fr := (World.STONE_R + 7) * view_scale
+		for k2 in 12:
+			var a0 := TAU * k2 / 12.0 + time * 0.8
+			draw_arc(fp, fr, a0, a0 + TAU / 24.0, 3, Color(ACCENT, 0.9), 2.0, true)
 	var y := r.position.y + 40 + step * 0.5
 	if portrait:
 		step = minf(34.0, (r.size.y - 50.0 - (26.0 if set_txt != "" else 0.0)) / 3.0)
@@ -2414,7 +2469,7 @@ func _show_setup() -> void:
 	hr.add_child(_nw(_label("사람 %d명, CPU %d명" % [humans, settings["n"] - humans], 13, SUB)))
 	g2.add_child(hr)
 	var grid := GridContainer.new()
-	grid.columns = 2
+	grid.columns = 2 if (narrow or settings["n"] <= 4) else (3 if settings["n"] <= 6 else 4)
 	grid.add_theme_constant_override("h_separation", 8)
 	grid.add_theme_constant_override("v_separation", 8)
 	for i in settings["n"]:
@@ -2836,7 +2891,7 @@ func _show_draft_cards(pid: int) -> void:
 	var root := _new_overlay(false)
 	var vs := get_viewport_rect().size
 	var dim := ColorRect.new()
-	dim.color = Color(0, 0, 0, 0.35)
+	dim.color = Color(0, 0, 0, 0.55)
 	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
 	dim.mouse_filter = Control.MOUSE_FILTER_STOP
 	root.add_child(dim)
@@ -2906,9 +2961,10 @@ func _hint_panel(pid: int) -> VBoxContainer:
 	sb.set_content_margin_all(16)
 	pc.add_theme_stylebox_override("panel", sb)
 	var vs := get_viewport_rect().size
-	pc.position = Vector2(24, 112) if not portrait else Vector2(12, 86)
 	pc.custom_minimum_size = Vector2(minf(420, vs.x - 24), 0)
 	root.add_child(pc)
+	# 화면 아래 가운데 (차례 목록·패널과 겹치지 않게)
+	pc.resized.connect(func(): pc.position = Vector2(vs.x * 0.5 - pc.size.x * 0.5, vs.y - pc.size.y - 16))
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", 10)
 	pc.add_child(v)
@@ -3933,7 +3989,8 @@ func _save_view() -> void:
 # ── 퍽 그리기와 모션 ─────────────────────────────────────
 var vis := {}                 # 알 id → {sq_dir, sq, pop_t, equip_t, equip_part, vf, trail}
 var shake_off := Vector2.ZERO
-var hud_pop := {}             # 플레이어 → 남은 퍽 점이 사라지기 시작한 시각
+var hud_pop := {}
+var last_shot := {}            # 플레이어 → 마지막으로 쏜 퍽 (부품 패널 기본)             # 플레이어 → 남은 퍽 점이 사라지기 시작한 시각
 var _trail_t := 0.0
 var shake := 0.0
 var hitstop := 0.0
@@ -4101,12 +4158,16 @@ func _draw_banner(vs: Vector2) -> void:
 	var x := view_center.x
 	var a := 1.0
 	if not _reduced():
+		# 판 안에서만 미끄러진다 (옆 패널 위로 지나가지 않게)
+		var span := 160.0
 		if k < 0.22:
 			var e := 1.0 - pow(1.0 - k / 0.22, 3.0)
-			x = lerpf(-200.0, view_center.x, e)
+			x = lerpf(view_center.x - span, view_center.x, e)
+			a = e
 		elif k > 0.78:
 			var e2 := pow((k - 0.78) / 0.22, 2.0)
-			x = lerpf(view_center.x, vs.x + 200.0, e2)
+			x = lerpf(view_center.x, view_center.x + span, e2)
+			a = 1.0 - e2
 	else:
 		a = clampf(banner_t / 0.3, 0.0, 1.0)
 	var fsz := 56 if banner_sub != "" or banner.length() <= 8 else 40
@@ -4377,13 +4438,17 @@ func _draw_toast(vs: Vector2) -> void:
 		var w := font_semi.get_string_size(t, HORIZONTAL_ALIGNMENT_LEFT, -1, 13).x + 18.0
 		items.append([pk["pid"], t, w])
 		total += w + 12.0
-	var width := maxf(total + 24.0, 220.0)
+	var maxw := minf(vs.x - 80.0, 620.0) if not portrait else vs.x - 24.0
+	var width := minf(maxf(total + 24.0, 220.0), maxw)
+	# 줄 수는 실제로 놓아 보고 센다
 	var rows := 1
-	var maxw := vs.x - 80.0
-	if width > maxw:
-		rows = int(ceil(width / maxw))
-		width = maxw
-	var r := Rect2(vs.x * 0.5 - width * 0.5, 100 + dy, width, 34 + rows * 22)
+	var xx := 12.0
+	for it in items:
+		if xx + it[2] > width - 12.0 and xx > 12.0:
+			rows += 1
+			xx = 12.0
+		xx += it[2] + 12.0
+	var r := Rect2(vs.x * 0.5 - width * 0.5, (100.0 if not portrait else 124.0) + dy, width, 34 + rows * 22)
 	draw_set_transform(Vector2.ZERO)
 
 	_panel(r)
@@ -4392,7 +4457,7 @@ func _draw_toast(vs: Vector2) -> void:
 	var y := r.position.y + 42
 
 	for it in items:
-		if x + it[2] > r.end.x - 12:
+		if x + it[2] > r.end.x - 12 and x > r.position.x + 12:
 			x = r.position.x + 12
 			y += 22
 		draw_circle(Vector2(x + 5, y - 4), 5, Color(m.players[it[0]].color, a))
