@@ -223,13 +223,13 @@ const SETS := {
 ## 오늘의 공방: 매 판 하나의 공방이 열리고, 그 판의 부품은 공용 10종 + 공방 전용 6종.
 const COMMON_PARTS := ["pea", "shotgun", "claw", "nose", "magnet", "bumper", "flipper", "rocket", "retro", "chute"]
 const WORKSHOPS := {
-	"junk": {"name": "고물 정비소", "desc": "티라노를 조립하고, 몸통으로 들이받을 각도와 가장자리에서 살아남을 방법을 고른다.",
+	"junk": {"name": "고물 정비소", "tag": "티라노를 조립하고 몸통으로 들이받는 곳", "desc": "티라노를 조립하고, 몸통으로 들이받을 각도와 가장자리에서 살아남을 방법을 고른다.",
 		"parts": ["trex_head", "trex_arm", "trex_leg", "sucker", "brake", "mine"], "rep": ["trex_head", "sucker", "mine"], "set": "trex"},
-	"magic": {"name": "수상한 마법 상점", "desc": "직접 닿지 않는 알을 밀고, 한 발 뒤에 일어날 일을 준비한다.",
+	"magic": {"name": "수상한 마법 상점", "tag": "닿지 않는 알을 밀고 한 발 뒤를 준비하는 곳", "desc": "직접 닿지 않는 알을 밀고, 한 발 뒤에 일어날 일을 준비한다.",
 		"parts": ["moon_staff", "star_cloak", "moon_boots", "shadow_scale", "night_charm", "anchor"], "rep": ["moon_staff", "night_charm", "anchor"], "set": "moon"},
-	"toon": {"name": "만화 소품 창고", "desc": "상대 뒤로 넘어가거나 판 끝을 타며, 직선 조준으로는 잡기 힘든 알을 노린다.",
+	"toon": {"name": "만화 소품 창고", "tag": "판 끝을 달리고 상대 뒤로 넘어가는 곳", "desc": "상대 뒤로 넘어가거나 판 끝을 타며, 직선 조준으로는 잡기 힘든 알을 노린다.",
 		"parts": ["drift_tire", "flash_step", "log_sub", "trap_card", "rubber_fist", "charge_palm"], "rep": ["flash_step", "drift_tire", "log_sub"], "set": ""},
-	"all": {"name": "잡동사니 창고", "desc": "모든 부품 66종이 섞여 나온다.", "parts": [], "rep": ["pea", "moon_staff", "rubber_fist"], "set": ""},
+	"all": {"name": "잡동사니 창고", "tag": "모든 부품이 섞여 나오는 곳", "desc": "모든 부품 66종이 섞여 나온다.", "parts": [], "rep": ["pea", "moon_staff", "rubber_fist"], "set": ""},
 }
 const WORKSHOP_ORDER := ["junk", "magic", "toon", "all"]
 

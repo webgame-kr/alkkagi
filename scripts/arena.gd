@@ -26,20 +26,84 @@ static func background(ci: CanvasItem, rect: Rect2, th: Dictionary, t := 0.0) ->
 			ci.draw_polyline(pts, grain, 1.0, true)
 			y += 9.0 + float((row * 7) % 5)
 			row += 1
+	match str(th.get("deco", "")):
+		"junk":
+			# 기름 얼룩 + 4칸 격자
+			for i in 7:
+				var cc := rect.position + Vector2(float((i * 397) % int(maxf(1.0, rect.size.x))), float((i * 211) % int(maxf(1.0, rect.size.y))))
+				_ellipse(ci, cc, 60.0 + i * 9.0, 24.0 + i * 4.0, float(i), Color(0, 0, 0, 0.18))
+			var st := 160.0
+			var gx := rect.position.x
+			while gx < rect.end.x:
+				ci.draw_line(Vector2(gx, rect.position.y), Vector2(gx, rect.end.y), Color(1, 1, 1, 0.05), 2.0)
+				gx += st
+			var gy := rect.position.y
+			while gy < rect.end.y:
+				ci.draw_line(Vector2(rect.position.x, gy), Vector2(rect.end.x, gy), Color(1, 1, 1, 0.05), 2.0)
+				gy += st
+		"magic":
+			# 반짝이는 별
+			for i in 90:
+				var sx := fposmod(sin(i * 12.9898) * 43758.5453, 1.0)
+				var sy := fposmod(sin(i * 78.233) * 12345.678, 1.0)
+				var sr := 0.3 + fposmod(sin(i * 3.1) * 999.0, 1.0) * 1.4
+				var a := 0.35 + 0.35 * sin(t * 1.5 + i * 0.7)
+				ci.draw_circle(rect.position + Vector2(sx, sy) * rect.size, sr, Color(220 / 255.0, 225 / 255.0, 1.0, a))
+		"manga":
+			# 가장자리로 갈수록 커지는 망점
+			var ctr := rect.get_center()
+			var mx := maxf(rect.size.x, rect.size.y)
+			var stp := 10.0
+			var yy := rect.position.y
+			var rowi := 0
+			while yy < rect.end.y:
+				var xx := rect.position.x + (stp * 0.5 if rowi % 2 == 1 else 0.0)
+				while xx < rect.end.x:
+					var d := Vector2(xx, yy).distance_to(ctr) / mx
+					var r := maxf(0.0, d - 0.25) * 5.0
+					if r > 0.2:
+						ci.draw_circle(Vector2(xx, yy), r, Color(0, 0, 0, 0.10))
+					xx += stp
+				yy += stp
+				rowi += 1
 
 
 ## 2~10. 판. square: 2인 정사각 판.
-static func board(ci: CanvasItem, c: Vector2, R: float, u: float, square: bool, th: Dictionary) -> void:
+static func board(ci: CanvasItem, c: Vector2, R: float, u: float, square: bool, th: Dictionary, t := 0.0) -> void:
 	var outline: Color = th["outline"]
+	var deco: String = th.get("deco", "")
 	var rail_r := R + 0.62 * u
 	# 2. 판 그림자
 	if square:
 		_rrect(ci, Rect2(c - Vector2(R + 0.75 * u, R + 0.75 * u) + Vector2(0, 0.35 * u), Vector2.ONE * 2.0 * (R + 0.75 * u)), th["shadow"], 0.5 * u)
 	else:
 		ci.draw_circle(c + Vector2(0, 0.35 * u), R + 0.75 * u, th["shadow"])
-	# 3. 레일: 위→아래 밝은·기본·어두운
-	_rail(ci, c, rail_r, square, th)
-	if square:
+	# 3. 레일: 위→아래 밝은·기본·어두운 (만화 창고는 먹색 레일 + 흰 선)
+	if deco == "manga":
+		_shape(ci, c, R + 0.6 * u, square, Color("111111"))
+		_shape_line(ci, c, R + 0.3 * u, square, Color.WHITE, 0.08 * u)
+	else:
+		_rail(ci, c, rail_r, square, th)
+	if deco == "junk":
+		# 노랑·검정 경고 띠와 볼트 8개
+		if square:
+			_dashed_rect2(ci, c, R + 0.32 * u, 0.26 * u, Color("FFC23D"), Color("1A1A1A"), 48)
+		else:
+			for i in 48:
+				ci.draw_arc(c, R + 0.32 * u, TAU * i / 48.0, TAU * (i + 1) / 48.0, 4, Color("1A1A1A") if i % 2 == 1 else Color("FFC23D"), 0.26 * u, false)
+		for i in 8:
+			var ang := i * PI / 4.0 + PI / 8.0
+			var bp := c + Vector2.from_angle(ang) * (R + 0.32 * u) if not square else c + Vector2(cos(ang), sin(ang)).normalized() * (R + 0.32 * u) / maxf(absf(cos(ang)), absf(sin(ang))) * 0.999
+			ci.draw_circle(bp, 0.13 * u, Color("9AA0A6"))
+			ci.draw_arc(bp, 0.13 * u, 0, TAU, 12, Color("111111"), 1.5, true)
+	elif deco == "magic":
+		var segs := 40
+		for i in segs:
+			var a0 := TAU * i / segs - t * 0.3 * u / maxf(1.0, R)
+			ci.draw_arc(c, R + 0.32 * u, a0, a0 + TAU / segs * 0.22, 3, Color(201 / 255.0, 213 / 255.0, 1.0, 0.7), 1.5, true)
+	if deco == "manga":
+		pass
+	elif square:
 		ci.draw_rect(Rect2(c - Vector2.ONE * rail_r, Vector2.ONE * 2.0 * rail_r), outline, false, maxf(1.0, 0.05 * u))
 	else:
 		ci.draw_arc(c, rail_r, 0, TAU, 128, outline, maxf(1.0, 0.05 * u), true)
@@ -70,23 +134,57 @@ static func board(ci: CanvasItem, c: Vector2, R: float, u: float, square: bool, 
 	var light := c + Vector2(-0.25, -0.3) * R
 	var steps := 30
 	for i in range(1, steps):
-		var t := float(i) / steps
-		var rad := R * (1.0 - t * 0.97) * (1.0 if not square else 1.0)
-		var cc := c.lerp(light, t)
+		var k := float(i) / steps
+		var rad := R * (1.0 - k * 0.97)
+		var cc := c.lerp(light, k)
 		if square:
 			rad = minf(rad, _rect_room(cc, c, R))
-		ci.draw_circle(cc, rad, fe.lerp(fc, t))
+		ci.draw_circle(cc, rad, fe.lerp(fc, k))
 	# 6. 격자 (공방): 펠트 안쪽만
 	if th["grid"]:
 		_grid(ci, c, R, u * 0.5, Color(1, 1, 1, 0.05), square)
 		_grid(ci, c, R, u, Color(1, 1, 1, 0.11), square)
+	# 공방 무늬
+	if deco == "junk":
+		var k := -R
+		while k <= R:
+			var h := R if square else sqrt(maxf(0.0, R * R - k * k))
+			ci.draw_line(c + Vector2(-h, k), c + Vector2(h, k), Color(0, 0, 0, 0.12), maxf(1.0, 0.06 * u))
+			k += 0.6 * u
+	elif deco == "magic":
+		ci.draw_arc(c, R * 0.55, 0, TAU, 64, Color(201 / 255.0, 213 / 255.0, 1.0, 0.16), 1.5, true)
+		var star := PackedVector2Array()
+		for i in 6:
+			var a := -PI / 2.0 + i * 4.0 * PI / 5.0
+			star.append(c + Vector2(cos(a), sin(a)) * R * 0.55)
+		ci.draw_polyline(star, Color(201 / 255.0, 213 / 255.0, 1.0, 0.16), 1.5, true)
+	elif deco == "manga":
+		var stp := 0.35 * u
+		var yy := -R
+		while yy < R:
+			var xx := -R
+			while xx < R:
+				var d := Vector2(xx, yy).length() / R if not square else maxf(absf(xx), absf(yy)) / R
+				if d > 0.72 and d < 1.0:
+					ci.draw_circle(c + Vector2(xx, yy), (d - 0.72) * stp * 1.4, Color(0, 0, 0, 0.09))
+				xx += stp
+			yy += stp
 	# 7. 위험 띠 / 8. 위험 경계 점선
 	var dz: Color = th["danger"]
-	if square:
+	if deco == "manga":
+		# 붉은 빗금 띠
+		var kk := -R * 2.0
+		while kk < R * 2.0:
+			var a := c + Vector2(kk, -R)
+			var b := c + Vector2(kk + R, R)
+			_hatch_ring(ci, c, R, u, a, b, square)
+			kk += 0.28 * u
+	elif square:
 		ci.draw_rect(Rect2(c - Vector2.ONE * (R - 0.5 * u), Vector2.ONE * 2.0 * (R - 0.5 * u)), Color(dz, 0.16), false, u)
 		_dashed_rect(ci, c, R - u, 0.18 * u, th["danger_line"], maxf(1.0, 0.05 * u))
 	else:
-		ci.draw_arc(c, R - 0.5 * u, 0, TAU, 128, Color(dz, 0.16), u, true)
+		if deco != "manga":
+			ci.draw_arc(c, R - 0.5 * u, 0, TAU, 128, Color(dz, 0.16), u, true)
 		_dashed_circle(ci, c, R - u, 0.18 * u, th["danger_line"], maxf(1.0, 0.05 * u))
 	# 펠트 테두리
 	if square:
@@ -206,3 +304,49 @@ static func _rrect(ci: CanvasItem, r: Rect2, col: Color, radius: float) -> void:
 	sb.bg_color = col
 	sb.set_corner_radius_all(int(radius))
 	sb.draw(ci.get_canvas_item(), r)
+
+
+static func _ellipse(ci: CanvasItem, c: Vector2, rx: float, ry: float, ang: float, col: Color) -> void:
+	var pts := PackedVector2Array()
+	for i in 24:
+		var a := TAU * i / 24.0
+		pts.append(c + Vector2(cos(a) * rx, sin(a) * ry).rotated(ang))
+	ci.draw_colored_polygon(pts, col)
+
+
+static func _shape(ci: CanvasItem, c: Vector2, r: float, square: bool, col: Color) -> void:
+	if square:
+		ci.draw_rect(Rect2(c - Vector2.ONE * r, Vector2.ONE * 2.0 * r), col)
+	else:
+		ci.draw_circle(c, r, col)
+
+
+static func _shape_line(ci: CanvasItem, c: Vector2, r: float, square: bool, col: Color, w: float) -> void:
+	if square:
+		ci.draw_rect(Rect2(c - Vector2.ONE * r, Vector2.ONE * 2.0 * r), col, false, w)
+	else:
+		ci.draw_arc(c, r, 0, TAU, 96, col, w, true)
+
+
+static func _dashed_rect2(ci: CanvasItem, c: Vector2, h: float, w: float, c1: Color, c2: Color, n: int) -> void:
+	var corners := [c + Vector2(-h, -h), c + Vector2(h, -h), c + Vector2(h, h), c + Vector2(-h, h)]
+	var per := n / 4
+	for k in 4:
+		var a: Vector2 = corners[k]
+		var b: Vector2 = corners[(k + 1) % 4]
+		for i in per:
+			ci.draw_line(a.lerp(b, float(i) / per), a.lerp(b, float(i + 1) / per), c2 if i % 2 == 1 else c1, w)
+
+
+## 만화 창고 위험 띠: 판 끝 1칸 안에서만 보이는 붉은 빗금.
+static func _hatch_ring(ci: CanvasItem, c: Vector2, R: float, u: float, a: Vector2, b: Vector2, square: bool) -> void:
+	var col := Color(224 / 255.0, 78 / 255.0, 58 / 255.0, 0.45)
+	var outer := clip_segment(a, b, c, R, square)
+	if outer.is_empty():
+		return
+	var inner := clip_segment(outer[0], outer[1], c, R - u, square)
+	if inner.is_empty():
+		ci.draw_line(outer[0], outer[1], col, 1.5)
+		return
+	ci.draw_line(outer[0], inner[0], col, 1.5)
+	ci.draw_line(inner[1], outer[1], col, 1.5)
