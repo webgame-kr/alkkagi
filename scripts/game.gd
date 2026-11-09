@@ -8,6 +8,8 @@ const Parts = preload("res://scripts/sim/parts.gd")
 const PartsData = preload("res://scripts/sim/parts_data.gd")
 const Bot = preload("res://scripts/sim/bot.gd")
 const Art = preload("res://scripts/stone_art.gd")
+const FxData = preload("res://scripts/fx_data.gd")
+const SoundMgr = preload("res://scripts/sound.gd")
 
 # 팔레트 (디자인 시안의 「테이블과 재질」)
 const BG_OUT := Color("121417")          # 판 밖
@@ -93,6 +95,10 @@ var overlay: Control = null
 var menu_btn: Button
 var parts_btn: Button
 var _panel_sb: StyleBoxFlat
+var snd: Node
+var sound_btn: Button
+var _cancel_state := false    # 조준이 취소 원 안에 있었는지 (소리용)
+var _tick_mark := -1          # 마지막으로 째깍 소리를 낸 초
 
 
 func _ready() -> void:
@@ -105,6 +111,8 @@ func _ready() -> void:
 	_panel_sb.border_color = PANEL_LINE
 	_panel_sb.set_border_width_all(1)
 	_panel_sb.set_corner_radius_all(12)
+	snd = SoundMgr.new()
+	add_child(snd)
 	ui = CanvasLayer.new()
 	add_child(ui)
 	menu_btn = _button("≡", func(): _show_setup())
@@ -118,6 +126,13 @@ func _ready() -> void:
 	parts_btn.add_theme_font_size_override("font_size", 14)
 	parts_btn.visible = false
 	ui.add_child(parts_btn)
+	sound_btn = _button("", func(): _toggle_sound())
+	sound_btn.theme = theme_
+	sound_btn.add_theme_font_size_override("font_size", 14)
+	sound_btn.custom_minimum_size = Vector2(0, 44)
+	sound_btn.visible = false
+	ui.add_child(sound_btn)
+	_update_sound_btn()
 	get_viewport().size_changed.connect(_layout)
 	_layout()
 	_show_setup()
@@ -276,6 +291,7 @@ func _place() -> void:
 	if menu_btn:
 		menu_btn.custom_minimum_size = Vector2(44, 44)
 		parts_btn.custom_minimum_size = Vector2(0, 44)
+		sound_btn.position = parts_btn.position - Vector2(sound_btn.size.x + 8, 0)
 
 
 func w2s(p: Vector2) -> Vector2:
@@ -306,9 +322,12 @@ func _start_match() -> void:
 	_clear_overlay()
 	menu_btn.visible = true
 	parts_btn.visible = true
+	sound_btn.visible = true
 	_layout()
 	var sp: Dictionary = m.players[m.current_player()]
 	_log("%d인전 시작, 선공은 %s" % [m.n, sp.name], sp.color)
+	snd.start_music()
+	snd.play("round_start", -3.0)
 
 
 func _process(delta: float) -> void:
@@ -349,6 +368,11 @@ func _update_play(delta: float) -> void:
 				if m.world.is_settled():
 					_after_shot()
 					break
+			var fastest := 0.0
+			for st in m.world.stones:
+				if st.alive:
+					fastest = maxf(fastest, st.vel.length())
+			snd.slide(fastest)
 		"draft":
 			var pid := m.current_drafter()
 			if m.players[pid].cpu:
@@ -366,6 +390,10 @@ func _update_play(delta: float) -> void:
 				_update_cpu(delta, pid)
 			elif m.aim_limit > 0.0:
 				aim_left -= delta
+				var sec := int(ceil(aim_left))
+				if sec <= 3 and sec >= 1 and sec != _tick_mark:
+					_tick_mark = sec
+					snd.play("timer_warning" if sec == 3 else "timer_tick", -2.0)
 				if aim_left <= 0.0:
 					drag_stone = -1
 					_log("%s 시간 초과, 차례를 넘겨요" % m.players[pid].name, m.players[pid].color)
@@ -382,6 +410,7 @@ func _update_cpu(delta: float, pid: int) -> void:
 		if cpu_aim["t"] <= 0.0:
 			var c: Dictionary = cpu_aim
 			cpu_aim = {}
+			snd.play("flick_release", lerpf(-8.0, 0.0, c["power"]))
 			m.shoot(c["stone"], c["dir"], c["power"], {"charged": true})
 		return
 	if bot == null:
@@ -422,6 +451,8 @@ func _on_phase_changed() -> void:
 			var p: Dictionary = m.players[m.current_player()]
 			_banner("%s 차례" % p.name, p.color)
 			relic_mode = false
+			_tick_mark = -1
+			snd.play("turn_start", -8.0)
 			if not p.cpu and not m.relic_targets(p.id).is_empty():
 				_show_relic_hint(p.id)
 		"draft":
@@ -431,6 +462,9 @@ func _on_phase_changed() -> void:
 			draft_wait = _sp("think") + 0.4
 			if m.draft_queue.size() == m.order.size():
 				_banner("%d바퀴 · 개조 시간" % m.round_no)
+				if m.round_no > 1:
+					snd.play("round_start", -4.0)
+			snd.play("part_offer", -4.0)
 			if m.players[pid].cpu:
 				_clear_overlay()
 			else:
@@ -498,24 +532,39 @@ func _consume_events() -> void:
 		var owner_col: Color = m.players[e["owner"]].color if e.has("owner") and e["owner"] >= 0 and e["owner"] < m.players.size() else TEXT
 		match e["t"]:
 			"hit":
+				var st_: float = e["strength"]
+				snd.play("puck_hit_heavy" if st_ > 520.0 else "puck_hit_light", lerpf(-12.0, 0.0, clampf(st_ / 900.0, 0.0, 1.0)), randf_range(0.95, 1.05))
 				fx.append({"k": "ring", "pos": e["pos"], "t": 0.0, "life": 0.25, "r": 8.0 + minf(e["strength"], 1200.0) / 60.0, "c": Color(1, 1, 1, 0.8)})
 			"bullet_hit":
 				fx.append({"k": "ring", "pos": e["pos"], "t": 0.0, "life": 0.3, "r": 16.0, "c": owner_col.lightened(0.4)})
 			"out":
+				snd.play("puck_fall")
 				fx.append({"k": "text", "pos": e["pos"], "t": 0.0, "life": 1.4, "text": "탈락!", "c": owner_col, "size": 30})
 				fx.append({"k": "ring", "pos": e["pos"], "t": 0.0, "life": 0.6, "r": 46.0, "c": owner_col})
 			"part":
 				var big: bool = e.get("big", false)
-				fx.append({"k": "text", "pos": e["pos"] + Vector2(0, -30), "t": 0.0, "life": 1.6 if big else 1.1, "text": e.get("text", ""), "c": POWER if big else owner_col.lightened(0.35), "size": 28 if big else 20})
+				var part_id: String = e.get("part", "")
+				var fd: Array = FxData.FX.get(part_id, [])
+				var fam: String = fd[0] if not fd.is_empty() else ("trex" if part_id == "mecha" else ("magic" if part_id == "moon_set" else ("awaken" if part_id == "hero_set" else "mech")))
+				if not PartsData.is_anime(part_id):
+					snd.play_part(part_id, fam)
+				if not fd.is_empty() and not PartsData.is_anime(part_id):
+					fx.append({"k": "fam", "fam": fam, "pos": e["pos"], "t": 0.0, "life": 0.2 if fam == "mech" else 0.6,
+						"word": fd[1], "c": Color(fd[2])})
+				elif fam != "mech":
+					fx.append({"k": "fam", "fam": fam, "pos": e["pos"], "t": 0.0, "life": 0.8, "word": "", "c": Color("FF6B4A") if fam == "trex" else (Color("B7C8FF") if fam == "magic" else Color("FF8A4A"))})
+				fx.append({"k": "text", "pos": e["pos"] + Vector2(0, -30), "t": 0.0, "life": 1.6 if big else 1.1, "text": e.get("text", ""), "c": POWER if big else owner_col.lightened(0.35), "size": 28 if big else 16})
 				if big:
 					fx.append({"k": "ring", "pos": e["pos"], "t": 0.0, "life": 0.7, "r": 70.0, "c": POWER})
 				fx.append({"k": "ring", "pos": e["pos"], "t": 0.0, "life": 0.4, "r": 30.0, "c": owner_col.lightened(0.3)})
 				if e.has("from"):
 					fx.append({"k": "line", "a": e["from"], "b": e["pos"], "t": 0.0, "life": 0.45, "c": owner_col.lightened(0.5)})
 			"reflect":
+				snd.play("rail_bump", -2.0)
 				fx.append({"k": "ring", "pos": e["pos"], "t": 0.0, "life": 0.5, "r": 36.0, "c": Color(0.75, 0.95, 1.0)})
 				fx.append({"k": "text", "pos": e["pos"] + Vector2(0, -28), "t": 0.0, "life": 1.0, "text": "반사!", "c": Color(0.75, 0.95, 1.0), "size": 20})
 			"boom":
+				snd.play("puck_hit_heavy", 2.0, 0.7)
 				fx.append({"k": "boom", "pos": e["pos"], "t": 0.0, "life": 0.55, "r": e["radius"], "c": Color(1.0, 0.6, 0.15)})
 				fx.append({"k": "text", "pos": e["pos"] + Vector2(0, -30), "t": 0.0, "life": 1.0, "text": "쾅!", "c": Color(1.0, 0.75, 0.3), "size": 28})
 			"device":
@@ -523,6 +572,9 @@ func _consume_events() -> void:
 			"umbrella":
 				fx.append({"k": "fan", "pos": e["pos"], "dir": e["dir"], "t": 0.0, "life": 0.5, "r": e["radius"], "c": Color("E1E6EB")})
 			"manga":
+				snd.play("fx_parody_stamp", -1.0)
+				if m.world.shot_no != slowmo_shot and not _all_cpu():
+					snd.play("fx_parody_slowmo", -3.0)
 				var sid: int = e.get("stone", -1)
 				var info: Dictionary = PartsData.get_part(e["part"])
 				fx.append({"k": "manga", "stone": sid, "pos": e["pos"], "t": 0.0, "life": 0.7,
@@ -535,10 +587,13 @@ func _consume_events() -> void:
 			"cone":
 				fx.append({"k": "fan", "pos": e["pos"], "dir": e["dir"], "t": 0.0, "life": 0.45, "r": e["radius"], "c": Color("FF8A4A")})
 			"beam":
+				snd.play("fx_magic_cast", -2.0, 1.3)
 				fx.append({"k": "beam", "a": e["a"], "b": e["b"], "t": 0.0, "life": 0.5, "c": Color("7FD8FF")})
 			"hexbreak":
+				snd.play("rail_bump", -3.0, 1.3)
 				fx.append({"k": "hex", "pos": e["pos"], "t": 0.0, "life": 0.5, "c": Color("F28A2E")})
 			"magic_circle":
+				snd.play("fx_magic_circle", -4.0)
 				fx.append({"k": "circle", "pos": e["pos"], "t": 0.0, "life": 0.7, "c": Color("B7C8FF")})
 			"thread", "line_fx":
 				fx.append({"k": "line", "a": e["a"], "b": e["b"], "t": 0.0, "life": 0.6, "c": Color("E9DCC4") if e["t"] == "thread" else Color("9A86D8")})
@@ -560,6 +615,10 @@ func _unhandled_input(event: InputEvent) -> void:
 		hover_stone = _stone_at(wp, -1)
 		if drag_stone >= 0:
 			drag_screen = event.position
+			var cancel_now := _aim_of(drag_stone, drag_screen).is_empty()
+			if cancel_now and not _cancel_state:
+				snd.play("aim_cancel", -6.0)
+			_cancel_state = cancel_now
 		return
 	if not (event is InputEventMouseButton) or event.button_index != MOUSE_BUTTON_LEFT:
 		return
@@ -591,12 +650,17 @@ func _unhandled_input(event: InputEvent) -> void:
 			drag_stone = sid2
 			drag_screen = event.position
 			drag_hold = 0.0
+			_cancel_state = true
+			snd.play("flick_pull", -4.0)
 	elif drag_stone >= 0:
 		var aim := _aim_of(drag_stone, event.position)
 		var sid3 := drag_stone
 		drag_stone = -1
 		if not aim.is_empty():
+			snd.play("flick_release", lerpf(-8.0, 0.0, aim["power"]))
 			m.shoot(sid3, aim["dir"], aim["power"], {"charged": _charged(sid3), "from_cloud": drag_cloud})
+		else:
+			snd.play("aim_cancel", -4.0)
 		drag_cloud = false
 
 
@@ -705,6 +769,15 @@ func _apply_equip(pid: int, part: String, sid: int, side: int, reserve := "") ->
 		var set_txt := PartsData.set_label(s.parts)
 		if set_txt != "":
 			_log(set_txt, BRASS)
+		var done_set2 := PartsData.set_of(part)
+		if done_set2 != "" and PartsData.set_complete(s.parts, done_set2):
+			snd.play("set_complete")
+			if done_set2 == "trex":
+				snd.play("fx_trex_roar", -2.0)
+		elif done_set2 != "" and PartsData.set_progress(s.parts, done_set2)["count"] >= 2:
+			snd.play("set_progress", -3.0)
+		else:
+			snd.play("part_equip", -3.0)
 		fx.append({"k": "text", "pos": s.pos + Vector2(0, -34), "t": 0.0, "life": 1.3, "text": txt, "c": pl.color.lightened(0.35), "size": 20})
 		var done_set := PartsData.set_of(part)
 		if done_set != "" and PartsData.set_complete(s.parts, done_set):
@@ -948,6 +1021,60 @@ func _draw_stone(s) -> void:
 		_draw_manga_front(p, manga)
 
 
+## 계열별 발동 연출 (디자인 시안 「부품 발동 연출」).
+## 기계: 황동 불꽃과 흰 섬광 (0.2초) · 티라노: 붉은 빛과 포효 파동 · 마법: 달빛 마법진과 별 조각
+## 각성: 불꽃 기운 · 시스템: 표식 하나와 짧은 반짝임. 효과음 글자는 옆에 작게.
+func _draw_family_fx(f: Dictionary, u: float) -> void:
+	var p := w2s(f["pos"])
+	var c: Color = f["c"]
+	var k := view_scale
+	var a := 1.0 - u
+	match f["fam"]:
+		"mech":
+			var r := (10.0 + 10.0 * u) * k
+			var star := PackedVector2Array()
+			for i in 16:
+				star.append(p + Vector2.from_angle(TAU * i / 16.0) * (r if i % 2 == 0 else r * 0.42))
+			draw_colored_polygon(star, Color(c, 0.95 * a))
+			draw_circle(p, r * 0.32, Color(1, 1, 1, a))
+		"trex":
+			draw_circle(p, (18.0 + 30.0 * u) * k, Color(c, 0.22 * a))
+			for i in 2:
+				var rr := (22.0 + 40.0 * u + i * 12.0) * k
+				draw_arc(p, rr, 0, TAU, 32, Color(c, 0.8 * a), 2.5, true)
+		"magic":
+			var mr := 30.0 * k
+			draw_circle(p, mr, Color(c, 0.08 * a))
+			draw_arc(p, mr, 0, TAU, 40, Color(c, 0.85 * a), 1.6, true)
+			_dashed_ring(p, mr * 0.88, Color(c, 0.8 * a))
+			var st := PackedVector2Array()
+			for i in 10:
+				st.append(p + Vector2.from_angle(-PI / 2 + TAU * i / 10.0) * (mr * 0.72 if i % 2 == 0 else mr * 0.3))
+			draw_colored_polygon(st, Color(c, 0.22 * a))
+			for i in 5:
+				var sp2 := p + Vector2.from_angle(TAU * i / 5.0 + u * 1.5) * mr * (1.0 + 0.5 * u)
+				draw_circle(sp2, 2.0, Color(1, 1, 1, a))
+		"awaken":
+			for i in 10:
+				var ang := TAU * i / 10.0 + time * 3.0
+				var base := p + Vector2.from_angle(ang) * 22.0 * k
+				var tip := p + Vector2.from_angle(ang) * (34.0 + 8.0 * sin(time * 20.0 + i)) * k
+				draw_colored_polygon(PackedVector2Array([base + Vector2.from_angle(ang + 1.6) * 4 * k, tip, base - Vector2.from_angle(ang + 1.6) * 4 * k]), Color(c, 0.8 * a))
+		"system":
+			var d := 9.0 * k * (1.0 + 0.3 * u)
+			var dia := PackedVector2Array([p + Vector2(0, -d), p + Vector2(d, 0), p + Vector2(0, d), p + Vector2(-d, 0)])
+			draw_colored_polygon(dia, Color(c, 0.9 * a))
+			for i in 4:
+				var sp3 := p + Vector2.from_angle(TAU * i / 4.0 + PI / 4.0) * (14.0 + 10.0 * u) * k
+				draw_line(sp3 - Vector2(3, 0), sp3 + Vector2(3, 0), Color(1, 1, 1, a), 1.5)
+				draw_line(sp3 - Vector2(0, 3), sp3 + Vector2(0, 3), Color(1, 1, 1, a), 1.5)
+	if f["word"] != "":
+		var wp := p + Vector2(16, -10) * maxf(1.0, k)
+		var alpha := 1.0 if f["fam"] != "mech" else clampf(1.6 - u, 0.0, 1.0)
+		draw_string_outline(font_bold, wp, f["word"], HORIZONTAL_ALIGNMENT_LEFT, -1, 16, 5, Color(INK, alpha))
+		draw_string(font_bold, wp, f["word"], HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(c, alpha))
+
+
 ## 만화 발동 연출: 뒤에서 충격 모양이 터지고 집중선이 퍼진다.
 func _draw_manga_back(p: Vector2, f: Dictionary) -> void:
 	var u: float = f["t"] / f["life"]
@@ -1188,6 +1315,8 @@ func _draw_fx() -> void:
 				draw_arc(w2s(f["pos"]), f["r"] * view_scale * (0.3 + u * 0.7), 0, TAU, 40, Color(c, 1.0 - u), 4.0, true)
 			"line":
 				draw_line(w2s(f["a"]), w2s(f["b"]), Color(c, 0.9 * (1.0 - u)), 3.0, true)
+			"fam":
+				_draw_family_fx(f, u)
 			"manga":
 				if f["stone"] < 0:
 					var mp := w2s(f["pos"])
@@ -1693,6 +1822,7 @@ func _text_outline(p: Vector2, t: String, size: int, c: Color, center: bool) -> 
 func _button(text: String, cb: Callable) -> Button:
 	var b := Button.new()
 	b.text = text
+	b.pressed.connect(func(): snd.play("ui_click", -6.0))
 	b.pressed.connect(cb)
 	b.focus_mode = Control.FOCUS_NONE
 	return b
@@ -1802,6 +1932,7 @@ func _show_setup() -> void:
 	m = null
 	menu_btn.visible = false
 	parts_btn.visible = false
+	sound_btn.visible = false
 	var root := _new_overlay(false)
 	var vs := get_viewport_rect().size
 	var narrow := vs.x < 900
@@ -1885,7 +2016,9 @@ func _show_setup() -> void:
 	var cb := CheckButton.new()
 	cb.button_pressed = settings["timed"]
 	cb.focus_mode = Control.FOCUS_NONE
-	cb.toggled.connect(func(v): settings["timed"] = v)
+	cb.toggled.connect(func(v):
+		settings["timed"] = v
+		snd.play("ui_toggle"))
 	th.add_child(cb)
 	col.add_child(tp)
 	# 게임 속도
@@ -1906,6 +2039,11 @@ func _show_setup() -> void:
 		for k in ["font_color", "font_hover_color", "font_pressed_color"]:
 			sb2.add_theme_color_override(k, INK if on else TEXT)
 		sp_row.add_child(sb2)
+	var snd_b := _button("소리 켜짐" if snd.enabled else "소리 꺼짐", func():
+		_toggle_sound()
+		_show_setup())
+	snd_b.custom_minimum_size = Vector2(96, 38)
+	sp_row.add_child(snd_b)
 	col.add_child(sp_row)
 	# 시작
 	var row2 := HBoxContainer.new()
@@ -1968,13 +2106,26 @@ func _seat_button(i: int) -> Button:
 	return b
 
 
+func _toggle_sound() -> void:
+	snd.set_enabled(not snd.enabled)
+	_update_sound_btn()
+	snd.play("ui_toggle")
+
+
+func _update_sound_btn() -> void:
+	if sound_btn:
+		sound_btn.text = "소리 켜짐" if snd.enabled else "소리 꺼짐"
+
+
 func _set_count(n: int) -> void:
+	snd.play("ui_toggle")
 	settings["n"] = n
 	settings["timed"] = n >= 5
 	_show_setup()
 
 
 func _toggle_cpu(i: int) -> void:
+	snd.play("ui_toggle")
 	settings["cpu"][i] = not settings["cpu"][i]
 	_show_setup()
 
@@ -2272,6 +2423,8 @@ func _show_side_choice(pid: int) -> void:
 
 func _show_result() -> void:
 	state = "result"
+	snd.slide(0.0)
+	snd.play("draw" if m.winners.is_empty() else "victory")
 	drag_stone = -1
 	var root := _new_overlay(true)
 	var box := _centered_panel(root, 520)
