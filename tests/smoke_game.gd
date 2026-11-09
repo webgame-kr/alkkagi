@@ -22,6 +22,10 @@ func _process(_delta: float) -> bool:
 		for i in 8:
 			game.settings["cpu"][i] = true
 		game.settings["timed"] = n >= 5
+		if OS.get_cmdline_user_args().has("derby"):
+			game.settings["mode"] = "derby"
+		if OS.get_cmdline_user_args().has("toon"):
+			game.settings["workshop"] = "toon"
 		game._start_match()
 	if frames > 2:
 		# 빠르게: 한 프레임에 여러 번 진행

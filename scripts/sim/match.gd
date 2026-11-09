@@ -30,10 +30,21 @@ var end_reason := ""          # last | limit | draw
 var out_order: Array = []     # 탈락한 순서 (플레이어 id)
 var shots := 0
 var rng := RandomNumberGenerator.new()
+var workshop := "junk"        # 오늘의 공방 (parts_data WORKSHOPS)
+var mode := "survival"        # survival(최후 생존전) | derby(개조 더비)
+var scores: Array = []        # 개조 더비: 상대 알을 떨어뜨린 점수
+var homes := {}               # 개조 더비: 알 id → 시작 자리 (떨어진 알이 돌아올 곳)
+const DERBY_ROUNDS_SMALL := 8 # 2~4인
+const DERBY_ROUNDS_BIG := 6   # 5~8인
 
 
-func setup(n_players: int, cpu_flags: Array, seed_value: int, timed: bool) -> void:
+func setup(n_players: int, cpu_flags: Array, seed_value: int, timed: bool, opts := {}) -> void:
 	n = clampi(n_players, 2, 8)
+	workshop = str(opts.get("workshop", "junk"))
+	mode = str(opts.get("mode", "survival"))
+	scores = []
+	for i in n:
+		scores.append(0)
 	rng.seed = seed_value
 	players.clear()
 	for i in n:
@@ -52,6 +63,12 @@ func setup(n_players: int, cpu_flags: Array, seed_value: int, timed: bool) -> vo
 		world.size = CELL * 12.0
 	aim_limit = AIM_LIMIT if timed else 0.0
 	_place_stones()
+	homes.clear()
+	for st in world.stones:
+		homes[st.id] = st.pos
+	max_rounds = 0
+	if mode == "derby":
+		max_rounds = DERBY_ROUNDS_SMALL if n <= 4 else DERBY_ROUNDS_BIG
 	start_seat = rng.randi_range(0, n - 1)
 	round_no = 1
 	winners.clear()
@@ -116,6 +133,8 @@ func is_draft_round(r: int) -> bool:
 # ── 바퀴 ─────────────────────────────────────────────────
 
 func _begin_round() -> void:
+	if mode == "derby" and round_no > 1:
+		_respawn()
 	world.round_no = round_no
 	world.expire_devices()
 	order.clear()
@@ -179,15 +198,33 @@ func roll_offer(pid: int) -> Array:
 		var pick: String = missing[rng.randi_range(0, missing.size() - 1)]
 		if not out.has(pick):
 			out.append(pick)
+	# 오늘의 공방 부품 중에서. 세 개 중 적어도 둘은 살아 있는 내 알의 빈 슬롯에 바로 붙일 수 있게.
 	var pool: Array = []
-	for id in PartsData.ids():
+	for id in PartsData.workshop_pool(workshop):
 		if missing.is_empty() or PartsData.set_of(id) == "":
 			if not out.has(id):
 				pool.append(id)
+	var fits := func(id: String) -> bool:
+		var slot := PartsData.slot_of(id)
+		for st in world.alive_stones_of(pid):
+			if st.parts[slot] == "":
+				return true
+		return false
+	var fit_count := 0
+	for id in out:
+		if fits.call(id):
+			fit_count += 1
 	while out.size() < OFFER_COUNT and not pool.is_empty():
-		var i := rng.randi_range(0, pool.size() - 1)
-		out.append(pool[i])
-		pool.remove_at(i)
+		var candidates: Array = pool
+		if fit_count < 2:
+			var fitting: Array = pool.filter(func(x): return fits.call(x))
+			if not fitting.is_empty():
+				candidates = fitting
+		var pick2: String = candidates[rng.randi_range(0, candidates.size() - 1)]
+		out.append(pick2)
+		pool.erase(pick2)
+		if fits.call(pick2):
+			fit_count += 1
 	return out
 
 
@@ -264,6 +301,13 @@ func shoot(stone_id: int, dir: Vector2, power: float, opts := {}) -> bool:
 
 ## 모든 움직임이 끝난 뒤 부른다: 탈락 정리 → 승패 확인 → 다음 차례.
 func finish_shot() -> void:
+	# 개조 더비: 상대 알을 떨어뜨리면 쏜 사람에게 1점 (자멸·원인 불명은 0점)
+	if mode == "derby" and world.shot != null:
+		var shooter_owner: int = world.shot.owner
+		for k in world.knockouts:
+			var c: Dictionary = k.get("cause", {})
+			if int(k["owner"]) != shooter_owner and c.has("owner") and int(c["owner"]) == shooter_owner:
+				scores[shooter_owner] += 1
 	world.end_shot()
 	_settle_turn()
 
@@ -286,20 +330,22 @@ func _settle_turn() -> void:
 		if rp.relic == "":
 			rp.relic = r["part"]
 	world.relics.clear()
-	for p in players:
-		if not p.out and stones_left(p.id) == 0:
-			p.out = true
-			p.out_round = round_no
-			out_order.append(p.id)
-	var alive := alive_players()
-	if alive.size() == 1:
-		_finish([alive[0]], "last")
-		return
-	if alive.is_empty():
-		_finish([], "draw")
-		return
+	if mode != "derby":
+		for p in players:
+			if not p.out and stones_left(p.id) == 0:
+				p.out = true
+				p.out_round = round_no
+				out_order.append(p.id)
+		var alive := alive_players()
+		if alive.size() == 1:
+			_finish([alive[0]], "last")
+			return
+		if alive.is_empty():
+			_finish([], "draw")
+			return
 	turn_pos += 1
-	while turn_pos < order.size() and players[order[turn_pos]].out:
+	# 떨어진 자리는 건너뛴다 (더비에서는 이번 바퀴에 알이 하나도 없는 사람도)
+	while turn_pos < order.size() and (players[order[turn_pos]].out or stones_left(order[turn_pos]) == 0):
 		turn_pos += 1
 	if turn_pos < order.size():
 		phase = "aim"
@@ -308,10 +354,58 @@ func _settle_turn() -> void:
 	# 바퀴 끝
 	round_no += 1
 	if max_rounds > 0 and round_no > max_rounds:
-		_finish_by_count()
+		if mode == "derby":
+			_finish_by_score()
+		else:
+			_finish_by_count()
 		return
 	start_seat = (start_seat + 1) % n
 	_begin_round()
+
+
+## 개조 더비: 떨어진 알은 다음 바퀴 시작에 자기 자리(막혀 있으면 가까운 빈자리)로 돌아온다. 부품은 그대로.
+func _respawn() -> void:
+	for st in world.stones:
+		if st.alive:
+			continue
+		var home: Vector2 = homes.get(st.id, Vector2.ZERO)
+		var spot := _free_near(home)
+		st.alive = true
+		st.pos = spot
+		st.vel = Vector2.ZERO
+		st.status = {}
+		st.cause = {}
+		world.emit({"t": "respawn", "pos": spot, "owner": st.owner, "stone": st.id})
+
+
+func _free_near(home: Vector2) -> Vector2:
+	var r := World.STONE_R * 2.0 + 1.0
+	for ring in range(0, 8):
+		var tries := 1 if ring == 0 else 8 * ring
+		for k in tries:
+			var p: Vector2 = home if ring == 0 else home + Vector2.from_angle(TAU * k / tries) * ring * r * 0.75
+			if not world.is_inside(p) or world.edge_distance(p) < CELL:
+				continue
+			var ok := true
+			for o in world.stones:
+				if o.alive and o.pos.distance_to(p) < r:
+					ok = false
+					break
+			if ok:
+				return p
+	return home
+
+
+func _finish_by_score() -> void:
+	var best := -1
+	for pid in range(n):
+		best = maxi(best, scores[pid])
+	var w: Array = []
+	for pid in range(n):
+		if scores[pid] == best:
+			w.append(pid)
+	round_no = max_rounds
+	_finish(w, "score")
 
 
 func _finish_by_count() -> void:

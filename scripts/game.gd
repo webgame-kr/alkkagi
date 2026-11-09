@@ -34,7 +34,9 @@ const MUTED := Color("5C6370")
 const HINT_GOLD := Color("E3C27E")
 const LABEL := Color("C9CED6")
 
-const MAX_DRAG := 150.0      # 화면 px: 이만큼 당기면 최대 힘
+const MAX_DRAG := 170.0      # 화면 px: 이만큼 당기면 최대 힘
+const MIN_POWER := 0.27      # 취소 구간을 막 넘었을 때의 힘: 알 하나 너비(1칸)쯤 움직인다
+const POWER_CURVE := 1.4     # 짧은 당김은 섬세하게, 길게 당기면 빠르게 커진다
 const CANCEL_R := 2.0        # 퍽 반지름의 몇 배 안으로 돌아오면 조준 취소 (점선 원)
 const CELL := World.STONE_R * 2.0
 
@@ -43,7 +45,7 @@ var font_semi: Font
 var font_bold: Font
 var m: Match
 var settings := {"n": 4, "cpu": [false, true, true, true, true, true, true, true], "timed": false, "speed": 1,
-	"friend": [false, false, false, false, false, false, false, false]}
+	"friend": [false, false, false, false, false, false, false, false], "workshop": "junk", "mode": "survival"}
 ## 게임 속도: 퍽이 움직이는 빠르기(재생 배율), CPU가 뜸 들이는 시간, 차례 사이 쉬는 시간.
 const SPEEDS := [
 	{"name": "느리게", "play": 0.5, "think": 1.4, "aim_show": 1.6, "hold": 1.1},
@@ -87,6 +89,9 @@ var slowmo := 0.0             # 만화 연출: 잠깐 느리게
 var slowmo_shot := -1
 
 # 개조 선택
+var drafting_pid := -1        # 이 기기에서 지금 카드를 고르는 자리
+var picked_round := {}        # 자리 → 이번 바퀴에 이미 골랐는지 (온라인 동시 선택)
+var pending_picks := {}       # 호스트: 먼저 고른 자리의 장착을 차례가 올 때까지 보관
 var draft_part := ""
 var draft_stone := -1
 
@@ -112,6 +117,8 @@ var waiting_req := false      # 손님: 보낸 행동이 돌아오길 기다리�
 var _net_status_seen := ""
 var lobby_col: Control = null  # 대기실 왼쪽 열: 매 프레임 세로 위치를 맞춘다 (웹 첫 프레임은 화면 크기가 늦게 잡힌다)
 var sound_btn: Button
+var ff_btn: Button
+var fast_forward := false     # CPU 차례 빠른 진행 (내 차례가 오면 자동으로 꺼진다)
 var _cancel_state := false    # 조준이 취소 원 안에 있었는지 (소리용)
 var _tick_mark := -1          # 마지막으로 째깍 소리를 낸 초
 
@@ -149,6 +156,14 @@ func _ready() -> void:
 	sound_btn.custom_minimum_size = Vector2(0, 44)
 	sound_btn.visible = false
 	ui.add_child(sound_btn)
+	ff_btn = _button("▶▶ 빠르게", func():
+		fast_forward = not fast_forward
+		ff_btn.text = "▶ 보통 속도" if fast_forward else "▶▶ 빠르게")
+	ff_btn.theme = theme_
+	ff_btn.add_theme_font_size_override("font_size", 14)
+	ff_btn.custom_minimum_size = Vector2(0, 44)
+	ff_btn.visible = false
+	ui.add_child(ff_btn)
 	_update_sound_btn()
 	get_viewport().size_changed.connect(_layout)
 	_layout()
@@ -312,6 +327,9 @@ func _place() -> void:
 		menu_btn.custom_minimum_size = Vector2(44, 44)
 		parts_btn.custom_minimum_size = Vector2(0, 44)
 		sound_btn.position = parts_btn.position - Vector2(sound_btn.size.x + 8, 0)
+		if ff_btn:
+			ff_btn.position = sound_btn.position - Vector2(ff_btn.size.x + 8, 0)
+			ff_btn.visible = state == "play" and m != null and _has_cpu()
 
 
 func w2s(p: Vector2) -> Vector2:
@@ -336,10 +354,16 @@ func _start_match(seed_value := -1) -> void:
 			if not settings["cpu"][i]:
 				my_seats.append(i)
 	m = Match.new()
-	m.setup(settings["n"], settings["cpu"], seed_value, settings["timed"])
+	var ws: String = settings.get("workshop", "junk")
+	if ws == "random":
+		ws = ["junk", "magic", "toon"][seed_value % 3]
+	m.setup(settings["n"], settings["cpu"], seed_value, settings["timed"], {"workshop": ws, "mode": settings.get("mode", "survival")})
 	state = "play"
 	turn_hold = 0.0
 	net_queue.clear()
+	pending_picks.clear()
+	picked_round.clear()
+	drafting_pid = -1
 	net_applied = 0
 	net_seq_out = 0
 	waiting_req = false
@@ -367,6 +391,7 @@ func _start_match(seed_value := -1) -> void:
 		_log("온라인 대전 · 내 자리: %s" % ", ".join(mine), BRASS)
 	snd.start_music()
 	snd.play("round_start", -3.0)
+	_show_workshop_intro()
 
 
 func _process(delta: float) -> void:
@@ -388,7 +413,10 @@ func _process(delta: float) -> void:
 
 
 func _sp(k: String) -> float:
-	return SPEEDS[settings.get("speed", 1)][k]
+	var v: float = SPEEDS[settings.get("speed", 1)][k]
+	if fast_forward:
+		v = v * 3.0 if k == "play" else v * 0.2
+	return v
 
 
 func _update_play(delta: float) -> void:
@@ -491,7 +519,13 @@ func _on_phase_changed() -> void:
 			bot = null
 			bot_wait = _sp("think")
 			var p: Dictionary = m.players[m.current_player()]
-			_banner("%s 차례" % p.name, p.color)
+			if _is_mine(p.id):
+				_banner("내 차례 · %s" % p.name, POWER)
+				if fast_forward:
+					fast_forward = false
+					ff_btn.text = "▶▶ 빠르게"
+			else:
+				_banner("%s 차례" % p.name, p.color)
 			relic_mode = false
 			_tick_mark = -1
 			snd.play("turn_start", -8.0)
@@ -507,7 +541,12 @@ func _on_phase_changed() -> void:
 				if m.round_no > 1:
 					snd.play("round_start", -4.0)
 			snd.play("part_offer", -4.0)
-			if _is_mine(pid):
+			if online != "":
+				if online != "guest" and m.players[pid].cpu:
+					draft_wait = 0.25
+				_online_draft_ui()
+			elif _is_mine(pid):
+				drafting_pid = pid
 				_show_draft_cards(pid)
 			else:
 				_clear_overlay()
@@ -521,16 +560,17 @@ func _after_shot() -> void:
 	_consume_events()
 	if shooter_owner < 0:
 		return
-	var who: String = m.players[shooter_owner].name
-	var by_owner := {}
 	for k in outs:
-		by_owner[k["owner"]] = by_owner.get(k["owner"], 0) + 1
-	for o in by_owner:
-		var col: Color = m.players[shooter_owner].color
-		if o == shooter_owner:
-			_log("%s 퍽 %d개가 스스로 떨어졌어요" % [who, by_owner[o]], col)
+		var cz: Dictionary = k.get("cause", {})
+		var victim: String = m.players[int(k["owner"])].name
+		if cz.has("owner") and int(cz["owner"]) != int(k["owner"]):
+			var att: Dictionary = m.players[int(cz["owner"])]
+			var how := _part_word(str(cz["part"]))
+			if cz.get("chain", false):
+				how += " 연쇄"
+			_log("%s %s %s 퍽을 떨어뜨렸어요" % [_j(att.name, "이", "가"), _j(how, "으로", "로"), victim], att.color)
 		else:
-			_log("%s %s 퍽 %d개를 떨어뜨렸어요" % [_j(who, "이", "가"), m.players[o].name, by_owner[o]], col)
+			_log("%s 퍽이 떨어졌어요" % victim, m.players[int(k["owner"])].color)
 	for pid in m.out_order:
 		if not _logged_out.has(pid):
 			_logged_out[pid] = true
@@ -582,6 +622,10 @@ func _consume_events() -> void:
 			"out":
 				snd.play("puck_fall")
 				fx.append({"k": "text", "pos": e["pos"], "t": 0.0, "life": 1.4, "text": "탈락!", "c": owner_col, "size": 30})
+				var why := _cause_text(e.get("cause", {}), int(e["owner"]))
+				var cc: Dictionary = e.get("cause", {})
+				fx.append({"k": "text", "pos": e["pos"] + Vector2(0, 30), "t": 0.0, "life": 2.2, "text": why,
+					"c": m.players[int(cc["owner"])].color.lightened(0.3) if cc.has("owner") else SUB, "size": 17})
 				fx.append({"k": "ring", "pos": e["pos"], "t": 0.0, "life": 0.6, "r": 46.0, "c": owner_col})
 			"part":
 				var big: bool = e.get("big", false)
@@ -641,6 +685,9 @@ func _consume_events() -> void:
 				fx.append({"k": "line", "a": e["a"], "b": e["b"], "t": 0.0, "life": 0.6, "c": Color("E9DCC4") if e["t"] == "thread" else Color("9A86D8")})
 			"splat":
 				fx.append({"k": "ring", "pos": e["pos"], "t": 0.0, "life": 0.4, "r": 24.0, "c": Color("2A2F45")})
+			"respawn":
+				fx.append({"k": "text", "pos": e["pos"] + Vector2(0, -30), "t": 0.0, "life": 1.2, "text": "복귀", "c": owner_col.lightened(0.3), "size": 18})
+				fx.append({"k": "ring", "pos": e["pos"], "t": 0.0, "life": 0.6, "r": 40.0, "c": owner_col})
 			"ripple":
 				for k in 3:
 					fx.append({"k": "ring", "pos": e["pos"], "t": -0.08 * k, "life": 0.5, "r": e["radius"] * 0.8, "c": Color(BRASS, 0.9)})
@@ -669,7 +716,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		hover_stone = _stone_at(wp2, -1)
 	if m.phase == "draft" and draft_part != "" and draft_stone < 0:
 		if event.pressed:
-			var pid := m.current_drafter()
+			var pid := drafting_pid
 			var sid := _stone_at(wp2, pid)
 			if sid >= 0:
 				_pick_stone_for_part(pid, sid)
@@ -763,9 +810,12 @@ func _aim_of(stone_id: int, screen_pos: Vector2) -> Dictionary:
 	var sp := w2s(_origin_of(stone_id))
 	var pull := sp - screen_pos
 	var dist := pull.length()
-	if dist < World.STONE_R * CANCEL_R * view_scale:
+	var cancel := World.STONE_R * CANCEL_R * view_scale
+	if dist < cancel:
 		return {}
-	return {"dir": pull.normalized(), "power": clampf(dist / MAX_DRAG, 0.05, 1.0)}
+	# 짧은 드래그는 위치를 다듬는 샷, 긴 드래그는 밀어내는 샷
+	var t := clampf((dist - cancel) / maxf(1.0, MAX_DRAG - cancel), 0.0, 1.0)
+	return {"dir": pull.normalized(), "power": MIN_POWER + (1.0 - MIN_POWER) * pow(t, POWER_CURVE)}
 
 
 # ── 개조 선택 ────────────────────────────────────────────
@@ -793,7 +843,37 @@ func _pick_stone_for_part(pid: int, sid: int) -> void:
 
 
 func _apply_equip(pid: int, part: String, sid: int, side: int, reserve := "") -> void:
+	if online != "" and not m.players[pid].cpu:
+		picked_round[pid] = m.round_no
+		draft_part = ""
+		draft_stone = -1
+		drafting_pid = -1
+		_clear_overlay()
 	_act({"k": "equip", "pid": pid, "part": part, "stone": sid, "side": side, "reserve": reserve})
+	if online != "" and not m.players[pid].cpu:
+		_online_draft_ui()
+
+
+## 온라인: 내 자리 중 아직 안 고른 자리의 카드를 바로 보여준다 (모두 동시에 고르고, 차례대로 공개).
+func _online_draft_ui() -> void:
+	if m == null or m.phase != "draft":
+		return
+	for p in m.draft_queue:
+		if my_seats.has(p) and not m.players[p].cpu and picked_round.get(p, -1) != m.round_no:
+			if drafting_pid != p or overlay == null:
+				drafting_pid = p
+				draft_part = ""
+				draft_stone = -1
+				_show_draft_cards(p)
+			return
+	drafting_pid = -1
+	var waiting := false
+	for p in my_seats:
+		if picked_round.get(p, -1) == m.round_no:
+			waiting = true
+	if waiting and overlay == null:
+		var v := _hint_panel(my_seats[0])
+		v.add_child(_label("골랐어요. 모두 고르면 차례대로 공개돼요.", 16, TEXT, 1))
 
 
 func _do_equip(pid: int, part: String, sid: int, side: int, reserve := "") -> void:
@@ -830,9 +910,10 @@ func _do_equip(pid: int, part: String, sid: int, side: int, reserve := "") -> vo
 			fx.append({"k": "text", "pos": s.pos + Vector2(0, -58), "t": 0.0, "life": 1.8, "text": PartsData.SETS[done_set]["name"] + "!", "c": POWER, "size": 24})
 			fx.append({"k": "ring", "pos": s.pos, "t": 0.0, "life": 0.8, "r": 60.0, "c": POWER})
 		fx.append({"k": "ring", "pos": s.pos, "t": 0.0, "life": 0.5, "r": 34.0, "c": pl.color})
-	draft_part = ""
-	draft_stone = -1
-	_clear_overlay()
+	if online == "":
+		draft_part = ""
+		draft_stone = -1
+		_clear_overlay()
 
 
 # ── 그리기 ───────────────────────────────────────────────
@@ -1035,7 +1116,12 @@ func _draw_stone(s) -> void:
 	# 지금 차례인 퍽 표시
 	if m.phase == "aim" and s.owner == m.current_player() and drag_stone < 0:
 		var pulse := 0.5 + 0.5 * sin(time * 4.0)
-		draw_arc(p, (World.STONE_R + 6 + pulse * 3) * view_scale, 0, TAU, 40, Color(col.lightened(0.35), 0.55 + 0.3 * pulse), 2.0, true)
+		if _is_mine(s.owner):
+			# 내 차례: 퍽 테두리를 황동색으로 굵게
+			draw_arc(p, (World.STONE_R + 5) * view_scale, 0, TAU, 40, Color(BRASS, 0.95), 3.5, true)
+			draw_arc(p, (World.STONE_R + 9 + pulse * 3) * view_scale, 0, TAU, 40, Color(POWER, 0.4 + 0.4 * pulse), 2.0, true)
+		else:
+			draw_arc(p, (World.STONE_R + 6 + pulse * 3) * view_scale, 0, TAU, 40, Color(col.lightened(0.35), 0.55 + 0.3 * pulse), 2.0, true)
 		if m.aim_limit > 0.0 and not m.players[s.owner].cpu:
 			var frac := clampf(aim_left / m.aim_limit, 0.0, 1.0)
 			draw_arc(p, (World.STONE_R + 13) * view_scale, -PI / 2, -PI / 2 + TAU * frac, 40, Color(POWER, 0.85), 3.0, true)
@@ -1449,6 +1535,12 @@ func _draw_aim_over() -> void:
 				_text_outline(cp + Vector2(0, -(World.STONE_R + 8) * view_scale), "딸깍", 13, BRASS, true)
 			"mecha":
 				_draw_mecha_aim(s, item)
+			"land":
+				var lp := w2s(item["a"])
+				var lc: Color = Color("4A5BD8").lightened(0.3) if item["ok"] else Art.RED
+				_dashed_ring(lp, World.STONE_R * view_scale, lc)
+				draw_dashed_line(w2s(item["from"]), lp, Color(lc, 0.6), 1.5, 5.0)
+				_text_outline(lp + Vector2(0, -(World.STONE_R + 8) * view_scale), "착지" if item["ok"] else "착지 막힘", 13, lc, true)
 			"turn":
 				var ta := w2s(item["a"])
 				draw_dashed_line(sp, ta, Color(Art.STEEL, 0.6), 2.0, 6.0)
@@ -1570,9 +1662,9 @@ func _current_aim() -> Dictionary:
 
 
 func _draw_draft_marks() -> void:
-	if m.phase != "draft" or draft_part == "":
+	if m.phase != "draft" or draft_part == "" or drafting_pid < 0:
 		return
-	var pid := m.current_drafter()
+	var pid := drafting_pid
 	var slot := PartsData.slot_of(draft_part)
 	for s in m.world.alive_stones_of(pid):
 		var p := w2s(s.pos)
@@ -1581,6 +1673,11 @@ func _draw_draft_marks() -> void:
 		var cur: String = s.parts[slot]
 		var t := "%s: %s" % [PartsData.SLOT_LABEL[slot], "비어 있음" if cur == "" else PartsData.part_name(cur) + " → 교체"]
 		_small_label(p + Vector2(0, (World.STONE_R + 26) * view_scale + 8), t, TEXT)
+		var sid_set := PartsData.set_of(draft_part)
+		if sid_set != "":
+			var tmp: Dictionary = s.parts.duplicate()
+			tmp[slot] = draft_part
+			_small_label(p + Vector2(0, (World.STONE_R + 26) * view_scale + 24), PartsData.set_label(tmp, sid_set), POWER)
 		if draft_stone == s.id:
 			draw_arc(p, (World.STONE_R + 16) * view_scale, 0, TAU, 40, POWER, 3.0, true)
 
@@ -1657,6 +1754,15 @@ func _draw_turn_card(r: Rect2) -> void:
 		_:
 			title = "경기 끝"
 	_panel(r)
+	if pid >= 0 and _is_mine(pid) and (m.phase == "aim" or m.phase == "draft"):
+		var sb := StyleBoxFlat.new()
+		sb.bg_color = Color(BRASS, 0.08)
+		sb.border_color = BRASS
+		sb.set_border_width_all(2)
+		sb.set_corner_radius_all(12)
+		sb.draw(get_canvas_item(), r)
+		if m.phase == "aim":
+			title = "내 차례 · " + m.players[pid].name
 	var x := r.position.x + 18
 	if pid >= 0:
 		Art.draw_icon(self, r.position + Vector2(18 + 24, 18 + 24), 48, m.players[pid].color, pid)
@@ -1732,6 +1838,8 @@ func _draw_order(r: Rect2) -> void:
 		_txt(Vector2(nx, cy + fs * 0.36), p.name, fs, Color(TEXT, a), font_bold if pid == cur else font, 70)
 		var name_w := (font_bold if pid == cur else font).get_string_size(p.name, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
 		_txt(Vector2(nx + name_w + 8, cy + 4), _seat_word(pid), 12, Color(SUB, a), font, 40)
+		if m.mode == "derby":
+			_txt(Vector2(row.end.x - 70, cy + 5), "%d점" % m.scores[pid], 14, POWER, font_bold, 40, HORIZONTAL_ALIGNMENT_RIGHT)
 		var right := row.end.x - 8
 		if p.out:
 			_txt(Vector2(right, cy + 4), "탈락", 12, Color(SUB, 0.8), font, 50, HORIZONTAL_ALIGNMENT_RIGHT)
@@ -2079,6 +2187,10 @@ func _show_setup() -> void:
 		snd.play("ui_toggle"))
 	th.add_child(cb)
 	col.add_child(tp)
+	# 모드
+	col.add_child(_mode_row())
+	# 오늘의 공방
+	col.add_child(_workshop_row())
 	# 게임 속도
 	var sp_row := HBoxContainer.new()
 	sp_row.add_theme_constant_override("separation", 10)
@@ -2346,8 +2458,15 @@ func _part_card(pid: int, part: String) -> Button:
 	slot_l.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	sh.add_child(slot_l)
 	v.add_child(sh)
+	var arrow := Control.new()
+	arrow.custom_minimum_size = Vector2(40, 18)
+	arrow.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var akind := _motion_of(part)
+	arrow.draw.connect(func(): _draw_motion(arrow, akind))
+	sh.add_child(arrow)
 	var name_l := _label(d["name"], 20, TEXT, 2)
-	var desc_l := _label(d["desc"], 14, SUB)
+	var one: String = str(d["desc"]).split(". ")[0].trim_suffix(".") + "."
+	var desc_l := _label(one, 14, SUB)
 	for l in [name_l, desc_l]:
 		l.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		v.add_child(l)
@@ -2538,14 +2657,17 @@ func _show_result() -> void:
 	tl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	head.add_child(tl)
 	box.add_child(head)
-	var reason := {"last": "마지막까지 퍽이 남았습니다", "limit": "최대 %d바퀴 도달 · 남은 퍽이 가장 많은 사람이 승리" % m.max_rounds, "draw": "한 발에 모두 떨어졌습니다"}
+	var reason := {"score": "개조 더비 %d바퀴 · 상대 퍽을 가장 많이 떨어뜨렸습니다" % m.max_rounds, "last": "마지막까지 퍽이 남았습니다", "limit": "최대 %d바퀴 도달 · 남은 퍽이 가장 많은 사람이 승리" % m.max_rounds, "draw": "한 발에 모두 떨어졌습니다"}
 	box.add_child(_label(reason.get(m.end_reason, ""), 15, SUB))
 	# 순위: 남은 퍽 많은 순, 그다음 늦게 탈락한 순
 	var rank: Array = []
 	for p in m.players:
 		if not p.out:
 			rank.append(p.id)
-	rank.sort_custom(func(a, b): return m.stones_left(a) > m.stones_left(b))
+	if m.mode == "derby":
+		rank.sort_custom(func(a, b): return m.scores[a] > m.scores[b])
+	else:
+		rank.sort_custom(func(a, b): return m.stones_left(a) > m.stones_left(b))
 	var outs: Array = m.out_order.duplicate()
 	outs.reverse()
 	rank.append_array(outs)
@@ -2559,7 +2681,8 @@ func _show_result() -> void:
 		var nm := _label(p.name, 17, Color(TEXT, 1.0 if not p.out else 0.6), 1)
 		nm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		r.add_child(nm)
-		r.add_child(_nw(_label(("퍽 %d개" % m.stones_left(pid)) if not p.out else "%d바퀴 탈락" % p.out_round, 15, SUB)))
+		var right_txt: String = ("%d점" % m.scores[pid]) if m.mode == "derby" else (("퍽 %d개" % m.stones_left(pid)) if not p.out else "%d바퀴 탈락" % p.out_round)
+		r.add_child(_nw(_label(right_txt, 15, SUB)))
 		box.add_child(r)
 		i += 1
 	box.add_child(_label("%d바퀴 · %d발" % [m.round_no, m.shots], 13, SUB))
@@ -2612,8 +2735,12 @@ func _act(a: Dictionary) -> void:
 		return
 	a = JSON.parse_string(JSON.stringify(a))  # 모든 기기가 똑같은 숫자를 쓰게 한 번 직렬화
 	if online == "guest":
-		waiting_req = true
+		if str(a.get("k", "")) != "equip":
+			waiting_req = true
 		net.send_to(host_peer, {"t": "req", "a": a})
+		return
+	if str(a.get("k", "")) == "equip":
+		pending_picks[int(a["pid"])] = a
 		return
 	_host_seq(a)
 
@@ -2639,6 +2766,13 @@ func _can_apply(a: Dictionary) -> bool:
 func _apply_queue() -> void:
 	if online == "":
 		return
+	# 호스트: 미리 고른 장착은 그 자리 차례가 오면 순번을 매긴다
+	if online == "host" and m != null and m.phase == "draft":
+		var cur := m.current_drafter()
+		if pending_picks.has(cur):
+			var pick: Dictionary = pending_picks[cur]
+			pending_picks.erase(cur)
+			_host_seq(pick)
 	net_queue.sort_custom(func(x, y): return int(x["seq"]) < int(y["seq"]))
 	while not net_queue.is_empty():
 		var msg: Dictionary = net_queue[0]
@@ -2721,7 +2855,10 @@ func _host_msg(from: String, d: Dictionary) -> void:
 			var a: Dictionary = d.get("a", {})
 			var seat := _seat_of_peer(from)
 			if state == "play" and seat >= 0 and int(a.get("pid", -1)) == seat:
-				_host_seq(a)
+				if str(a.get("k", "")) == "equip":
+					pending_picks[seat] = a
+				else:
+					_host_seq(a)
 		"_left":
 			var seat2 := _seat_of_peer(from)
 			if seat2 < 0:
@@ -2777,7 +2914,8 @@ func _lobby_state() -> Dictionary:
 			kinds.append("cpu")
 		else:
 			kinds.append("host")
-	return {"t": "lobby", "n": settings["n"], "kinds": kinds, "timed": settings["timed"], "speed": settings["speed"]}
+	return {"t": "lobby", "n": settings["n"], "kinds": kinds, "timed": settings["timed"], "speed": settings["speed"],
+		"workshop": settings.get("workshop", "junk"), "mode": settings.get("mode", "survival")}
 
 
 func _host_broadcast_lobby() -> void:
@@ -2806,6 +2944,7 @@ func _host_start() -> void:
 			my_seats.append(i)
 	var seed_value := randi()
 	net.broadcast({"t": "start", "seed": seed_value, "n": settings["n"], "cpu": cpu, "timed": settings["timed"],
+		"workshop": settings.get("workshop", "junk"), "mode": settings.get("mode", "survival"),
 		"speed": settings["speed"], "owners": owners})
 	_start_match(seed_value)
 
@@ -2905,6 +3044,8 @@ func _guest_msg(from: String, d: Dictionary) -> void:
 			settings["n"] = int(d["n"])
 			settings["timed"] = bool(d["timed"])
 			settings["speed"] = int(d["speed"])
+			settings["workshop"] = str(d.get("workshop", "junk"))
+			settings["mode"] = str(d.get("mode", "survival"))
 			for i in 8:
 				settings["cpu"][i] = i < d["cpu"].size() and bool(d["cpu"][i])
 			my_seats = []
@@ -2962,6 +3103,9 @@ func _show_guest_lobby() -> void:
 			hr.add_child(_nw(_label("내 자리: %s" % Match.NAMES[seat], 22, TEXT, 2)))
 		col.add_child(hr)
 		col.add_child(_label("호스트가 시작하길 기다리고 있어요. 친구 %d인전." % int(guest_lobby["n"]), 16, SUB))
+		var ws_key: String = str(guest_lobby.get("workshop", "junk"))
+		var ws_name: String = "무작위 공방" if ws_key == "random" else PartsData.WORKSHOPS.get(ws_key, PartsData.WORKSHOPS["junk"])["name"]
+		col.add_child(_label("오늘의 공방: %s%s" % [ws_name, "  ·  개조 더비" if str(guest_lobby.get("mode", "")) == "derby" else ""], 15, HINT_GOLD, 1))
 		var grid := GridContainer.new()
 		grid.columns = 2
 		grid.add_theme_constant_override("h_separation", 8)
@@ -2978,3 +3122,232 @@ func _show_guest_lobby() -> void:
 	var leave := _button("나가기", func(): _leave_online())
 	leave.custom_minimum_size = Vector2(140, 46)
 	col.add_child(leave)
+
+
+# ── 오늘의 공방 ──────────────────────────────────────────
+
+const WS_SHORT := {"junk": "정비소", "magic": "마법 상점", "toon": "만화 창고", "all": "전체", "random": "무작위"}
+
+
+func _workshop_row() -> Control:
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 8)
+	var head := HBoxContainer.new()
+	var lbl := _nw(_label("오늘의 공방", 14, LABEL, 1))
+	lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	head.add_child(lbl)
+	var cur: String = settings.get("workshop", "junk")
+	head.add_child(_nw(_label("공용 10종 + 전용 6종" if cur != "all" else "모든 부품", 13, SUB)))
+	v.add_child(head)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 6)
+	for key in ["junk", "magic", "toon", "random", "all"]:
+		var on: bool = cur == key
+		var k: String = key
+		var b := _button(WS_SHORT[key], func():
+			snd.play("ui_toggle")
+			settings["workshop"] = k
+			if online == "host":
+				_host_broadcast_lobby()
+			_show_setup())
+		b.custom_minimum_size = Vector2(0, 38)
+		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		b.add_theme_stylebox_override("normal", _sb(BRASS if on else Color(1, 1, 1, 0.05), Color(1, 1, 1, 0.1), 8))
+		b.add_theme_stylebox_override("hover", _sb(BRASS.lightened(0.1) if on else Color(1, 1, 1, 0.1), Color(1, 1, 1, 0.14), 8))
+		for c in ["font_color", "font_hover_color", "font_pressed_color"]:
+			b.add_theme_color_override(c, INK if on else TEXT)
+		row.add_child(b)
+	v.add_child(row)
+	if cur == "random":
+		v.add_child(_label("시작할 때 세 공방 중 하나가 열립니다.", 13, SUB))
+	else:
+		var info: Dictionary = PartsData.WORKSHOPS[cur]
+		v.add_child(_label(info["desc"], 13, SUB))
+		if cur != "all":
+			var pics := HBoxContainer.new()
+			pics.add_theme_constant_override("separation", 2)
+			for pid in info["parts"]:
+				var demo := {"weapon": "", "aux": "", "prop": ""}
+				demo[PartsData.slot_of(pid)] = pid
+				var pic := _puck_pic(demo, Art.NEUTRAL, -1, Vector2(48, 54), 0.5)
+				pic.tooltip_text = PartsData.part_name(pid)
+				pics.add_child(pic)
+			v.add_child(pics)
+	return v
+
+
+## 시작 화면: 오늘의 공방과 대표 부품 세 개. 누르거나 잠깐 지나면 닫힌다.
+func _show_workshop_intro() -> void:
+	var info: Dictionary = PartsData.WORKSHOPS.get(m.workshop, PartsData.WORKSHOPS["junk"])
+	turn_hold = 3.2
+	var root := _new_overlay(true)
+	var box := _centered_panel(root, 560)
+	box.add_child(_label("오늘의 공방" + ("  ·  개조 더비" if m.mode == "derby" else ""), 15, HINT_GOLD, 1))
+	box.add_child(_label(info["name"], 34, TEXT, 2))
+	box.add_child(_label(info["desc"], 15, SUB))
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 10)
+	for pid in info["rep"]:
+		var cell := VBoxContainer.new()
+		cell.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		var demo := {"weapon": "", "aux": "", "prop": ""}
+		demo[PartsData.slot_of(pid)] = pid
+		cell.add_child(_puck_pic(demo, m.players[0].color, -1, Vector2(0, 110), 1.0))
+		var nm := _label(PartsData.part_name(pid), 16, TEXT, 1)
+		nm.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		cell.add_child(nm)
+		var wh := _label(PartsData.get_part(pid)["when"], 12, BRASS)
+		wh.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		cell.add_child(wh)
+		row.add_child(cell)
+	box.add_child(row)
+	var set_id: String = info.get("set", "")
+	if set_id != "":
+		box.add_child(_label("이 공방에서는 %s 세트를 완성할 수 있어요." % PartsData.SETS[set_id]["name"], 14, POWER))
+	var go := _primary(_button("시작", func():
+		turn_hold = 0.0
+		_clear_overlay()))
+	go.custom_minimum_size = Vector2(160, 46)
+	box.add_child(go)
+	var t := get_tree().create_timer(3.0)
+	var my_overlay := overlay
+	t.timeout.connect(func():
+		if overlay == my_overlay and overlay != null:
+			turn_hold = 0.0
+			_clear_overlay())
+
+
+# ── 개조 카드의 움직임 화살표 ────────────────────────────
+
+const MOTION := {"pea": "fwd", "shotgun": "fan", "claw": "grab", "nose": "push", "magnet": "pull", "bumper": "side",
+	"flipper": "side", "rocket": "fwd2", "retro": "back", "chute": "stop", "hook": "pull", "sucker": "stop",
+	"brake": "stop", "mine": "ring", "trex_head": "grab", "trex_arm": "pull", "trex_leg": "stop",
+	"moon_staff": "fwd", "star_cloak": "turn", "moon_boots": "jump", "shadow_scale": "side", "night_charm": "back",
+	"anchor": "back", "drift_tire": "turn", "flash_step": "jump", "log_sub": "side", "trap_card": "back",
+	"rubber_fist": "fwd2", "charge_palm": "fwd2", "reel": "back", "crab": "side", "side_scroll": "turn",
+	"glass_wings": "turn", "clockwork": "fwd2", "umbrella_gun": "fan", "echo_bell": "ring", "tambourine": "ring",
+	"awaken_shoes": "fwd2", "torn_cape": "stop", "hero_band": "fan", "second_step": "back", "carousel": "turn"}
+
+
+func _motion_of(part: String) -> String:
+	if MOTION.has(part):
+		return MOTION[part]
+	return {"weapon": "fwd", "aux": "ring", "prop": "fwd2"}.get(PartsData.slot_of(part), "fwd")
+
+
+func _arrow_tip(ci: CanvasItem, a: Vector2, b: Vector2, col: Color) -> void:
+	ci.draw_line(a, b, col, 2.0, true)
+	var d := (b - a).normalized()
+	ci.draw_colored_polygon(PackedVector2Array([b + d * 3, b - d * 3 + d.orthogonal() * 3.5, b - d * 3 - d.orthogonal() * 3.5]), col)
+
+
+## 작은 화살표: 오른쪽이 정면. 퍽(점)에서 어떤 움직임이 나오는지.
+func _draw_motion(ci: CanvasItem, kind: String) -> void:
+	var c := Vector2(10, 9)
+	var col := POWER
+	ci.draw_circle(c, 4.5, Color(Art.NEUTRAL))
+	match kind:
+		"fwd":
+			_arrow_tip(ci, c + Vector2(7, 0), c + Vector2(26, 0), col)
+		"fwd2":
+			_arrow_tip(ci, c + Vector2(7, 0), c + Vector2(28, 0), col)
+			ci.draw_line(c + Vector2(12, -4), c + Vector2(18, -4), col, 1.5)
+			ci.draw_line(c + Vector2(12, 4), c + Vector2(18, 4), col, 1.5)
+		"back":
+			_arrow_tip(ci, c + Vector2(26, 0), c + Vector2(9, 0), col)
+		"fan":
+			for a in [-0.4, 0.0, 0.4]:
+				_arrow_tip(ci, c + Vector2.from_angle(a) * 7, c + Vector2.from_angle(a) * 24, col)
+		"pull":
+			_arrow_tip(ci, c + Vector2(28, 0), c + Vector2(9, 0), col)
+		"push":
+			ci.draw_circle(c + Vector2(14, 0), 4.0, Color(Art.STEEL))
+			_arrow_tip(ci, c + Vector2(19, 0), c + Vector2(29, 0), col)
+		"grab":
+			ci.draw_circle(c + Vector2(13, 0), 4.0, Color(Art.STEEL))
+			ci.draw_arc(c + Vector2(13, 0), 6.5, -1.2, 1.2, 8, col, 2.0, true)
+			_arrow_tip(ci, c + Vector2(21, 0), c + Vector2(29, 0), col)
+		"side":
+			_arrow_tip(ci, c + Vector2(4, 0), c + Vector2(4, -8), col)
+			_arrow_tip(ci, c + Vector2(4, 0), c + Vector2(4, 8), col)
+		"stop":
+			ci.draw_line(c + Vector2(7, 0), c + Vector2(20, 0), col, 2.0)
+			ci.draw_line(c + Vector2(22, -6), c + Vector2(22, 6), col, 3.0)
+		"jump":
+			var pts := PackedVector2Array()
+			for i in 9:
+				var t := i / 8.0
+				pts.append(c + Vector2(6 + 22 * t, -9 * sin(PI * t)))
+			ci.draw_polyline(pts, col, 2.0, true)
+			ci.draw_circle(c + Vector2(28, 0), 2.5, col)
+		"turn":
+			ci.draw_line(c + Vector2(7, 0), c + Vector2(20, 0), col, 2.0)
+			_arrow_tip(ci, c + Vector2(20, 0), c + Vector2(20, 8), col)
+		"ring":
+			for r in [7.0, 11.0]:
+				ci.draw_arc(c, r, -1.0, 1.0, 10, col, 1.5, true)
+
+
+# ── 탈락 원인 ────────────────────────────────────────────
+
+func _part_word(part: String) -> String:
+	if part == "body":
+		return "몸통 충돌"
+	if part == "mecha":
+		return "물고 던지기"
+	if part == "moon_set":
+		return "궤도 마법"
+	return PartsData.part_name(part) if PartsData.CATALOG.has(part) else part
+
+
+## 낙하 지점에 띄울 글: "보라 · 콩알총", "초록 · 몸통 충돌", "보라 · 콩알총 → 연쇄 충돌"
+func _cause_text(c: Dictionary, victim_owner: int) -> String:
+	if not c.has("owner"):
+		return "판 밖으로"
+	var att: String = m.players[int(c["owner"])].name
+	if int(c["owner"]) == victim_owner:
+		att = "스스로"
+	var t := "%s · %s" % [att, _part_word(str(c["part"]))]
+	if c.get("chain", false) and str(c["part"]) != "body":
+		t += " → 연쇄 충돌"
+	elif c.get("chain", false):
+		t = "%s · 연쇄 충돌" % att
+	return t
+
+
+func _has_cpu() -> bool:
+	for p in m.players:
+		if p.cpu and not p.out:
+			return true
+	return false
+
+
+func _mode_row() -> Control:
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 6)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 6)
+	var lbl := _nw(_label("모드", 14, LABEL, 1))
+	lbl.custom_minimum_size = Vector2(70, 0)
+	row.add_child(lbl)
+	var cur: String = settings.get("mode", "survival")
+	for key in ["survival", "derby"]:
+		var on: bool = cur == key
+		var k: String = key
+		var b := _button("최후 생존전" if key == "survival" else "개조 더비", func():
+			snd.play("ui_toggle")
+			settings["mode"] = k
+			if online == "host":
+				_host_broadcast_lobby()
+			_show_setup())
+		b.custom_minimum_size = Vector2(0, 38)
+		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		b.add_theme_stylebox_override("normal", _sb(BRASS if on else Color(1, 1, 1, 0.05), Color(1, 1, 1, 0.1), 8))
+		b.add_theme_stylebox_override("hover", _sb(BRASS.lightened(0.1) if on else Color(1, 1, 1, 0.1), Color(1, 1, 1, 0.14), 8))
+		for c in ["font_color", "font_hover_color", "font_pressed_color"]:
+			b.add_theme_color_override(c, INK if on else TEXT)
+		row.add_child(b)
+	v.add_child(row)
+	if cur == "derby":
+		v.add_child(_label("정해진 %d바퀴 동안 모두 계속 둡니다. 떨어진 퍽은 다음 바퀴에 부품을 단 채 돌아오고, 상대 퍽을 떨어뜨리면 1점." % (Match.DERBY_ROUNDS_SMALL if settings["n"] <= 4 else Match.DERBY_ROUNDS_BIG), 12, SUB))
+	return v

@@ -99,15 +99,18 @@ func _wire() -> void:
 
 
 func _drive(g) -> void:
-	if g.state != "play" or g.m == null or g.turn_hold > 0.0 or g.waiting_req or not g.net_queue.is_empty():
+	if g.state != "play" or g.m == null or g.turn_hold > 0.0 or g.waiting_req:
+		return
+	if g.m.phase != "draft" and not g.net_queue.is_empty():
 		return
 	var m = g.m
 	if m.phase == "draft":
-		var pid: int = m.current_drafter()
-		if g._is_mine(pid):
-			var part: String = m.offers[pid][0]
-			var st = m.world.alive_stones_of(pid)[0]
-			g._apply_equip(pid, part, st.id, 1, "")
+		# 동시 선택: 내 자리면 내 차례가 아니어도 바로 고른다
+		for pid in m.draft_queue:
+			if g._is_mine(pid) and g.picked_round.get(pid, -1) != m.round_no:
+				var part: String = m.offers[pid][0]
+				var st = m.world.alive_stones_of(pid)[0]
+				g._apply_equip(pid, part, st.id, 1, "")
 	elif m.phase == "aim":
 		var pid2: int = m.current_player()
 		if g._is_mine(pid2) and not g.has_meta("acted_%d" % m.shots):

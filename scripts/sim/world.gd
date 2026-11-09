@@ -32,6 +32,7 @@ class Stone:
 	var magnet_side := 1      # 보조 좌우(자석팔·딱지 방패): 1 = 진행 방향 오른쪽, -1 = 왼쪽
 	var prop_side := 1        # 추진 좌우(게걸음 바퀴, 옆구리 주문서)
 	var status := {}          # 다음 발사까지 남는 상태: sealed(봉인된 슬롯), cursed(저주 건 플레이어)
+	var cause := {}           # 이번 샷에 이 알을 마지막으로 민 원인 {owner, part, chain} (탈락 원인 표시)
 
 	func copy() -> Stone:
 		var s := Stone.new()
@@ -256,9 +257,66 @@ func shooter() -> Stone:
 	return get_stone(shot.stone_id)
 
 
+## 부품이 다른 알을 민 사건이면, 그 알에 원인을 적는다 (탈락 원인 표시용).
+const TARGETING := ["hook", "magnet", "flipper", "nose", "claw", "carousel", "bumper", "trex_head", "trex_arm",
+	"mecha", "stamp", "sucker", "shadow_scale", "moon_set", "star_cloak", "mushroom", "trap_card", "wind_knot",
+	"moon_well", "night_charm", "rubber_fist", "string_doll", "moon_staff", "bubble", "track", "log_sub"]
+const AREA := {"boom": "mine", "umbrella": "umbrella_gun", "beam": "charge_palm", "hexbreak": "at_field", "cone": "hero_band"}
+
+
 func emit(ev: Dictionary) -> void:
 	if record_events:
 		events.append(ev)
+		_note_cause(ev)
+
+
+func _note_cause(ev: Dictionary) -> void:
+	if shot == null:
+		return
+	var t: String = ev.get("t", "")
+	var owner: int = ev.get("owner", shot.owner)
+	if t == "part" and TARGETING.has(ev.get("part", "")):
+		var tgt := _nearest_other(ev["pos"], STONE_R * 3.0)
+		if tgt != null:
+			tgt.cause = {"owner": owner, "part": ev["part"]}
+	elif t == "bullet_hit":
+		var tgt2 := _nearest_other(ev["pos"], STONE_R + 12.0, false)
+		if tgt2 != null:
+			var part := "pea"
+			match str(ev.get("source", "weapon")):
+				"decal":
+					part = "decal"
+				"turret":
+					part = "copier"
+				"reflect":
+					part = "umbrella"
+				"deflect":
+					part = "shield"
+				_:
+					var sh := shooter()
+					if sh != null and sh.parts["weapon"] != "":
+						part = sh.parts["weapon"]
+			tgt2.cause = {"owner": owner, "part": part}
+	elif AREA.has(t) or t == "ripple":
+		var part2: String = AREA.get(t, "tambourine")
+		var c: Vector2 = ev.get("pos", ev.get("a", Vector2.ZERO))
+		var rr: float = ev.get("radius", 160.0)
+		for o in stones:
+			if o.alive and o.id != shot.stone_id and o.pos.distance_to(c) < rr + STONE_R:
+				o.cause = {"owner": owner, "part": part2}
+
+
+func _nearest_other(p: Vector2, range_len: float, skip_shooter := true) -> Stone:
+	var best: Stone = null
+	var bd := range_len
+	for o in stones:
+		if not o.alive or (skip_shooter and shot != null and o.id == shot.stone_id):
+			continue
+		var d: float = o.pos.distance_to(p)
+		if d < bd:
+			bd = d
+			best = o
+	return best
 
 
 # ── 생성 ─────────────────────────────────────────────────
@@ -359,6 +417,8 @@ func launch(stone_id: int, dir: Vector2, power: float, opts := {}) -> void:
 	shot.path = [s.pos]
 	shot_no += 1
 	knockouts.clear()
+	for o in stones:
+		o.cause = {}
 	s.vel = dir * MAX_SPEED * power
 	s.facing = dir.angle()
 	emit({"t": "launch", "pos": s.pos, "owner": s.owner, "power": power})
@@ -616,6 +676,16 @@ func _collide_stones() -> void:
 			a.vel -= nrm * imp
 			b.vel += nrm * imp
 			emit({"t": "hit", "pos": a.pos + nrm * STONE_R, "strength": rel})
+			if shot != null and record_events:
+				if a.id == shot.stone_id:
+					b.cause = {"owner": shot.owner, "part": "body"}
+				elif b.id == shot.stone_id:
+					a.cause = {"owner": shot.owner, "part": "body"}
+				else:
+					var src: Stone = a if va.length() >= vb.length() else b
+					var dst: Stone = b if src == a else a
+					if not src.cause.is_empty():
+						dst.cause = {"owner": src.cause["owner"], "part": src.cause["part"], "chain": true}
 			if shot != null:
 				if a.id == shot.stone_id:
 					Parts.on_contact(self, a, b, nrm, va, vb)
@@ -847,8 +917,8 @@ func _check_out() -> void:
 		if s.alive and not is_inside(s.pos):
 			s.alive = false
 			s.vel = Vector2.ZERO
-			knockouts.append({"stone": s.id, "owner": s.owner})
-			emit({"t": "out", "pos": s.pos, "owner": s.owner})
+			knockouts.append({"stone": s.id, "owner": s.owner, "cause": s.cause.duplicate()})
+			emit({"t": "out", "pos": s.pos, "owner": s.owner, "cause": s.cause.duplicate(), "stone": s.id})
 			Ex.on_out(self, s)
 			if shot != null and (shot.grip_id == s.id or shot.stone_id == s.id):
 				shot.grip_timer = 0.0

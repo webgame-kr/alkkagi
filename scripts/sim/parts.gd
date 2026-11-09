@@ -410,6 +410,13 @@ static func aim_preview(w, s, dir: Vector2, power: float) -> Array:
 		out.append({"k": "clock", "a": s.pos + dir * travel_after(power * 1120.0, D.num("clockwork", "delay"))})
 	if D.set_complete(s.parts, "trex"):
 		out.append({"k": "mecha", "a": s.pos, "dir": dir, "edge": s.pos + dir * w.ray_to_edge(s.pos, dir)})
+	if s.parts["prop"] == "flash_step":
+		# 순보 깔창: 직선으로 갈 때 처음 정면에 닿을 알 뒤의 착지점
+		var reach := travel_after(power * 1120.0, 6.0)
+		var t2 = first_on_ray(w, s.pos, dir, reach, s.id)
+		if t2 != null and absf((t2.pos - s.pos).cross(dir)) < R * 0.9:
+			var spot: Vector2 = t2.pos + dir * (R * 2.0 + 2.0)
+			out.append({"k": "land", "a": spot, "from": t2.pos, "ok": w.is_inside(spot) and _free_spot(w, spot, [s.id, t2.id])})
 	if s.parts["prop"] == "side_scroll":
 		var turn_at: Vector2 = s.pos + dir * D.num("side_scroll", "dist")
 		out.append({"k": "turn", "a": turn_at, "b": turn_at + dir.rotated(PI / 2.0 * s.prop_side) * 60.0})

@@ -35,6 +35,8 @@ func _initialize() -> void:
 		"test_cloud_mailbox", "test_ice_and_wall", "test_star_cloak_circle", "test_moon_well",
 		"test_mushroom_and_wind", "test_second_step", "test_rebound_and_string", "test_at_field_and_beam",
 		"test_hero_band_and_shoes", "test_all_parts_have_art",
+		"test_workshop_pools", "test_offer_fits_empty_slots", "test_min_power_moves_one_cell",
+		"test_knockout_causes", "test_derby_mode",
 	]
 	for t in tests:
 		var before := failures
@@ -1183,3 +1185,109 @@ func test_all_parts_have_art() -> void:
 	for id in PartsData.ids():
 		check(hand.has(id) or AD.SHAPES.has(id), "art for " + id)
 	check(PartsData.ids().size() == 66, "66 parts: %d" % PartsData.ids().size())
+
+
+# ── 오늘의 공방 ──────────────────────────────────────────
+
+func test_workshop_pools() -> void:
+	for ws in ["junk", "magic", "toon"]:
+		var pool := PartsData.workshop_pool(ws)
+		check(pool.size() == 16, "%s: 16 parts" % ws)
+		var m := Match.new()
+		m.setup(4, [], 7, false, {"workshop": ws})
+		check(m.workshop == ws, "workshop set")
+		for i in 30:
+			for id in m.roll_offer(0):
+				check(pool.has(id), "%s offers only its parts: %s" % [ws, id])
+	check(PartsData.workshop_pool("all").size() == PartsData.ids().size(), "all = every part")
+
+
+func test_offer_fits_empty_slots() -> void:
+	var m := Match.new()
+	m.setup(4, [], 8, false, {"workshop": "junk"})
+	var mine: Array = m.world.alive_stones_of(0)
+	# 무기·보조는 다 차고 추진만 비어 있는 상황
+	for st in mine:
+		st.parts = {"weapon": "pea", "aux": "magnet", "prop": ""}
+	for i in 40:
+		var offer := m.roll_offer(0)
+		var fit := 0
+		for id in offer:
+			if PartsData.slot_of(id) == "prop":
+				fit += 1
+		check(fit >= 2, "at least two candidates fit an empty slot: %s" % str(offer))
+
+
+func test_min_power_moves_one_cell() -> void:
+	var w := make_world()
+	var a := w.add_stone(0, Vector2(0, 0), 0)
+	shoot(w, a.id, Vector2.RIGHT, 0.27)
+	check(a.pos.x > 30.0 and a.pos.x < 70.0, "shortest pull moves about one puck width: %.0f" % a.pos.x)
+
+
+func test_knockout_causes() -> void:
+	# 콩알총
+	var w := make_world()
+	var a := w.add_stone(0, Vector2(-100, 0), 0)
+	w.add_stone(1, Vector2(300, 0), 0)
+	a.parts["weapon"] = "pea"
+	shoot(w, a.id, Vector2.RIGHT, 0.05)
+	check(w.knockouts.size() == 1 and w.knockouts[0]["cause"].get("part", "") == "pea", "bullet knockout: %s" % str(w.knockouts))
+	# 몸통 충돌
+	var w2 := make_world()
+	var b := w2.add_stone(0, Vector2(0, 0), 0)
+	w2.add_stone(1, Vector2(250, 0), 0)
+	shoot(w2, b.id, Vector2.RIGHT, 1.0)
+	check(w2.knockouts.size() >= 1 and w2.knockouts[0]["cause"].get("part", "") == "body", "body knockout")
+	check(int(w2.knockouts[0]["cause"].get("owner", -1)) == 0, "credited to the shooter")
+	# 연쇄
+	var w3 := make_world()
+	var c := w3.add_stone(0, Vector2(100, 0), 0)
+	w3.add_stone(1, Vector2(170, 0), 0)
+	w3.add_stone(2, Vector2(260, 0), 0)
+	shoot(w3, c.id, Vector2.RIGHT, 1.0)
+	var chain := false
+	for k in w3.knockouts:
+		if int(k["owner"]) == 2 and k["cause"].get("chain", false):
+			chain = true
+	check(chain, "chain knockout marked: %s" % str(w3.knockouts))
+
+
+func test_derby_mode() -> void:
+	var m := Match.new()
+	m.setup(4, [], 12, false, {"mode": "derby"})
+	check(m.max_rounds == 8, "derby: fixed rounds")
+	_finish_draft(m)
+	var shooter: int = m.current_player()
+	var victim_owner := (shooter + 1) % 4
+	var vic = m.world.alive_stones_of(victim_owner)[0]
+	var me = m.world.alive_stones_of(shooter)[0]
+	vic.parts["weapon"] = "pea"
+	# 내 퍽 바로 앞에 상대 퍽을 놓고 판 밖으로 밀어낸다
+	var dir: Vector2 = (-me.pos).normalized()
+	vic.pos = me.pos + dir * 60.0
+	var target_dir := dir
+	m.shoot(me.id, target_dir, 1.0)
+	m.world.run_until_settled()
+	var fell: bool = not vic.alive
+	m.finish_shot()
+	if fell:
+		check(m.scores[shooter] >= 1, "point for the knockout")
+	check(not m.players[victim_owner].out, "nobody is eliminated in derby")
+	# 바퀴가 바뀌면 떨어진 퍽이 부품을 단 채 돌아온다
+	for p in m.players:
+		for st in m.world.alive_stones_of(p.id):
+			pass
+	vic.alive = false
+	var guard := 0
+	var r0: int = m.round_no
+	while m.round_no == r0 and guard < 50:
+		guard += 1
+		_finish_draft(m)
+		m.skip_turn()
+	check(vic.alive and vic.parts["weapon"] == "pea", "respawned with its parts")
+	while m.phase != "over" and guard < 400:
+		guard += 1
+		_finish_draft(m)
+		m.skip_turn()
+	check(m.phase == "over" and m.end_reason == "score", "ends by score after the fixed rounds")
