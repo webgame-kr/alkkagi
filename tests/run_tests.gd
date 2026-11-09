@@ -350,19 +350,16 @@ func test_layout_all_counts() -> void:
 					check(o.pos.distance_to(s.pos) > 50.0, "%d players: no overlap" % n)
 	var m2 := Match.new()
 	m2.setup(2, [], 1, false)
-	check(m2.world.shape == "square" and m2.max_rounds == 12, "2p square, 12 rounds")
+	check(m2.world.shape == "square" and m2.max_rounds == 0, "2p square, no round limit")
 	var m6 := Match.new()
 	m6.setup(6, [], 1, true)
-	check(m6.world.size > 340.0 and m6.max_rounds == 6 and m6.aim_limit == 8.0, "6p wide circle, 6 rounds, timer")
+	check(m6.world.size > 340.0 and m6.max_rounds == 0 and m6.aim_limit == 8.0, "6p wide circle, no limit, timer")
 
 
 func test_draft_schedule_and_equip() -> void:
 	var m := Match.new()
 	m.setup(4, [], 3, false)
-	check(m.phase == "aim" and m.round_no == 1, "4p: round 1 has no draft")
-	for i in 4:
-		m.skip_turn()
-	check(m.round_no == 2 and m.phase == "draft", "4p: draft at round 2")
+	check(m.phase == "draft" and m.round_no == 1, "draft from round 1")
 	check(m.draft_queue.size() == 4, "everyone alive picks")
 	var pid := m.current_drafter()
 	check(pid == m.order[0], "local draft follows the start order")
@@ -378,24 +375,36 @@ func test_draft_schedule_and_equip() -> void:
 	m.offers[pid2] = ["shotgun", "rocket", "mine"]
 	m.equip(pid2, "shotgun", s2.id)
 	check(s2.parts["weapon"] == "shotgun", "same slot replaced")
-	var m6 := Match.new()
-	m6.setup(6, [], 3, false)
-	check(m6.phase == "draft" and m6.round_no == 1, "5-8p: draft from round 1")
-	check(m6.draft_rounds == [1, 2, 3], "5-8p schedule")
+	# 매 바퀴 개조
+	_finish_draft(m)
+	for i in 4:
+		m.skip_turn()
+	check(m.round_no == 2 and m.phase == "draft", "draft again at round 2")
+	_finish_draft(m)
+	for i in 4:
+		m.skip_turn()
+	check(m.round_no == 3 and m.phase == "draft", "and every round after")
 	# 시작 자리는 바퀴마다 넘어간다
 	var m3 := Match.new()
 	m3.setup(3, [], 5, false)
+	_finish_draft(m3)
 	var first: int = m3.order[0]
 	for i in 3:
 		m3.skip_turn()
-	m3.draft_queue.clear()
-	m3.phase = "aim"
+	_finish_draft(m3)
 	check(m3.order[0] == (first + 1) % 3, "start seat rotates")
+
+
+func _finish_draft(m) -> void:
+	if m.phase == "draft":
+		m.draft_queue.clear()
+		m.phase = "aim"
 
 
 func test_round_limit_winner() -> void:
 	var m := Match.new()
 	m.setup(3, [], 9, false)
+	m.max_rounds = 8                  # 제한을 켠 경우의 판정 (기본은 제한 없음)
 	m.world.stones[0].alive = false   # 플레이어 0 하나 잃음
 	var guard := 0
 	while m.phase != "over" and guard < 200:
@@ -411,6 +420,7 @@ func test_round_limit_winner() -> void:
 func test_last_player_wins() -> void:
 	var m := Match.new()
 	m.setup(4, [], 2, false)
+	_finish_draft(m)
 	for s in m.world.stones:
 		if s.owner != 2:
 			s.alive = false
@@ -421,6 +431,7 @@ func test_last_player_wins() -> void:
 func test_draw_when_nobody_left() -> void:
 	var m := Match.new()
 	m.setup(2, [], 2, false)
+	_finish_draft(m)
 	for s in m.world.stones:
 		s.alive = false
 	m.skip_turn()
@@ -902,6 +913,7 @@ func test_hero_last_cut() -> void:
 func test_relic_ribbon() -> void:
 	var m := Match.new()
 	m.setup(2, [], 31, false)
+	_finish_draft(m)
 	var mine: Array = m.world.alive_stones_of(0)
 	mine[0].parts = {"weapon": "pea", "aux": "relic_ribbon", "prop": ""}
 	mine[0].alive = false
@@ -1011,6 +1023,7 @@ func test_side_scroll() -> void:
 func test_cloud_mailbox() -> void:
 	var m := Match.new()
 	m.setup(2, [], 51, false)
+	_finish_draft(m)
 	var w = m.world
 	var s = w.alive_stones_of(m.current_player())[0]
 	s.parts["prop"] = "cloud_mailbox"

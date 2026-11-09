@@ -30,7 +30,7 @@ func _initialize() -> void:
 		rng.seed = g
 		var guard := 0
 		var first_out := 0
-		while m.phase != "over" and guard < 500:
+		while m.phase != "over" and guard < 4000:
 			guard += 1
 			if m.phase == "draft":
 				var pid := m.current_drafter()

@@ -10,6 +10,7 @@ const Bot = preload("res://scripts/sim/bot.gd")
 const Art = preload("res://scripts/stone_art.gd")
 const FxData = preload("res://scripts/fx_data.gd")
 const SoundMgr = preload("res://scripts/sound.gd")
+const NetMgr = preload("res://scripts/net.gd")
 
 # 팔레트 (디자인 시안의 「테이블과 재질」)
 const BG_OUT := Color("121417")          # 판 밖
@@ -41,7 +42,8 @@ var font: Font
 var font_semi: Font
 var font_bold: Font
 var m: Match
-var settings := {"n": 4, "cpu": [false, true, true, true, true, true, true, true], "timed": false, "speed": 1}
+var settings := {"n": 4, "cpu": [false, true, true, true, true, true, true, true], "timed": false, "speed": 1,
+	"friend": [false, false, false, false, false, false, false, false]}
 ## 게임 속도: 퍽이 움직이는 빠르기(재생 배율), CPU가 뜸 들이는 시간, 차례 사이 쉬는 시간.
 const SPEEDS := [
 	{"name": "느리게", "play": 0.5, "think": 1.4, "aim_show": 1.6, "hold": 1.1},
@@ -96,6 +98,19 @@ var menu_btn: Button
 var parts_btn: Button
 var _panel_sb: StyleBoxFlat
 var snd: Node
+# 친구 초대 (온라인)
+var net: Node
+var online := ""              # "" | "host" | "guest"
+var my_seats: Array = []      # 이 기기가 두는 자리
+var friend_peer := {}         # 호스트: 자리 → 친구 peer id
+var host_peer := ""           # 손님: 호스트 peer id
+var guest_lobby := {}         # 손님: 호스트가 보낸 대기실 상태
+var net_queue: Array = []     # 순서가 매겨진 행동 {seq, a}
+var net_seq_out := 0          # 호스트: 지금까지 매긴 순번
+var net_applied := 0          # 적용한 마지막 순번
+var waiting_req := false      # 손님: 보낸 행동이 돌아오길 기다리는 중
+var _net_status_seen := ""
+var lobby_col: Control = null  # 대기실 왼쪽 열: 매 프레임 세로 위치를 맞춘다 (웹 첫 프레임은 화면 크기가 늦게 잡힌다)
 var sound_btn: Button
 var _cancel_state := false    # 조준이 취소 원 안에 있었는지 (소리용)
 var _tick_mark := -1          # 마지막으로 째깍 소리를 낸 초
@@ -113,6 +128,8 @@ func _ready() -> void:
 	_panel_sb.set_corner_radius_all(12)
 	snd = SoundMgr.new()
 	add_child(snd)
+	net = NetMgr.new()
+	add_child(net)
 	ui = CanvasLayer.new()
 	add_child(ui)
 	menu_btn = _button("≡", func(): _show_setup())
@@ -137,6 +154,9 @@ func _ready() -> void:
 	_layout()
 	_show_setup()
 	_debug_args()
+	var room: String = net.room_param() if net.available else ""
+	if room != "":
+		_join_room(room)
 
 
 func _make_theme() -> Theme:
@@ -304,11 +324,25 @@ func s2w(p: Vector2) -> Vector2:
 
 # ── 경기 시작 ────────────────────────────────────────────
 
-func _start_match() -> void:
+func _start_match(seed_value := -1) -> void:
+	if online == "host" and seed_value < 0:
+		_host_start()
+		return
+	if seed_value < 0:
+		seed_value = randi()
+	if online == "":
+		my_seats = []
+		for i in settings["n"]:
+			if not settings["cpu"][i]:
+				my_seats.append(i)
 	m = Match.new()
-	m.setup(settings["n"], settings["cpu"], randi(), settings["timed"])
+	m.setup(settings["n"], settings["cpu"], seed_value, settings["timed"])
 	state = "play"
 	turn_hold = 0.0
+	net_queue.clear()
+	net_applied = 0
+	net_seq_out = 0
+	waiting_req = false
 	fx.clear()
 	log_lines.clear()
 	bot = null
@@ -326,6 +360,11 @@ func _start_match() -> void:
 	_layout()
 	var sp: Dictionary = m.players[m.current_player()]
 	_log("%d인전 시작, 선공은 %s" % [m.n, sp.name], sp.color)
+	if online != "":
+		var mine: Array = []
+		for sid in my_seats:
+			mine.append(m.players[sid].name)
+		_log("온라인 대전 · 내 자리: %s" % ", ".join(mine), BRASS)
 	snd.start_music()
 	snd.play("round_start", -3.0)
 
@@ -333,6 +372,12 @@ func _start_match() -> void:
 func _process(delta: float) -> void:
 	time += delta
 	_place()
+	if online != "":
+		_net_poll()
+	if state == "setup" and is_instance_valid(lobby_col):
+		var vs3 := get_viewport_rect().size
+		var h3 := lobby_col.get_combined_minimum_size().y
+		lobby_col.position.y = clampf((vs3.y - h3) * 0.5, 12.0, maxf(12.0, vs3.y - h3 - 12.0))
 	banner_t = maxf(0.0, banner_t - delta)
 	for f in fx:
 		f["t"] += delta
@@ -350,6 +395,7 @@ func _update_play(delta: float) -> void:
 	if turn_hold > 0.0:
 		turn_hold -= delta
 		return
+	_apply_queue()
 	var key := "%s|%d|%d|%d" % [m.phase, m.round_no, m.turn_pos, m.draft_queue.size()]
 	if key != turn_key:
 		turn_key = key
@@ -375,7 +421,7 @@ func _update_play(delta: float) -> void:
 			snd.slide(fastest)
 		"draft":
 			var pid := m.current_drafter()
-			if m.players[pid].cpu:
+			if m.players[pid].cpu and _drives_cpu():
 				draft_wait -= delta
 				if draft_wait <= 0.0:
 					var rng := RandomNumberGenerator.new()
@@ -387,8 +433,9 @@ func _update_play(delta: float) -> void:
 			if drag_stone >= 0:
 				drag_hold += delta
 			if m.players[pid].cpu:
-				_update_cpu(delta, pid)
-			elif m.aim_limit > 0.0:
+				if _drives_cpu():
+					_update_cpu(delta, pid)
+			elif _is_mine(pid) and m.aim_limit > 0.0 and not waiting_req:
 				aim_left -= delta
 				var sec := int(ceil(aim_left))
 				if sec <= 3 and sec >= 1 and sec != _tick_mark:
@@ -396,9 +443,7 @@ func _update_play(delta: float) -> void:
 					snd.play("timer_warning" if sec == 3 else "timer_tick", -2.0)
 				if aim_left <= 0.0:
 					drag_stone = -1
-					_log("%s 시간 초과, 차례를 넘겨요" % m.players[pid].name, m.players[pid].color)
-					_banner("시간 초과")
-					m.skip_turn()
+					_act({"k": "skip", "pid": pid})
 		"over":
 			if state == "play":
 				_show_result()
@@ -410,17 +455,14 @@ func _update_cpu(delta: float, pid: int) -> void:
 		if cpu_aim["t"] <= 0.0:
 			var c: Dictionary = cpu_aim
 			cpu_aim = {}
-			snd.play("flick_release", lerpf(-8.0, 0.0, c["power"]))
-			m.shoot(c["stone"], c["dir"], c["power"], {"charged": true})
+			_act({"k": "shot", "pid": pid, "stone": c["stone"], "dir": [c["dir"].x, c["dir"].y], "power": c["power"], "charged": true})
 		return
 	if bot == null:
 		bot_wait -= delta
 		if bot_wait > 0.0:
 			return
 		for t in m.relic_targets(pid):
-			var part: String = m.players[pid].relic
-			if m.equip_relic(pid, t.id):
-				_log("%s 유품 %s 달았어요" % [_j(m.players[pid].name, "이", "가"), _j(PartsData.part_name(part), "을", "를")], m.players[pid].color)
+			_act({"k": "relic", "pid": pid, "stone": t.id})
 			break
 		bot = Bot.new()
 		bot.begin(m, pid, randi())
@@ -436,7 +478,7 @@ func _update_cpu(delta: float, pid: int) -> void:
 		bot_us = 0
 		bot = null
 		if r.is_empty():
-			m.skip_turn()
+			_act({"k": "skip", "pid": pid})
 		else:
 			cpu_aim = r.duplicate()
 			cpu_aim["t"] = _sp("aim_show")
@@ -453,7 +495,7 @@ func _on_phase_changed() -> void:
 			relic_mode = false
 			_tick_mark = -1
 			snd.play("turn_start", -8.0)
-			if not p.cpu and not m.relic_targets(p.id).is_empty():
+			if _is_mine(p.id) and not m.relic_targets(p.id).is_empty():
 				_show_relic_hint(p.id)
 		"draft":
 			var pid := m.current_drafter()
@@ -465,10 +507,10 @@ func _on_phase_changed() -> void:
 				if m.round_no > 1:
 					snd.play("round_start", -4.0)
 			snd.play("part_offer", -4.0)
-			if m.players[pid].cpu:
-				_clear_overlay()
-			else:
+			if _is_mine(pid):
 				_show_draft_cards(pid)
+			else:
+				_clear_overlay()
 
 
 func _after_shot() -> void:
@@ -632,7 +674,7 @@ func _unhandled_input(event: InputEvent) -> void:
 			if sid >= 0:
 				_pick_stone_for_part(pid, sid)
 		return
-	if m.phase != "aim" or m.players[m.current_player()].cpu or turn_hold > 0.0:
+	if m.phase != "aim" or not _is_mine(m.current_player()) or turn_hold > 0.0 or waiting_req:
 		return
 	if relic_mode:
 		if event.pressed:
@@ -657,8 +699,8 @@ func _unhandled_input(event: InputEvent) -> void:
 		var sid3 := drag_stone
 		drag_stone = -1
 		if not aim.is_empty():
-			snd.play("flick_release", lerpf(-8.0, 0.0, aim["power"]))
-			m.shoot(sid3, aim["dir"], aim["power"], {"charged": _charged(sid3), "from_cloud": drag_cloud})
+			_act({"k": "shot", "pid": m.current_player(), "stone": sid3, "dir": [aim["dir"].x, aim["dir"].y],
+				"power": aim["power"], "charged": _charged(sid3), "from_cloud": drag_cloud})
 		else:
 			snd.play("aim_cancel", -4.0)
 		drag_cloud = false
@@ -751,6 +793,10 @@ func _pick_stone_for_part(pid: int, sid: int) -> void:
 
 
 func _apply_equip(pid: int, part: String, sid: int, side: int, reserve := "") -> void:
+	_act({"k": "equip", "pid": pid, "part": part, "stone": sid, "side": side, "reserve": reserve})
+
+
+func _do_equip(pid: int, part: String, sid: int, side: int, reserve := "") -> void:
 	var s = m.world.get_stone(sid)
 	var slot := PartsData.slot_of(part)
 	var old: String = s.parts[slot]
@@ -878,7 +924,7 @@ func _draw_lobby_preview(vs: Vector2) -> void:
 		Art.draw_icon(self, pk[1], 2 * r, Match.COLORS[i], i)
 	# 판 정보
 	var info := [["판", "정사각 16칸" if square else "원형 지름 %d칸" % int(units)], ["퍽", "%d개씩" % (4 if square else 3)],
-		["최대", "%d바퀴" % (12 if square else (8 if n <= 4 else 6))], ["개조", "1, 2, 3바퀴" if n >= 5 else "2, 3, 4바퀴"]]
+		["승리", "한 명 남을 때까지"], ["개조", "매 바퀴"]]
 	var x0 := c.x - 230.0
 	var y0 := c.y + 230.0 + 40.0
 	for k in 4:
@@ -1600,6 +1646,8 @@ func _draw_turn_card(r: Rect2) -> void:
 			title = "%s 차례" % m.players[pid].name
 			if m.players[pid].cpu:
 				sub = "CPU가 생각 중이에요" if m.phase == "aim" else "CPU가 쐈어요"
+			elif not _is_mine(pid):
+				sub = "친구가 조준하고 있어요" if m.phase == "aim" else "퍽이 멈추길 기다려요"
 			else:
 				sub = "퍽 하나를 당겨 조준하세요" if m.phase == "aim" else "퍽이 멈추길 기다려요"
 		"draft":
@@ -1618,13 +1666,18 @@ func _draw_turn_card(r: Rect2) -> void:
 	# 바퀴 진행
 	var y := r.position.y + 96
 	_txt(Vector2(r.position.x + 18, y), "%d바퀴째" % m.round_no, 13, LABEL, font_semi)
-	_txt(Vector2(r.end.x - 18, y), "%d바퀴까지" % m.max_rounds, 13, SUB, font, 120, HORIZONTAL_ALIGNMENT_RIGHT)
+	if m.max_rounds > 0:
+		_txt(Vector2(r.end.x - 18, y), "%d바퀴까지" % m.max_rounds, 13, SUB, font, 120, HORIZONTAL_ALIGNMENT_RIGHT)
+	else:
+		_txt(Vector2(r.end.x - 18, y), "한 명 남을 때까지", 13, SUB, font, 150, HORIZONTAL_ALIGNMENT_RIGHT)
+	# 바퀴 진행: 제한이 없으면 남은 사람 수로 보여준다
 	var seg_r := Rect2(r.position.x + 18, y + 8, r.size.x - 36, 5)
-	var n := m.max_rounds
+	var n := m.max_rounds if m.max_rounds > 0 else m.n
+	var lit := m.round_no if m.max_rounds > 0 else m.alive_players().size()
 	var gap := 3.0
 	var w := (seg_r.size.x - gap * (n - 1)) / n
-	for i in n:
-		draw_rect(Rect2(seg_r.position.x + i * (w + gap), seg_r.position.y, w, 5), BRASS if i < m.round_no else Color(1, 1, 1, 0.14))
+	for i2 in n:
+		draw_rect(Rect2(seg_r.position.x + i2 * (w + gap), seg_r.position.y, w, 5), BRASS if i2 < lit else Color(1, 1, 1, 0.14))
 	# 세로 화면: 힘을 카드 오른쪽 위에
 	if portrait and m.phase == "aim":
 		var info := _current_aim()
@@ -1678,7 +1731,7 @@ func _draw_order(r: Rect2) -> void:
 		var nx := row.position.x + 44
 		_txt(Vector2(nx, cy + fs * 0.36), p.name, fs, Color(TEXT, a), font_bold if pid == cur else font, 70)
 		var name_w := (font_bold if pid == cur else font).get_string_size(p.name, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
-		_txt(Vector2(nx + name_w + 8, cy + 4), "CPU" if p.cpu else "사람", 12, Color(SUB, a), font, 40)
+		_txt(Vector2(nx + name_w + 8, cy + 4), _seat_word(pid), 12, Color(SUB, a), font, 40)
 		var right := row.end.x - 8
 		if p.out:
 			_txt(Vector2(right, cy + 4), "탈락", 12, Color(SUB, 0.8), font, 50, HORIZONTAL_ALIGNMENT_RIGHT)
@@ -1769,7 +1822,7 @@ func _draw_aimed(r: Rect2) -> void:
 	var empty: bool = s == null or (s.parts["weapon"] == "" and s.parts["aux"] == "" and s.parts["prop"] == "")
 	var set_txt: String = PartsData.set_label(s.parts) if s != null else ""
 	var first_hint := ""
-	if empty and m.round_no < (m.draft_rounds[0] if not m.draft_rounds.is_empty() else 99):
+	if empty and not m.draft_rounds.is_empty() and m.round_no < m.draft_rounds[0]:
 		first_hint = "첫 개조는 %d바퀴가 시작될 때 해요." % m.draft_rounds[0]
 	var step := 34.0
 	if not portrait:
@@ -1928,6 +1981,9 @@ func _centered_panel(root: Control, min_w: float, bg := Color(14 / 255.0, 16 / 2
 
 
 func _show_setup() -> void:
+	if online == "guest":
+		_show_guest_lobby()
+		return
 	state = "setup"
 	m = null
 	menu_btn.visible = false
@@ -1937,10 +1993,12 @@ func _show_setup() -> void:
 	var vs := get_viewport_rect().size
 	var narrow := vs.x < 900
 	var col := VBoxContainer.new()
-	col.add_theme_constant_override("separation", 26 if not narrow else 18)
+	col.add_theme_constant_override("separation", 26 if (not narrow and vs.y >= 760.0) else 14)
 	var width := 540.0 if not narrow else vs.x - 32.0
 	col.custom_minimum_size = Vector2(width, 0)
-	col.position = Vector2(72, maxf(40.0, (vs.y - 680.0) * 0.5 + 56.0)) if not narrow else Vector2(16, 24)
+	# 화면이 낮으면 위로 붙이고 간격을 줄인다
+	var top := maxf(24.0, (vs.y - 760.0) * 0.5 + 40.0) if not narrow else 24.0
+	col.position = Vector2(72.0 if not narrow else 16.0, top)
 	root.add_child(col)
 	# 제목
 	var head := VBoxContainer.new()
@@ -2045,6 +2103,8 @@ func _show_setup() -> void:
 	snd_b.custom_minimum_size = Vector2(96, 38)
 	sp_row.add_child(snd_b)
 	col.add_child(sp_row)
+	# 친구 초대
+	col.add_child(_invite_row())
 	# 시작
 	var row2 := HBoxContainer.new()
 	row2.add_theme_constant_override("separation", 10)
@@ -2060,15 +2120,17 @@ func _show_setup() -> void:
 	cat.add_theme_stylebox_override("normal", csb)
 	row2.add_child(cat)
 	col.add_child(row2)
+	lobby_col = col
 
 
 func _seat_button(i: int) -> Button:
-	var human: bool = not settings["cpu"][i]
+	var friend: bool = settings["friend"][i] and online == "host"
+	var human: bool = not settings["cpu"][i] and not friend
 	var b := _button("", func(): _toggle_cpu(i))
 	b.custom_minimum_size = Vector2(0, 44)
 	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	b.tooltip_text = "%s 자리, 지금 %s. 눌러서 바꾸기" % [Match.NAMES[i], "사람" if human else "CPU"]
-	var border := Color(BRASS, 0.7) if human else Color(1, 1, 1, 0.12)
+	var border := Color(BRASS, 0.7) if human else (Color("7FB2FF", 0.7) if friend else Color(1, 1, 1, 0.12))
 	b.add_theme_stylebox_override("normal", _sb(Color(1, 1, 1, 0.05), border, 8))
 	b.add_theme_stylebox_override("hover", _sb(Color(1, 1, 1, 0.09), border, 8))
 	b.add_theme_stylebox_override("pressed", _sb(Color(1, 1, 1, 0.09), border, 8))
@@ -2089,7 +2151,7 @@ func _seat_button(i: int) -> Button:
 	nm.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	h.add_child(nm)
 	var pill := PanelContainer.new()
-	var psb := _sb(BRASS if human else Color(1, 1, 1, 0.1), Color(0, 0, 0, 0), 999)
+	var psb := _sb(BRASS if human else (Color("7FB2FF") if friend else Color(1, 1, 1, 0.1)), Color(0, 0, 0, 0), 999)
 	psb.set_border_width_all(0)
 	psb.content_margin_left = 10
 	psb.content_margin_right = 10
@@ -2098,7 +2160,10 @@ func _seat_button(i: int) -> Button:
 	pill.add_theme_stylebox_override("panel", psb)
 	pill.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	pill.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var pl := _nw(_label("사람" if human else "CPU", 13, INK if human else LABEL, 1))
+	var word := "사람" if human else "CPU"
+	if friend:
+		word = "친구 · 접속" if friend_peer.has(i) else "친구 · 대기"
+	var pl := _nw(_label(word, 13, INK if human or friend else LABEL, 1))
 	pl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	pl.custom_minimum_size = Vector2(28, 0)
 	pill.add_child(pl)
@@ -2121,12 +2186,33 @@ func _set_count(n: int) -> void:
 	snd.play("ui_toggle")
 	settings["n"] = n
 	settings["timed"] = n >= 5
+	for seat in friend_peer.keys():
+		if seat >= n:
+			net.send_to(friend_peer[seat], {"t": "full"})
+			friend_peer.erase(seat)
+	if online == "host":
+		_host_broadcast_lobby()
 	_show_setup()
 
 
 func _toggle_cpu(i: int) -> void:
 	snd.play("ui_toggle")
-	settings["cpu"][i] = not settings["cpu"][i]
+	if online == "host":
+		# 사람 → CPU → 친구 → 사람
+		if settings["friend"][i]:
+			settings["friend"][i] = false
+			settings["cpu"][i] = false
+			if friend_peer.has(i):
+				net.send_to(friend_peer[i], {"t": "full"})
+				friend_peer.erase(i)
+		elif settings["cpu"][i]:
+			settings["cpu"][i] = false
+			settings["friend"][i] = true
+		else:
+			settings["cpu"][i] = true
+		_host_broadcast_lobby()
+	else:
+		settings["cpu"][i] = not settings["cpu"][i]
 	_show_setup()
 
 
@@ -2394,11 +2480,15 @@ func _show_relic_hint(pid: int) -> void:
 
 
 func _equip_relic(sid: int) -> void:
-	var pid := m.current_player()
+	_act({"k": "relic", "pid": m.current_player(), "stone": sid})
+
+
+func _do_equip_relic(pid: int, sid: int) -> void:
 	var part: String = m.players[pid].relic
 	if m.equip_relic(pid, sid):
 		relic_mode = false
-		_clear_overlay()
+		if _is_mine(pid):
+			_clear_overlay()
 		var st = m.world.get_stone(sid)
 		_log("%s 유품 %s 달았어요" % [_j(m.players[pid].name, "이", "가"), _j(PartsData.part_name(part), "을", "를")], m.players[pid].color)
 		fx.append({"k": "ring", "pos": st.pos, "t": 0.0, "life": 0.6, "r": 40.0, "c": POWER})
@@ -2475,11 +2565,416 @@ func _show_result() -> void:
 	box.add_child(_label("%d바퀴 · %d발" % [m.round_no, m.shots], 13, SUB))
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 8)
+	if online == "guest":
+		box.add_child(_label("호스트가 다음 판을 고르고 있어요.", 15, HINT_GOLD))
+		var leave := _button("방 나가기", func(): _leave_online())
+		leave.custom_minimum_size = Vector2(140, 52)
+		row.add_child(leave)
+		box.add_child(row)
+		return
 	var again := _primary(_button("바로 재대결", func(): _start_match()))
 	again.custom_minimum_size = Vector2(200, 52)
 	again.add_theme_font_size_override("font_size", 19)
 	row.add_child(again)
-	var back := _button("설정으로", func(): _show_setup())
+	var back := _button("설정으로", func(): _back_to_lobby())
 	back.custom_minimum_size = Vector2(140, 52)
 	row.add_child(back)
 	box.add_child(row)
+
+
+# ── 친구 초대 (온라인) ───────────────────────────────────
+## 물리는 같은 입력이면 같은 결과가 나오므로, 기기끼리는 행동(발사·장착·유품·건너뛰기)만 주고받는다.
+## 호스트가 모든 행동에 순번을 매겨 뿌리고, 모든 기기는 그 순서대로 같은 판에 적용한다.
+## CPU는 호스트만 계산한다. 연결은 PeerJS 공개 시그널 서버로 호스트-친구를 직접 잇는다 (web/alkkagi_net.js).
+
+func _is_mine(pid: int) -> bool:
+	if m.players[pid].cpu:
+		return false
+	return my_seats.has(pid)
+
+
+func _drives_cpu() -> bool:
+	return online != "guest"
+
+
+func _seat_word(pid: int) -> String:
+	if m.players[pid].cpu:
+		return "CPU"
+	if online == "":
+		return "사람"
+	return "나" if my_seats.has(pid) else "친구"
+
+
+## 행동 하나. 혼자 둘 때는 바로 적용, 온라인이면 호스트가 순번을 매겨 모두에게 보낸다.
+func _act(a: Dictionary) -> void:
+	if online == "":
+		_apply_action(a)
+		return
+	a = JSON.parse_string(JSON.stringify(a))  # 모든 기기가 똑같은 숫자를 쓰게 한 번 직렬화
+	if online == "guest":
+		waiting_req = true
+		net.send_to(host_peer, {"t": "req", "a": a})
+		return
+	_host_seq(a)
+
+
+func _host_seq(a: Dictionary) -> void:
+	net_seq_out += 1
+	var msg := {"t": "act", "seq": net_seq_out, "a": a}
+	net.broadcast(msg)
+	net_queue.append(msg)
+
+
+func _can_apply(a: Dictionary) -> bool:
+	if m == null or turn_hold > 0.0:
+		return false
+	var pid := int(a.get("pid", -1))
+	match str(a.get("k", "")):
+		"equip":
+			return m.phase == "draft" and m.current_drafter() == pid
+		_:
+			return m.phase == "aim" and m.current_player() == pid
+
+
+func _apply_queue() -> void:
+	if online == "":
+		return
+	net_queue.sort_custom(func(x, y): return int(x["seq"]) < int(y["seq"]))
+	while not net_queue.is_empty():
+		var msg: Dictionary = net_queue[0]
+		var seq := int(msg["seq"])
+		if seq <= net_applied:
+			net_queue.pop_front()
+			continue
+		if seq != net_applied + 1 or not _can_apply(msg["a"]):
+			break
+		net_queue.pop_front()
+		net_applied = seq
+		waiting_req = false
+		_apply_action(msg["a"])
+
+
+func _apply_action(a: Dictionary) -> void:
+	var pid := int(a.get("pid", -1))
+	match str(a.get("k", "")):
+		"shot":
+			var dir := Vector2(float(a["dir"][0]), float(a["dir"][1]))
+			var power := float(a["power"])
+			snd.play("flick_release", lerpf(-8.0, 0.0, power))
+			cpu_aim = {}
+			m.shoot(int(a["stone"]), dir, power, {"charged": bool(a.get("charged", false)), "from_cloud": bool(a.get("from_cloud", false))})
+		"equip":
+			_do_equip(pid, str(a["part"]), int(a["stone"]), int(a.get("side", 1)), str(a.get("reserve", "")))
+		"relic":
+			_do_equip_relic(pid, int(a["stone"]))
+		"skip":
+			_log("%s 시간 초과, 차례를 넘겨요" % m.players[pid].name, m.players[pid].color)
+			_banner("시간 초과")
+			m.skip_turn()
+
+
+func _net_poll() -> void:
+	var st: String = net.status()
+	if st != _net_status_seen:
+		_net_status_seen = st
+		if state == "setup":
+			_show_setup()
+	for item in net.poll():
+		var from: String = str(item.get("from", ""))
+		var d = item.get("data", {})
+		if not (d is Dictionary):
+			continue
+		if online == "host":
+			_host_msg(from, d)
+		elif online == "guest":
+			_guest_msg(from, d)
+
+
+# 호스트 ─────────────────────────────────────────────────
+
+func _start_hosting() -> void:
+	if not net.available:
+		_banner("친구 초대는 웹 버전에서만 돼요")
+		return
+	online = "host"
+	friend_peer.clear()
+	net.host()
+	# 사람 자리 말고 하나는 친구 자리로 준비해 둔다
+	var has_friend := false
+	for i in settings["n"]:
+		has_friend = has_friend or settings["friend"][i]
+	if not has_friend:
+		for i in range(1, settings["n"]):
+			if settings["cpu"][i]:
+				settings["cpu"][i] = false
+				settings["friend"][i] = true
+				break
+	_show_setup()
+
+
+func _host_msg(from: String, d: Dictionary) -> void:
+	match str(d.get("t", "")):
+		"_joined", "hello":
+			if _seat_of_peer(from) < 0:
+				_host_assign(from)
+		"req":
+			var a: Dictionary = d.get("a", {})
+			var seat := _seat_of_peer(from)
+			if state == "play" and seat >= 0 and int(a.get("pid", -1)) == seat:
+				_host_seq(a)
+		"_left":
+			var seat2 := _seat_of_peer(from)
+			if seat2 < 0:
+				return
+			friend_peer.erase(seat2)
+			if state == "play" or state == "result":
+				m.players[seat2].cpu = true
+				net.broadcast({"t": "cpu", "seat": seat2})
+				_log("%s 연결이 끊겨 CPU가 대신 둬요" % m.players[seat2].name, m.players[seat2].color)
+			else:
+				_host_broadcast_lobby()
+				_show_setup()
+
+
+func _seat_of_peer(peer: String) -> int:
+	for seat in friend_peer:
+		if friend_peer[seat] == peer:
+			return seat
+	return -1
+
+
+func _host_assign(peer: String) -> void:
+	if state != "setup":
+		net.send_to(peer, {"t": "full", "why": "이미 경기 중이에요"})
+		return
+	var seat := -1
+	for i in settings["n"]:
+		if settings["friend"][i] and not friend_peer.has(i):
+			seat = i
+			break
+	if seat < 0:
+		for i in range(1, settings["n"]):
+			if settings["cpu"][i]:
+				settings["cpu"][i] = false
+				settings["friend"][i] = true
+				seat = i
+				break
+	if seat < 0:
+		net.send_to(peer, {"t": "full", "why": "빈 자리가 없어요"})
+		return
+	friend_peer[seat] = peer
+	snd.play("part_equip", -4.0)
+	_host_broadcast_lobby()
+	_show_setup()
+
+
+func _lobby_state() -> Dictionary:
+	var kinds: Array = []
+	for i in settings["n"]:
+		if settings["friend"][i]:
+			kinds.append("friend" if friend_peer.has(i) else "wait")
+		elif settings["cpu"][i]:
+			kinds.append("cpu")
+		else:
+			kinds.append("host")
+	return {"t": "lobby", "n": settings["n"], "kinds": kinds, "timed": settings["timed"], "speed": settings["speed"]}
+
+
+func _host_broadcast_lobby() -> void:
+	if online != "host":
+		return
+	for seat in friend_peer:
+		var msg := _lobby_state()
+		msg["seat"] = seat
+		net.send_to(friend_peer[seat], msg)
+
+
+func _host_start() -> void:
+	# 아직 안 들어온 친구 자리는 CPU가 맡는다
+	for i in settings["n"]:
+		if settings["friend"][i] and not friend_peer.has(i):
+			settings["friend"][i] = false
+			settings["cpu"][i] = true
+	var cpu: Array = []
+	var owners := {}
+	my_seats = []
+	for i in settings["n"]:
+		cpu.append(settings["cpu"][i])
+		if friend_peer.has(i):
+			owners[str(i)] = friend_peer[i]
+		elif not settings["cpu"][i]:
+			my_seats.append(i)
+	var seed_value := randi()
+	net.broadcast({"t": "start", "seed": seed_value, "n": settings["n"], "cpu": cpu, "timed": settings["timed"],
+		"speed": settings["speed"], "owners": owners})
+	_start_match(seed_value)
+
+
+func _back_to_lobby() -> void:
+	if online == "host":
+		net.broadcast({"t": "tosetup"})
+		for i in settings["n"]:
+			if friend_peer.has(i):
+				settings["friend"][i] = true
+				settings["cpu"][i] = false
+		_show_setup()
+		_host_broadcast_lobby()
+		return
+	_show_setup()
+
+
+func _invite_row() -> Control:
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 6)
+	if online != "host":
+		var b := _button("친구 초대 링크 만들기", func(): _start_hosting())
+		b.custom_minimum_size = Vector2(0, 40)
+		v.add_child(b)
+		return v
+	var st: String = net.status()
+	var head := HBoxContainer.new()
+	head.add_theme_constant_override("separation", 8)
+	var lbl := _nw(_label("친구 초대", 14, LABEL, 1))
+	lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	head.add_child(lbl)
+	head.add_child(_nw(_label("친구 %d명 접속" % friend_peer.size(), 13, SUB)))
+	head.add_child(_button("초대 닫기", func(): _leave_online()))
+	v.add_child(head)
+	if st == "hosting":
+		var url: String = net.invite_url(net.code())
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 8)
+		var link := LineEdit.new()
+		link.text = url
+		link.editable = false
+		link.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(link)
+		row.add_child(_button("링크 복사", func():
+			net.copy(url)
+			_banner("링크를 복사했어요")))
+		v.add_child(row)
+		v.add_child(_label("자리를 누르면 사람 → CPU → 친구 순으로 바뀝니다. 링크로 들어온 친구가 친구 자리에 앉아요.", 12, SUB))
+	elif st == "error":
+		v.add_child(_label("연결 오류: " + net.error_text(), 13, Art.RED))
+	else:
+		v.add_child(_label("초대 링크를 만드는 중…", 13, SUB))
+	return v
+
+
+func _leave_online() -> void:
+	net.close()
+	online = ""
+	friend_peer.clear()
+	host_peer = ""
+	my_seats = []
+	for i in 8:
+		settings["friend"][i] = false
+	if state == "play" or state == "result":
+		_show_setup()
+		return
+	_show_setup()
+
+
+# 손님 ───────────────────────────────────────────────────
+
+func _join_room(code: String) -> void:
+	online = "guest"
+	guest_lobby = {}
+	net.join(code)
+	_show_setup()
+
+
+func _guest_msg(from: String, d: Dictionary) -> void:
+	match str(d.get("t", "")):
+		"_open":
+			host_peer = from
+			net.send_to(from, {"t": "hello"})
+		"lobby":
+			host_peer = from
+			guest_lobby = d
+			settings["n"] = int(d["n"])
+			for i in 8:
+				settings["cpu"][i] = i < d["kinds"].size() and d["kinds"][i] == "cpu"
+			if state == "setup":
+				_show_setup()
+		"full":
+			guest_lobby = {"full": str(d.get("why", "빈 자리가 없어요"))}
+			if state == "setup":
+				_show_setup()
+		"start":
+			settings["n"] = int(d["n"])
+			settings["timed"] = bool(d["timed"])
+			settings["speed"] = int(d["speed"])
+			for i in 8:
+				settings["cpu"][i] = i < d["cpu"].size() and bool(d["cpu"][i])
+			my_seats = []
+			var me: String = net.my_id()
+			for k in d["owners"]:
+				if str(d["owners"][k]) == me:
+					my_seats.append(int(k))
+			_start_match(int(d["seed"]))
+		"act":
+			if state == "play":
+				net_queue.append(d)
+		"cpu":
+			if m != null:
+				var seat := int(d["seat"])
+				m.players[seat].cpu = true
+				_log("%s 연결이 끊겨 CPU가 대신 둬요" % m.players[seat].name, m.players[seat].color)
+		"tosetup":
+			state = "setup"
+			m = null
+			_show_setup()
+		"_left":
+			_leave_online()
+			_banner("호스트와 연결이 끊겼어요")
+
+
+func _show_guest_lobby() -> void:
+	state = "setup"
+	m = null
+	menu_btn.visible = false
+	parts_btn.visible = false
+	sound_btn.visible = false
+	var root := _new_overlay(false)
+	var vs := get_viewport_rect().size
+	var narrow := vs.x < 900
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", 22)
+	col.custom_minimum_size = Vector2(540.0 if not narrow else vs.x - 32.0, 0)
+	col.position = Vector2(72, maxf(40.0, (vs.y - 600.0) * 0.5)) if not narrow else Vector2(16, 24)
+	root.add_child(col)
+	lobby_col = col
+	col.add_child(_label("개조 알까기", 44, TEXT, 2))
+	var st: String = net.status()
+	if guest_lobby.has("full"):
+		col.add_child(_label("들어갈 수 없어요: " + guest_lobby["full"], 17, Art.RED, 1))
+	elif st == "error":
+		col.add_child(_label("연결하지 못했어요: " + net.error_text(), 17, Art.RED, 1))
+	elif guest_lobby.is_empty():
+		col.add_child(_label("친구 방에 연결하는 중…", 18, TEXT, 1))
+	else:
+		var seat := int(guest_lobby.get("seat", -1))
+		var hr := HBoxContainer.new()
+		hr.add_theme_constant_override("separation", 12)
+		if seat >= 0:
+			hr.add_child(_icon_pic(Match.COLORS[seat], seat, 36))
+			hr.add_child(_nw(_label("내 자리: %s" % Match.NAMES[seat], 22, TEXT, 2)))
+		col.add_child(hr)
+		col.add_child(_label("호스트가 시작하길 기다리고 있어요. 친구 %d인전." % int(guest_lobby["n"]), 16, SUB))
+		var grid := GridContainer.new()
+		grid.columns = 2
+		grid.add_theme_constant_override("h_separation", 8)
+		grid.add_theme_constant_override("v_separation", 8)
+		var words := {"host": "호스트", "cpu": "CPU", "friend": "친구", "wait": "빈 자리"}
+		for i in guest_lobby["kinds"].size():
+			var h := HBoxContainer.new()
+			h.add_theme_constant_override("separation", 8)
+			h.add_child(_icon_pic(Match.COLORS[i], i, 22))
+			var k: String = guest_lobby["kinds"][i]
+			h.add_child(_nw(_label("%s · %s" % [Match.NAMES[i], "나" if i == seat else words.get(k, k)], 15, TEXT if i == seat else SUB, 1 if i == seat else 0)))
+			grid.add_child(h)
+		col.add_child(grid)
+	var leave := _button("나가기", func(): _leave_online())
+	leave.custom_minimum_size = Vector2(140, 46)
+	col.add_child(leave)

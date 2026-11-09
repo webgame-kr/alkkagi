@@ -16,8 +16,8 @@ var n := 4
 var players: Array = []       # {id, name, color, cpu, out, out_round}
 var world: World
 var round_no := 1
-var max_rounds := 8
-var draft_rounds: Array = [2, 3, 4]
+var max_rounds := 0           # 0 = 바퀴 제한 없음: 한 사람만 남을 때까지
+var draft_rounds: Array = []  # 비어 있으면 매 바퀴 개조
 var aim_limit := 0.0          # 0 = 제한 없음
 var start_seat := 0
 var order: Array = []         # 이번 바퀴의 차례 (플레이어 id)
@@ -44,18 +44,12 @@ func setup(n_players: int, cpu_flags: Array, seed_value: int, timed: bool) -> vo
 	if n == 2:
 		world.shape = "square"
 		world.size = CELL * 8.0
-		max_rounds = 12
-		draft_rounds = [2, 3, 4]
 	elif n <= 4:
 		world.shape = "circle"
 		world.size = CELL * 9.0
-		max_rounds = 8
-		draft_rounds = [2, 3, 4]
 	else:
 		world.shape = "circle"
 		world.size = CELL * 12.0
-		max_rounds = 6
-		draft_rounds = [1, 2, 3]
 	aim_limit = AIM_LIMIT if timed else 0.0
 	_place_stones()
 	start_seat = rng.randi_range(0, n - 1)
@@ -116,7 +110,7 @@ func current_drafter() -> int:
 
 
 func is_draft_round(r: int) -> bool:
-	return draft_rounds.has(r)
+	return draft_rounds.is_empty() or draft_rounds.has(r)
 
 
 # ── 바퀴 ─────────────────────────────────────────────────
@@ -313,7 +307,7 @@ func _settle_turn() -> void:
 		return
 	# 바퀴 끝
 	round_no += 1
-	if round_no > max_rounds:
+	if max_rounds > 0 and round_no > max_rounds:
 		_finish_by_count()
 		return
 	start_seat = (start_seat + 1) % n
