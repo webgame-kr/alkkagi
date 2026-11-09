@@ -557,7 +557,7 @@ func _draw() -> void:
 	_draw_hud(vs)
 	if banner_t > 0.0:
 		var a := clampf(banner_t / 0.4, 0.0, 1.0)
-		var y := view_center.y - 40.0 if not portrait else 112.0
+		var y := view_center.y - 40.0 if not portrait else 160.0
 		_text_outline(Vector2(view_center.x, y), banner, 30, Color(_banner_col, a), true)
 
 
