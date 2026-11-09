@@ -139,7 +139,7 @@ static func choose_draft(m, player_id: int, rand: RandomNumberGenerator) -> Dict
 				val -= 6.0
 			# 세트를 모으는 중이면 같은 알에 이어 붙이는 쪽을 크게 쳐준다.
 			if PartsData.set_of(part) != "":
-				var have: int = PartsData.set_progress(s.parts)["count"]
+				var have: int = PartsData.set_progress(s.parts, PartsData.set_of(part))["count"]
 				val += have * 4.0
 			# 이미 부품이 있는 알에 몰아 다는 쪽을 약간 선호 (조합)
 			var filled := 0

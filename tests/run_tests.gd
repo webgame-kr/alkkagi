@@ -723,6 +723,11 @@ func test_set_label() -> void:
 	parts["prop"] = "trex_leg"
 	check(PartsData.set_label(parts).begins_with("메카 티라노 완성"), "complete label")
 	check(PartsData.set_label({"weapon": "", "aux": "", "prop": ""}) == "", "no label without T-rex parts")
+	var moon := {"weapon": "moon_staff", "aux": "star_cloak", "prop": ""}
+	check(PartsData.set_label(moon) == "달그림자 마도사 2/3 · 장화 필요", "moon label: " + PartsData.set_label(moon))
+	check(not PartsData.set_complete(moon) and PartsData.set_progress(moon)["set"] == "moon", "progress follows the stone's own set")
+	moon["prop"] = "moon_boots"
+	check(PartsData.set_complete(moon) and not PartsData.set_complete(moon, "trex"), "complete moon set is not a T-rex")
 
 
 # ── 확장 부품 ────────────────────────────────────────────

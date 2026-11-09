@@ -278,7 +278,11 @@ static func main_set(stone_parts: Dictionary) -> String:
 
 
 ## 이 알에 달린 세트 부품 수. {set, count, missing:[id]}
-static func set_progress(stone_parts: Dictionary, set_id := "trex") -> Dictionary:
+static func set_progress(stone_parts: Dictionary, set_id := "") -> Dictionary:
+	if set_id == "":
+		set_id = main_set(stone_parts)
+		if set_id == "":
+			return {"set": "", "count": 0, "missing": [], "total": 3}
 	var have := 0
 	var missing: Array = []
 	for pid in SETS[set_id]["parts"]:
@@ -289,7 +293,13 @@ static func set_progress(stone_parts: Dictionary, set_id := "trex") -> Dictionar
 	return {"set": set_id, "count": have, "missing": missing, "total": SETS[set_id]["parts"].size()}
 
 
-static func set_complete(stone_parts: Dictionary, set_id := "trex") -> bool:
+## set_id 를 비우면 어느 세트든 완성됐는지.
+static func set_complete(stone_parts: Dictionary, set_id := "") -> bool:
+	if set_id == "":
+		for sid in SETS:
+			if set_complete(stone_parts, sid):
+				return true
+		return false
 	return set_progress(stone_parts, set_id)["count"] == SETS[set_id]["parts"].size()
 
 

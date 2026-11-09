@@ -39,7 +39,14 @@ var font: Font
 var font_semi: Font
 var font_bold: Font
 var m: Match
-var settings := {"n": 4, "cpu": [false, true, true, true, true, true, true, true], "timed": false}
+var settings := {"n": 4, "cpu": [false, true, true, true, true, true, true, true], "timed": false, "speed": 1}
+## 게임 속도: 퍽이 움직이는 빠르기(재생 배율), CPU가 뜸 들이는 시간, 차례 사이 쉬는 시간.
+const SPEEDS := [
+	{"name": "느리게", "play": 0.5, "think": 1.4, "aim_show": 1.6, "hold": 1.1},
+	{"name": "보통", "play": 0.7, "think": 0.9, "aim_show": 1.15, "hold": 0.75},
+	{"name": "빠르게", "play": 1.0, "think": 0.45, "aim_show": 0.65, "hold": 0.3},
+]
+var turn_hold := 0.0          # 샷이 끝난 뒤 다음 차례까지 잠깐 쉬기
 var state := "setup"          # setup | play | result
 
 # 화면 배치
@@ -200,6 +207,12 @@ func _debug_args() -> void:
 		all[7].parts = {"weapon": "night_charm", "aux": "wind_knot", "prop": "second_step"}
 		m.world.events.append({"t": "manga", "part": "log_sub", "pos": all[4].pos, "owner": all[4].owner, "stone": all[4].id})
 		_consume_events()
+	if args.has("--moon"):
+		var mine2: Array = m.world.alive_stones_of(0)
+		mine2[0].parts = {"weapon": "moon_staff", "aux": "star_cloak", "prop": ""}
+		if m.phase == "draft":
+			m.offers[0] = m.roll_offer(0)
+			turn_key = ""
 	if args.has("--trex"):
 		var mine: Array = m.world.alive_stones_of(0)
 		mine[0].parts = {"weapon": "trex_head", "aux": "trex_arm", "prop": "trex_leg"}
@@ -279,6 +292,7 @@ func _start_match() -> void:
 	m = Match.new()
 	m.setup(settings["n"], settings["cpu"], randi(), settings["timed"])
 	state = "play"
+	turn_hold = 0.0
 	fx.clear()
 	log_lines.clear()
 	bot = null
@@ -309,7 +323,14 @@ func _process(delta: float) -> void:
 	queue_redraw()
 
 
+func _sp(k: String) -> float:
+	return SPEEDS[settings.get("speed", 1)][k]
+
+
 func _update_play(delta: float) -> void:
+	if turn_hold > 0.0:
+		turn_hold -= delta
+		return
 	var key := "%s|%d|%d|%d" % [m.phase, m.round_no, m.turn_pos, m.draft_queue.size()]
 	if key != turn_key:
 		turn_key = key
@@ -320,7 +341,7 @@ func _update_play(delta: float) -> void:
 			if slowmo > 0.0:
 				slowmo -= delta
 				spd = 0.3
-			accum += minf(delta, 0.05) * spd
+			accum += minf(delta, 0.05) * spd * _sp("play")
 			while accum >= World.DT and m.phase == "moving":
 				accum -= World.DT
 				m.world.step()
@@ -389,7 +410,7 @@ func _update_cpu(delta: float, pid: int) -> void:
 			m.skip_turn()
 		else:
 			cpu_aim = r.duplicate()
-			cpu_aim["t"] = 0.65
+			cpu_aim["t"] = _sp("aim_show")
 
 
 func _on_phase_changed() -> void:
@@ -397,7 +418,7 @@ func _on_phase_changed() -> void:
 		"aim":
 			aim_left = m.aim_limit
 			bot = null
-			bot_wait = 0.45
+			bot_wait = _sp("think")
 			var p: Dictionary = m.players[m.current_player()]
 			_banner("%s 차례" % p.name, p.color)
 			relic_mode = false
@@ -407,7 +428,7 @@ func _on_phase_changed() -> void:
 			var pid := m.current_drafter()
 			draft_part = ""
 			draft_stone = -1
-			draft_wait = 0.7
+			draft_wait = _sp("think") + 0.4
 			if m.draft_queue.size() == m.order.size():
 				_banner("%d바퀴 · 개조 시간" % m.round_no)
 			if m.players[pid].cpu:
@@ -420,6 +441,7 @@ func _after_shot() -> void:
 	var shooter_owner: int = m.world.shot.owner if m.world.shot != null else -1
 	var outs: Array = m.world.knockouts.duplicate()
 	m.finish_shot()
+	turn_hold = _sp("hold") + (0.4 if not outs.is_empty() else 0.0)
 	_consume_events()
 	if shooter_owner < 0:
 		return
@@ -462,7 +484,7 @@ static func _j(word: String, with_final: String, without_final: String) -> Strin
 
 func _banner(s: String, c := TEXT) -> void:
 	banner = s
-	banner_t = 1.3
+	banner_t = 1.6
 	_banner_col = c
 
 
@@ -551,7 +573,7 @@ func _unhandled_input(event: InputEvent) -> void:
 			if sid >= 0:
 				_pick_stone_for_part(pid, sid)
 		return
-	if m.phase != "aim" or m.players[m.current_player()].cpu:
+	if m.phase != "aim" or m.players[m.current_player()].cpu or turn_hold > 0.0:
 		return
 	if relic_mode:
 		if event.pressed:
@@ -684,8 +706,9 @@ func _apply_equip(pid: int, part: String, sid: int, side: int, reserve := "") ->
 		if set_txt != "":
 			_log(set_txt, BRASS)
 		fx.append({"k": "text", "pos": s.pos + Vector2(0, -34), "t": 0.0, "life": 1.3, "text": txt, "c": pl.color.lightened(0.35), "size": 20})
-		if PartsData.set_complete(s.parts):
-			fx.append({"k": "text", "pos": s.pos + Vector2(0, -58), "t": 0.0, "life": 1.8, "text": "메카 티라노!", "c": POWER, "size": 24})
+		var done_set := PartsData.set_of(part)
+		if done_set != "" and PartsData.set_complete(s.parts, done_set):
+			fx.append({"k": "text", "pos": s.pos + Vector2(0, -58), "t": 0.0, "life": 1.8, "text": PartsData.SETS[done_set]["name"] + "!", "c": POWER, "size": 24})
 			fx.append({"k": "ring", "pos": s.pos, "t": 0.0, "life": 0.8, "r": 60.0, "c": POWER})
 		fx.append({"k": "ring", "pos": s.pos, "t": 0.0, "life": 0.5, "r": 34.0, "c": pl.color})
 	draft_part = ""
@@ -1862,6 +1885,25 @@ func _show_setup() -> void:
 	cb.toggled.connect(func(v): settings["timed"] = v)
 	th.add_child(cb)
 	col.add_child(tp)
+	# 게임 속도
+	var sp_row := HBoxContainer.new()
+	sp_row.add_theme_constant_override("separation", 10)
+	var spl := _nw(_label("게임 속도", 14, LABEL, 1))
+	spl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	sp_row.add_child(spl)
+	for i in SPEEDS.size():
+		var on: bool = settings.get("speed", 1) == i
+		var sb2 := _button(SPEEDS[i]["name"], func():
+			settings["speed"] = i
+			_show_setup())
+		sb2.custom_minimum_size = Vector2(76, 38)
+		var st2 := _sb(BRASS if on else Color(1, 1, 1, 0.05), Color(1, 1, 1, 0.1), 8)
+		sb2.add_theme_stylebox_override("normal", st2)
+		sb2.add_theme_stylebox_override("hover", _sb(BRASS.lightened(0.1) if on else Color(1, 1, 1, 0.1), Color(1, 1, 1, 0.14), 8))
+		for k in ["font_color", "font_hover_color", "font_pressed_color"]:
+			sb2.add_theme_color_override(k, INK if on else TEXT)
+		sp_row.add_child(sb2)
+	col.add_child(sp_row)
 	# 시작
 	var row2 := HBoxContainer.new()
 	row2.add_theme_constant_override("separation", 10)
@@ -2072,16 +2114,18 @@ func _part_card(pid: int, part: String) -> Button:
 	var tag := ""
 	var tag_col := SUB
 	if PartsData.set_of(part) != "":
+		var set_id := PartsData.set_of(part)
+		var set_name: String = PartsData.SETS[set_id]["name"]
 		var best := 0
 		for st in m.world.alive_stones_of(pid):
-			var c: int = PartsData.set_progress(st.parts)["count"]
-			if c < 3:
+			var c: int = PartsData.set_progress(st.parts, set_id)["count"]
+			if c < 3 and not st.parts.values().has(part):
 				best = maxi(best, c)
 		if best == 2:
-			tag = "고르면 세트 완성 · 메카 티라노"
+			tag = "고르면 세트 완성 · " + set_name
 			tag_col = POWER
 		else:
-			tag = "티라노 세트 %d/3" % (best + 1)
+			tag = "%s 세트 %d/3" % [set_name, best + 1]
 			tag_col = HINT_GOLD
 	elif not m.trex_missing(pid).is_empty():
 		tag = "일반 부품"
