@@ -22,6 +22,11 @@ func _initialize() -> void:
 		"test_layout_all_counts", "test_draft_schedule_and_equip", "test_round_limit_winner",
 		"test_last_player_wins", "test_draw_when_nobody_left", "test_bot_matches_finish",
 		"test_world_clone_is_independent",
+		"test_trex_head_bites_forward", "test_sucker_brakes_moving_stone", "test_umbrella_gun_wide_push",
+		"test_roller_slick_strip", "test_trex_arm_pulls_front", "test_shield_deflects_bullet",
+		"test_tambourine_ripple", "test_track_groove_bends", "test_trex_leg_reduces_recoil",
+		"test_crab_hops_sideways", "test_clockwork_boost", "test_brake_stops",
+		"test_mecha_throw", "test_mecha_frontal_is_plain_bite", "test_trex_draft_rule", "test_set_label",
 	]
 	for t in tests:
 		var before := failures
@@ -451,3 +456,262 @@ func test_world_clone_is_independent() -> void:
 	c.run_until_settled()
 	check(a.pos == Vector2(-100, 0) and w.shot == null, "original untouched by the preview")
 	check(c.events.is_empty(), "clone records no events")
+
+
+# ── 신규 부품 ────────────────────────────────────────────
+
+func test_trex_head_bites_forward() -> void:
+	var w := make_world()
+	var a := w.add_stone(0, Vector2(-150, 0), 0)
+	var b := w.add_stone(1, Vector2(-60, 0), 0)
+	a.parts["weapon"] = "trex_head"
+	shoot(w, a.id, Vector2.RIGHT, 0.5)
+	check(count_events(w, "part", "trex_head") == 1, "head bites on frontal hit")
+	var p := make_world()
+	var a2 := p.add_stone(0, Vector2(-150, 0), 0)
+	var b2 := p.add_stone(1, Vector2(-60, 0), 0)
+	shoot(p, a2.id, Vector2.RIGHT, 0.5)
+	check(b.pos.x > b2.pos.x + 60.0, "bitten stone is thrown further than a plain hit")
+
+
+func test_sucker_brakes_moving_stone() -> void:
+	# 달아나는 알을 빨판이 따라잡아 감속시킨다.
+	var w := make_world()
+	var a := w.add_stone(0, Vector2(-250, 0), 0)
+	var b := w.add_stone(1, Vector2(-100, 0), 0)
+	a.parts["weapon"] = "sucker"
+	w.launch(a.id, Vector2(0, -1), 0.05)
+	w.projs.clear()
+	w.spawn_proj("sucker", 0, Vector2(-220, 0), Vector2.RIGHT, 1150.0, 7.0, 0.0, a.id)
+	b.vel = Vector2(500, 0)
+	w.run_until_settled()
+	var p := make_world()
+	var b2 := p.add_stone(1, Vector2(-100, 0), 0)
+	b2.vel = Vector2(500, 0)
+	p.run_until_settled()
+	check(count_events(w, "part", "sucker") >= 1, "sucker braked the runner")
+	check(b.pos.x < b2.pos.x - 40.0, "suckered stone stops sooner: %.0f vs %.0f" % [b.pos.x, b2.pos.x])
+	# 서 있는 알은 표시만 되고, 나중에 움직이면 감속
+	var q := make_world()
+	var c := q.add_stone(0, Vector2(-250, 0), 0)
+	var d := q.add_stone(1, Vector2(0, 0), 0)
+	c.parts["weapon"] = "sucker"
+	q.launch(c.id, Vector2.RIGHT, 0.05)
+	for i in 40:
+		q.step()
+	check(q.shot.sucker.has(d.id), "standing stone gets the sucker mark")
+
+
+
+func test_umbrella_gun_wide_push() -> void:
+	var w := make_world()
+	var a := w.add_stone(0, Vector2(-250, 0), 0)
+	var b := w.add_stone(1, Vector2(-20, 60), 0)
+	var c := w.add_stone(2, Vector2(-20, -60), 0)
+	a.parts["weapon"] = "umbrella_gun"
+	w.launch(a.id, Vector2.RIGHT, 0.05)
+	w.run_until_settled()
+	check(count_events(w, "umbrella") == 1, "umbrella opened")
+	check(b.pos.x > -20.0 + 30.0 and c.pos.x > -20.0 + 30.0, "both side stones pushed forward")
+
+
+func test_roller_slick_strip() -> void:
+	var w := make_world()
+	var a := w.add_stone(0, Vector2(-200, 0), 0)
+	w.add_stone(1, Vector2(-120, 0), 0)
+	a.parts["weapon"] = "roller"
+	shoot(w, a.id, Vector2.RIGHT, 0.4)
+	var slick = null
+	for d in w.devices:
+		if d.kind == "slick":
+			slick = d
+	check(slick != null and slick.length > 100.0, "slick strip left behind the hit stone")
+	# 띠 위로 같은 힘으로 굴리면 더 멀리 간다
+	var q := make_world()
+	var d2 = q.place_device("slick", 0, 9, Vector2(-200, 100), Vector2.RIGHT, 5)
+	d2.length = 200.0
+	var c := q.add_stone(2, Vector2(-200, 100), 0)
+	c.vel = Vector2.RIGHT * 300.0
+	q.run_until_settled()
+	var p := make_world()
+	var c2 := p.add_stone(2, Vector2(-200, 100), 0)
+	c2.vel = Vector2.RIGHT * 300.0
+	p.run_until_settled()
+	check(c.pos.x > c2.pos.x + 40.0, "slides further on the strip: %.0f vs %.0f" % [c.pos.x, c2.pos.x])
+
+
+
+func test_trex_arm_pulls_front() -> void:
+	var w := make_world()
+	var a := w.add_stone(0, Vector2(-200, 0), 0)
+	var b := w.add_stone(1, Vector2(-120, 38), 0)
+	a.parts["aux"] = "trex_arm"
+	w.launch(a.id, Vector2.RIGHT, 0.5)
+	var pulled := false
+	for i in 200:
+		w.step()
+		if count_events(w, "part", "trex_arm") > 0:
+			pulled = true
+			break
+	check(pulled, "arm grabs on a side hit")
+	check(absf(b.pos.y - a.pos.y) < 8.0 and b.pos.x > a.pos.x, "target now in front of the shooter")
+
+
+func test_shield_deflects_bullet() -> void:
+	var w := make_world()
+	var a := w.add_stone(0, Vector2(-200, 0), 0)
+	var b := w.add_stone(1, Vector2(50, 0), 0)
+	a.parts["weapon"] = "pea"
+	b.parts["aux"] = "shield"
+	b.magnet_side = 1
+	w.launch(a.id, Vector2.RIGHT, 0.05)
+	w.run_until_settled()
+	check(count_events(w, "part", "shield") == 1, "shield flipped")
+	check(b.pos.distance_to(Vector2(50, 0)) < 1.0, "shielded stone not pushed")
+
+
+func test_tambourine_ripple() -> void:
+	var w := make_world()
+	var a := w.add_stone(0, Vector2(-200, 0), 0)
+	w.add_stone(1, Vector2(-100, 0), 0)
+	var near := w.add_stone(2, Vector2(-120, 80), 0)
+	a.parts["aux"] = "tambourine"
+	shoot(w, a.id, Vector2.RIGHT, 0.4)
+	check(count_events(w, "ripple") == 1, "ripple")
+	check(near.pos.distance_to(Vector2(-120, 80)) > 10.0, "nearby untouched stone nudged")
+
+
+func test_track_groove_bends() -> void:
+	var w := make_world()
+	var a := w.add_stone(0, Vector2(-250, 0), 0)
+	a.parts["aux"] = "track"
+	shoot(w, a.id, Vector2.RIGHT, 0.6)
+	var g = null
+	for d in w.devices:
+		if d.kind == "groove":
+			g = d
+	check(g != null and g.length > 40.0, "groove left on the end of the path")
+	# 손으로 놓은 홈을 비스듬히 가로지르면 꺾인다
+	var q := make_world()
+	var d2 = q.place_device("groove", 0, 9, Vector2(-100, 0), Vector2.RIGHT, 5)
+	d2.length = 140.0
+	var c := q.add_stone(1, Vector2(-30, 120), 0)
+	q.round_no = 2
+	var dir := Vector2(0.35, -1).normalized()
+	q.launch(c.id, dir, 0.5)
+	q.run_until_settled()
+	check(count_events(q, "part", "track") == 1, "a stone crossing the groove is bent")
+	check(q.devices.is_empty(), "groove used up")
+
+
+
+func test_trex_leg_reduces_recoil() -> void:
+	var p := make_world()
+	var a := p.add_stone(0, Vector2(-200, 0), 0)
+	p.add_stone(1, Vector2(-100, 0), 0)
+	shoot(p, a.id, Vector2.RIGHT, 0.8)
+	var w := make_world()
+	var a2 := w.add_stone(0, Vector2(-200, 0), 0)
+	w.add_stone(1, Vector2(-100, 0), 0)
+	a2.parts["prop"] = "trex_leg"
+	shoot(w, a2.id, Vector2.RIGHT, 0.8)
+	check(count_events(w, "part", "trex_leg") == 1, "leg fired")
+	check(a2.pos.x < a.pos.x - 3.0, "slides less after the hit: %.1f vs %.1f" % [a2.pos.x, a.pos.x])
+
+
+
+func test_crab_hops_sideways() -> void:
+	var w := make_world()
+	var a := w.add_stone(0, Vector2(-200, 0), 0)
+	w.add_stone(1, Vector2(-100, 0), 0)
+	a.parts["prop"] = "crab"
+	a.prop_side = -1
+	shoot(w, a.id, Vector2.RIGHT, 0.5)
+	check(a.pos.y < -60.0, "hopped to the left (−y): %.0f" % a.pos.y)
+
+
+func test_clockwork_boost() -> void:
+	var p := make_world()
+	var a := p.add_stone(0, Vector2(-250, 0), 0)
+	shoot(p, a.id, Vector2.RIGHT, 0.4)
+	var w := make_world()
+	var b := w.add_stone(0, Vector2(-250, 0), 0)
+	b.parts["prop"] = "clockwork"
+	shoot(w, b.id, Vector2.RIGHT, 0.4)
+	check(count_events(w, "part", "clockwork") == 1, "clockwork kicked in")
+	check(b.pos.x > a.pos.x + 80.0, "weak shot goes further after the boost")
+	var q := make_world()
+	var c := q.add_stone(0, Vector2(-250, 0), 0)
+	c.parts["prop"] = "clockwork"
+	shoot(q, c.id, Vector2.RIGHT, 0.8)
+	check(count_events(q, "part", "clockwork") == 0, "strong shot: no clockwork")
+
+
+func test_brake_stops() -> void:
+	var p := make_world()
+	var a := p.add_stone(0, Vector2(-250, 0), 0)
+	shoot(p, a.id, Vector2.RIGHT, 0.6)
+	var w := make_world()
+	var b := w.add_stone(0, Vector2(-250, 0), 0)
+	b.parts["prop"] = "brake"
+	shoot(w, b.id, Vector2.RIGHT, 0.6)
+	check(count_events(w, "part", "brake") == 1, "brake fired")
+	check(b.pos.x < a.pos.x - 15.0, "stops short of a free slide")
+
+
+func _trex(s) -> void:
+	s.parts = {"weapon": "trex_head", "aux": "trex_arm", "prop": "trex_leg"}
+
+
+func test_mecha_throw() -> void:
+	var w := make_world()
+	var a := w.add_stone(0, Vector2(-200, 0), 0)
+	var b := w.add_stone(1, Vector2(-110, 38), 0)
+	_trex(a)
+	check(PartsData.set_complete(a.parts), "set complete")
+	shoot(w, a.id, Vector2.RIGHT, 0.55)
+	check(count_events(w, "part", "mecha") == 1, "bite-and-throw fired once")
+	check(count_events(w, "part", "trex_head") == 0 and count_events(w, "part", "trex_arm") == 0, "consumes head and arm")
+	check(not b.alive or b.pos.x > 150.0, "thrown along the aim line: %.0f" % b.pos.x)
+	check(a.pos.x < -80.0, "the T-rex holds its ground")
+
+
+func test_mecha_frontal_is_plain_bite() -> void:
+	var w := make_world()
+	var a := w.add_stone(0, Vector2(-200, 0), 0)
+	w.add_stone(1, Vector2(-110, 0), 0)
+	_trex(a)
+	shoot(w, a.id, Vector2.RIGHT, 0.55)
+	check(count_events(w, "part", "mecha") == 0, "frontal hit: no throw")
+	check(count_events(w, "part", "trex_head") == 1, "frontal hit: plain bite")
+
+
+func test_trex_draft_rule() -> void:
+	var m := Match.new()
+	m.setup(4, [], 11, false)
+	var s = m.world.alive_stones_of(0)[0]
+	s.parts["aux"] = "trex_arm"
+	for i in 30:
+		var offer := m.roll_offer(0)
+		var trex := 0
+		for id in offer:
+			if PartsData.set_of(id) == "trex":
+				trex += 1
+				check(id != "trex_arm", "offers a missing T-rex part, not one already on")
+		check(trex == 1 and offer.size() == 3, "exactly one T-rex slot, two normal parts")
+	check(m.roll_offer(1).size() == 3, "players without T-rex parts get any three")
+	# 자리 고르기: 게걸음은 추진 좌우, 딱지 방패는 보조 좌우
+	m.round_no = 2
+	m.phase = "draft"
+	m.draft_queue = [0]
+	m.offers[0] = ["crab", "pea", "rocket"]
+	m.equip(0, "crab", s.id, -1)
+	check(s.prop_side == -1 and s.magnet_side == 1, "crab side stored as prop_side")
+
+
+func test_set_label() -> void:
+	var parts := {"weapon": "trex_head", "aux": "trex_arm", "prop": ""}
+	check(PartsData.set_label(parts) == "메카 티라노 2/3 · 다리 필요", "label: " + PartsData.set_label(parts))
+	parts["prop"] = "trex_leg"
+	check(PartsData.set_label(parts).begins_with("메카 티라노 완성"), "complete label")
+	check(PartsData.set_label({"weapon": "", "aux": "", "prop": ""}) == "", "no label without T-rex parts")

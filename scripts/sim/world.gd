@@ -28,7 +28,8 @@ class Stone:
 	var alive := true
 	var facing := 0.0
 	var parts := {"weapon": "", "aux": "", "prop": ""}
-	var magnet_side := 1      # 1 = 진행 방향 오른쪽, -1 = 왼쪽
+	var magnet_side := 1      # 보조 좌우(자석팔·딱지 방패): 1 = 진행 방향 오른쪽, -1 = 왼쪽
+	var prop_side := 1        # 추진 좌우(게걸음 바퀴)
 
 	func copy() -> Stone:
 		var s := Stone.new()
@@ -40,11 +41,13 @@ class Stone:
 		s.facing = facing
 		s.parts = parts.duplicate()
 		s.magnet_side = magnet_side
+		s.prop_side = prop_side
 		return s
 
 
 class Proj:
-	var kind := "bullet"      # bullet | rubber
+	var kind := "bullet"      # bullet | rubber | sucker | umbrella
+	var travelled := 0.0
 	var pos := Vector2.ZERO
 	var vel := Vector2.ZERO
 	var radius := 5.0
@@ -69,12 +72,14 @@ class Proj:
 		p.age = age
 		p.alive = alive
 		p.trail_from = trail_from
+		p.travelled = travelled
 		return p
 
 
 class Device:
 	var id := 0
-	var kind := ""            # mirror | mine | bubble | turret
+	var kind := ""            # mirror | mine | bubble | turret | slick | groove
+	var length := 0.0         # 띠·홈의 길이 (pos 에서 dir 방향으로)
 	var owner := 0
 	var stone_id := -1        # 이 장치를 만든 알 (부품당 하나 유지용)
 	var pos := Vector2.ZERO
@@ -94,6 +99,7 @@ class Device:
 		d.expires_round = expires_round
 		d.armed = armed
 		d.inside = inside.duplicate()
+		d.length = length
 		return d
 
 
@@ -114,6 +120,10 @@ class ShotCtx:
 	var reel_timer := 0.0
 	var path: Array = []
 	var path_clock := 0.0
+	var sucker := {}          # 빨판이 붙은 알 id: 다음에 움직이면 한 번 감속
+	var shield_used := {}     # 딱지 방패를 쓴 알 id
+	var clock_timer := -1.0   # 딸깍 태엽 가속까지 남은 시간
+	var brake_armed := false  # 도장 브레이크: 기준 속도를 넘었었는지
 
 	func copy() -> ShotCtx:
 		var c := ShotCtx.new()
@@ -133,6 +143,10 @@ class ShotCtx:
 		c.reel_timer = reel_timer
 		c.path = path.duplicate()
 		c.path_clock = path_clock
+		c.sucker = sucker.duplicate()
+		c.shield_used = shield_used.duplicate()
+		c.clock_timer = clock_timer
+		c.brake_armed = brake_armed
 		return c
 
 
@@ -277,6 +291,20 @@ func spawn_rubber(owner: int, pos: Vector2, dir: Vector2, speed: float, power: f
 	projs.append(p)
 
 
+func spawn_proj(kind: String, owner: int, pos: Vector2, dir: Vector2, speed: float, radius: float, power: float, ignore_id: int) -> void:
+	var p := Proj.new()
+	p.kind = kind
+	p.pos = pos
+	p.trail_from = pos
+	p.vel = dir.normalized() * speed
+	p.radius = radius
+	p.owner = owner
+	p.source = kind
+	p.power = power
+	p.ignore_id = ignore_id
+	projs.append(p)
+
+
 ## 같은 알이 같은 종류의 장치를 새로 놓으면 이전 것은 사라진다.
 func place_device(kind: String, owner: int, stone_id: int, pos: Vector2, dir: Vector2, expires_round: int) -> Device:
 	for d in devices.duplicate():
@@ -325,12 +353,15 @@ func launch(stone_id: int, dir: Vector2, power: float) -> void:
 	emit({"t": "launch", "pos": s.pos, "owner": s.owner, "power": power})
 	# 지뢰·방울은 다음 샷부터 작동한다. 지금 닿아 있는 알은 떠날 때까지 무시.
 	for d in devices:
-		if d.kind == "mine" or d.kind == "bubble":
+		if d.kind == "mine" or d.kind == "bubble" or d.kind == "groove":
 			if not d.armed:
 				d.armed = true
 				d.inside = {}
 				for o in stones:
-					if o.alive and o.pos.distance_to(d.pos) < STONE_R + _device_radius(d):
+					var on: bool = o.pos.distance_to(d.pos) < STONE_R + _device_radius(d)
+					if d.kind == "groove":
+						on = _on_strip(d, o.pos, STONE_R * 0.6)
+					if o.alive and on:
 						d.inside[o.id] = true
 	# 이 플레이어의 포탑이 함께 쏜다 (포탑 탄은 다른 부품을 다시 발동시키지 않는다).
 	for d in devices.duplicate():
@@ -355,7 +386,7 @@ func end_shot() -> void:
 func is_settled() -> bool:
 	if not projs.is_empty():
 		return false
-	if shot != null and (shot.grip_timer > 0.0 or shot.reel_timer > 0.0):
+	if shot != null and (shot.grip_timer > 0.0 or shot.reel_timer > 0.0 or shot.clock_timer > 0.0):
 		return false
 	for s in stones:
 		if s.alive and s.vel != Vector2.ZERO:
@@ -380,6 +411,7 @@ func force_stop() -> void:
 	if shot != null:
 		shot.grip_timer = 0.0
 		shot.reel_timer = 0.0
+		shot.clock_timer = -1.0
 
 
 func step() -> void:
@@ -390,12 +422,14 @@ func step() -> void:
 			force_stop()
 			return
 	_update_reel(dt)
+	_update_shot_timers(dt)
 	for s in stones:
 		if not s.alive:
 			continue
 		var sp: float = s.vel.length()
 		if sp > 0.0:
-			var ns := sp - FRICTION * dt - sp * DRAG * dt
+			var fr := FRICTION * _friction_scale(s.pos)
+			var ns := sp - fr * dt - sp * DRAG * dt
 			if ns < STOP_SPEED:
 				s.vel = Vector2.ZERO
 			else:
@@ -411,6 +445,54 @@ func step() -> void:
 
 
 # ── 내부 처리 ────────────────────────────────────────────
+
+## 페인트 롤러 띠 위에서는 마찰이 줄어든다.
+func _friction_scale(p: Vector2) -> float:
+	for d in devices:
+		if d.kind == "slick" and _on_strip(d, p, PartsDataRef.num("roller", "width") * 0.5):
+			return PartsDataRef.num("roller", "friction")
+	return 1.0
+
+
+func _on_strip(d, p: Vector2, half_w: float) -> bool:
+	var off: Vector2 = p - d.pos
+	var along: float = off.dot(d.dir)
+	if along < 0.0 or along > d.length:
+		return false
+	return absf(off.cross(d.dir)) <= half_w
+
+
+## 딸깍 태엽, 도장 브레이크, 빨판.
+func _update_shot_timers(dt: float) -> void:
+	if shot == null:
+		return
+	var s := shooter()
+	if s != null and s.alive:
+		if shot.clock_timer > 0.0:
+			shot.clock_timer -= dt
+			if shot.clock_timer <= 0.0:
+				s.vel += shot.dir * PartsDataRef.num("clockwork", "power")
+				emit({"t": "part", "part": "clockwork", "pos": s.pos, "owner": s.owner, "text": "딸깍!"})
+		if s.parts["prop"] == "brake" and not shot.used.has("brake"):
+			var th := PartsDataRef.num("brake", "threshold")
+			var sp := s.vel.length()
+			if sp > th:
+				shot.brake_armed = true
+			elif shot.brake_armed and sp > 0.0:
+				shot.used["brake"] = true
+				s.vel = Vector2.ZERO
+				shot.reel_timer = 0.0
+				emit({"t": "part", "part": "brake", "pos": s.pos, "owner": s.owner, "text": "도장 브레이크"})
+	for id in shot.sucker.keys():
+		var t := get_stone(id)
+		if t == null or not t.alive:
+			shot.sucker.erase(id)
+			continue
+		if t.vel.length() > 60.0:
+			t.vel *= PartsDataRef.num("sucker", "brake")
+			shot.sucker.erase(id)
+			emit({"t": "part", "part": "sucker", "pos": t.pos, "owner": shot.owner, "text": "빨판 감속"})
+
 
 func _update_reel(dt: float) -> void:
 	if shot == null or shot.reel_timer <= 0.0:
@@ -523,6 +605,10 @@ func _update_projs(dt: float) -> void:
 				continue
 			p.vel *= ns / sp
 		p.pos += p.vel * dt
+		p.travelled += p.vel.length() * dt
+		if p.kind == "umbrella" and p.travelled >= PartsDataRef.num("umbrella_gun", "open_dist"):
+			_open_umbrella(p)
+			continue
 		# 거울 반사
 		if p.kind == "bullet":
 			for d in devices:
@@ -549,6 +635,20 @@ func _update_projs(dt: float) -> void:
 			if s.id == p.ignore_id and p.age < 0.15:
 				continue
 			if s.pos.distance_to(p.pos) < STONE_R + p.radius:
+				if p.kind == "umbrella":
+					_open_umbrella(p)
+					break
+				if p.kind == "sucker":
+					p.alive = false
+					if s.vel.length() > 40.0:
+						s.vel *= PartsDataRef.num("sucker", "brake")
+						emit({"t": "part", "part": "sucker", "pos": s.pos, "owner": p.owner, "text": "빨판 감속"})
+					elif shot != null:
+						shot.sucker[s.id] = true
+						emit({"t": "part", "part": "sucker", "pos": s.pos, "owner": p.owner, "text": "빨판"})
+					break
+				if p.kind == "bullet" and _shield_deflect(s, p):
+					break
 				s.vel += p.vel.normalized() * p.power
 				p.alive = false
 				emit({"t": "bullet_hit", "pos": p.pos, "owner": p.owner, "target": s.owner, "source": p.source})
@@ -556,6 +656,46 @@ func _update_projs(dt: float) -> void:
 		if p.alive and (not _inside_margin(p.pos, 80.0) or p.age > 2.5):
 			p.alive = false
 	projs = projs.filter(func(q): return q.alive)
+
+
+## 딱지 방패: 이 알이 처음 맞는 탄환을 장착한 쪽으로 튕겨낸다 (밀리지 않는다).
+func _shield_deflect(s: Stone, p: Proj) -> bool:
+	if s.parts["aux"] != "shield":
+		return false
+	if shot != null and shot.shield_used.has(s.id):
+		return false
+	if shot != null:
+		shot.shield_used[s.id] = true
+	var d: Vector2 = p.vel.normalized()
+	var out := d.rotated(PI / 2.0 * s.magnet_side)
+	p.vel = out * p.vel.length()
+	p.pos = s.pos + out * (STONE_R + p.radius + 2.0)
+	p.ignore_id = s.id
+	p.age = 0.0
+	p.source = "deflect"
+	emit({"t": "part", "part": "shield", "pos": s.pos, "owner": s.owner, "text": "딱지 방패"})
+	return true
+
+
+## 우산총: 펼쳐지며 앞쪽 넓은 범위의 알을 진행 방향으로 민다.
+func _open_umbrella(p: Proj) -> void:
+	p.alive = false
+	var dir: Vector2 = p.vel.normalized()
+	var r := PartsDataRef.num("umbrella_gun", "radius")
+	var pw := PartsDataRef.num("umbrella_gun", "power")
+	for s in stones:
+		if not s.alive or s.id == p.ignore_id:
+			continue
+		var off: Vector2 = s.pos - p.pos
+		if off.length() > r + STONE_R:
+			continue
+		if off.dot(dir) < -STONE_R:
+			continue
+		var push := dir
+		if off.length() > 1.0:
+			push = (dir * 0.75 + off.normalized() * 0.25).normalized()
+		s.vel += push * pw
+	emit({"t": "umbrella", "pos": p.pos, "owner": p.owner, "radius": r, "dir": dir})
 
 
 func _inside_margin(p: Vector2, margin: float) -> bool:
@@ -574,6 +714,9 @@ func _device_radius(d: Device) -> float:
 
 func _check_devices() -> void:
 	for d in devices.duplicate():
+		if d.kind == "groove":
+			_check_groove(d)
+			continue
 		if not d.armed:
 			continue
 		var r := STONE_R + _device_radius(d)
@@ -600,6 +743,30 @@ func _check_devices() -> void:
 			touching.vel += perp * PartsDataRef.num("bubble", "power")
 			emit({"t": "part", "part": "bubble", "pos": d.pos, "owner": d.owner, "text": "방울 톡!"})
 			devices.erase(d)
+
+
+## 바퀴 자국: 다음 샷부터 처음 홈을 밟은(움직이는) 알이 홈 방향으로 살짝 꺾인다.
+func _check_groove(d: Device) -> void:
+	if not d.armed:
+		return
+	var now_inside := {}
+	var hit: Stone = null
+	for s in stones:
+		if not s.alive:
+			continue
+		if _on_strip(d, s.pos, STONE_R * 0.6):
+			now_inside[s.id] = true
+			if not d.inside.has(s.id) and s.vel.length() > 30.0 and hit == null:
+				hit = s
+	d.inside = now_inside
+	if hit == null:
+		return
+	var axis: Vector2 = d.dir if hit.vel.dot(d.dir) >= 0.0 else -d.dir
+	var diff := wrapf(axis.angle() - hit.vel.angle(), -PI, PI)
+	var turn := deg_to_rad(PartsDataRef.num("track", "turn_deg"))
+	hit.vel = hit.vel.rotated(clampf(diff, -turn, turn))
+	emit({"t": "part", "part": "track", "pos": hit.pos, "owner": d.owner, "text": "홈에 꺾임"})
+	devices.erase(d)
 
 
 func _explode(d: Device) -> void:

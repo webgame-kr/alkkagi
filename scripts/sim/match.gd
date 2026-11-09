@@ -123,20 +123,41 @@ func _begin_round() -> void:
 		draft_queue = order.duplicate()
 		offers.clear()
 		for pid in draft_queue:
-			offers[pid] = _roll_offer()
+			offers[pid] = roll_offer(pid)
 		phase = "draft"
 	else:
 		phase = "aim"
 
 
-func _roll_offer() -> Array:
-	var pool: Array = PartsData.ids()
+## 후보 세 개. 살아 있는 내 알에 티라노 부품이 붙어 있으면,
+## 아직 안 달린 티라노 부품 하나를 한 자리에 넣고 나머지 두 자리는 일반 부품으로 채운다.
+func roll_offer(pid: int) -> Array:
 	var out: Array = []
+	var missing := trex_missing(pid)
+	if not missing.is_empty():
+		out.append(missing[rng.randi_range(0, missing.size() - 1)])
+	var pool: Array = []
+	for id in PartsData.ids():
+		if out.is_empty() or PartsData.set_of(id) == "":
+			if not out.has(id):
+				pool.append(id)
 	while out.size() < OFFER_COUNT and not pool.is_empty():
 		var i := rng.randi_range(0, pool.size() - 1)
 		out.append(pool[i])
 		pool.remove_at(i)
 	return out
+
+
+## 티라노 부품을 가장 많이 단 살아 있는 내 알 기준으로, 아직 없는 티라노 부품. 없으면 빈 배열.
+func trex_missing(pid: int) -> Array:
+	var best: Array = []
+	var best_n := 0
+	for s in world.alive_stones_of(pid):
+		var pr := PartsData.set_progress(s.parts)
+		if pr["count"] > best_n and pr["count"] < pr["total"]:
+			best_n = pr["count"]
+			best = pr["missing"]
+	return best
 
 
 ## 고른 부품을 살아 있는 내 알에 단다. 같은 슬롯의 기존 부품은 교체된다.
@@ -149,8 +170,11 @@ func equip(pid: int, part_id: String, stone_id: int, side := 1) -> bool:
 	if s == null or not s.alive or s.owner != pid:
 		return false
 	s.parts[PartsData.slot_of(part_id)] = part_id
-	if part_id == "magnet":
-		s.magnet_side = 1 if side >= 0 else -1
+	if PartsData.SIDE_PARTS.has(part_id):
+		if PartsData.slot_of(part_id) == "prop":
+			s.prop_side = 1 if side >= 0 else -1
+		else:
+			s.magnet_side = 1 if side >= 0 else -1
 	draft_queue.pop_front()
 	if draft_queue.is_empty():
 		phase = "aim"

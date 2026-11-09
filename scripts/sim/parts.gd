@@ -49,6 +49,16 @@ static func on_launch(w, s) -> void:
 					_part_ev(w, s, "hook", t.pos, {"from": s.pos})
 				else:
 					_part_ev(w, s, "hook", muzzle, {"miss": true})
+		"sucker":
+			if _use(w, "sucker"):
+				w.spawn_proj("sucker", s.owner, muzzle, dir, D.num("sucker", "speed"), 7.0, 0.0, s.id)
+				_part_ev(w, s, "sucker", muzzle)
+		"umbrella_gun":
+			if _use(w, "umbrella_gun"):
+				w.spawn_proj("umbrella", s.owner, muzzle, dir, D.num("umbrella_gun", "speed"), 9.0, 0.0, s.id)
+				_part_ev(w, s, "umbrella_gun", muzzle)
+	if s.parts["prop"] == "clockwork" and w.shot.power <= D.num("clockwork", "max_power"):
+		w.shot.clock_timer = D.num("clockwork", "delay")
 	if aux == "magnet" and _use(w, "magnet"):
 		var t = magnet_target(w, s, dir)
 		if t != null:
@@ -120,6 +130,11 @@ static func on_contact(w, s, t, n: Vector2, v_before: Vector2) -> void:
 	var dir: Vector2 = ctx.dir
 	var contact: Vector2 = s.pos + n * R
 
+	# 메카 티라노 「물고 던지기」: 세 부품이 한 알에 모였고, 옆면으로 상대에 먼저 닿았을 때 한 번.
+	if D.set_complete(s.parts) and side_hit and opp and not ctx.used.has("trex_head") and not ctx.used.has("trex_arm"):
+		if _mecha_throw(w, s, t, n, v_before):
+			return
+
 	match s.parts["weapon"]:
 		"claw":
 			if frontal and opp and _use(w, "claw"):
@@ -145,12 +160,38 @@ static func on_contact(w, s, t, n: Vector2, v_before: Vector2) -> void:
 					t.vel = Vector2.ZERO
 					ctx.swapped = true
 					_part_ev(w, s, "stamp", contact)
+		"trex_head":
+			if frontal and opp and _use(w, "trex_head"):
+				t.vel = dir * (v_before.length() * 0.8 + D.num("trex_head", "power"))
+				s.vel *= 0.35
+				_part_ev(w, s, "trex_head", contact, {"text": "물기"})
+		"roller":
+			if frontal and _use(w, "roller"):
+				var d = w.place_device("slick", s.owner, s.id, t.pos, n, w.round_no + int(D.num("roller", "rounds")))
+				d.length = D.num("roller", "length")
+				_part_ev(w, s, "roller", contact)
 		"copier":
 			if first and _use(w, "copier"):
 				w.place_device("turret", s.owner, s.id, contact, dir, -1)
 				_part_ev(w, s, "copier", contact)
 
 	match s.parts["aux"]:
+		"trex_arm":
+			if side_hit and opp and _use(w, "trex_arm"):
+				_pull_front(w, s, t, v_before)
+				_part_ev(w, s, "trex_arm", contact, {"text": "끌어오기"})
+		"tambourine":
+			if first and _use(w, "tambourine"):
+				var rr := D.num("tambourine", "radius")
+				for o in w.stones:
+					if not o.alive or o.id == s.id or o.id == t.id:
+						continue
+					var off: Vector2 = o.pos - contact
+					var dist := off.length()
+					if dist < rr and dist > 0.1:
+						o.vel += off / dist * D.num("tambourine", "power") * (1.0 - dist / rr * 0.6)
+				w.emit({"t": "ripple", "pos": contact, "owner": s.owner, "radius": rr})
+				_part_ev(w, s, "tambourine", contact)
 		"bumper":
 			if side_hit and _use(w, "bumper"):
 				var vd := v_before.normalized()
@@ -199,6 +240,39 @@ static func on_contact(w, s, t, n: Vector2, v_before: Vector2) -> void:
 				if _use(w, "reel"):
 					ctx.reel_timer = D.num("reel", "time")
 					_part_ev(w, s, "reel", s.pos, {"from": ctx.start})
+			"trex_leg":
+				if _use(w, "trex_leg"):
+					s.vel *= D.num("trex_leg", "keep")
+					_part_ev(w, s, "trex_leg", s.pos, {"text": "버티기"})
+			"crab":
+				if _use(w, "crab"):
+					s.vel = dir.rotated(PI / 2.0 * s.prop_side) * D.num("crab", "power")
+					_part_ev(w, s, "crab", s.pos)
+
+
+## 티라노 팔: 옆에 닿은 상대를 내 알 앞쪽으로 끌어온다.
+static func _pull_front(w, s, t, v_before: Vector2) -> bool:
+	var fwd: Vector2 = v_before.normalized() if v_before.length() > 1.0 else w.shot.dir
+	var spot: Vector2 = s.pos + fwd * (R * 2.0 + 1.0)
+	if not w.is_inside(spot) or not _free_spot(w, spot, [s.id, t.id]):
+		return false
+	t.pos = spot
+	t.vel = s.vel * 0.3
+	return true
+
+
+## 메카 티라노: 팔로 끌어오고 → 머리가 물어 조준 방향으로 던지고 → 다리가 버틴다.
+static func _mecha_throw(w, s, t, n: Vector2, v_before: Vector2) -> bool:
+	var ctx = w.shot
+	_pull_front(w, s, t, v_before)
+	var st: Dictionary = D.SETS["trex"]
+	t.vel = ctx.dir * (maxf(v_before.length(), 300.0) * 0.9 + st["throw_power"])
+	s.vel *= D.num("trex_leg", "keep")
+	for k in ["trex_head", "trex_arm", "trex_leg"]:
+		ctx.used[k] = true
+	ctx.used["mecha"] = true
+	w.emit({"t": "part", "part": "mecha", "pos": t.pos, "owner": s.owner, "text": st["move"], "big": true})
+	return true
 
 
 static func _can_swap(w, s, t) -> bool:
@@ -241,6 +315,30 @@ static func on_stop(w, s) -> void:
 		"mine":
 			w.place_device("mine", s.owner, s.id, s.pos, Vector2.RIGHT, w.round_no + int(D.num("mine", "rounds")))
 			_part_ev(w, s, "mine", s.pos)
+		"track":
+			var g := groove_from_path(w.shot.path, D.num("track", "length"))
+			if not g.is_empty() and w.is_inside(g["start"]):
+				var d = w.place_device("groove", s.owner, s.id, g["start"], g["dir"], w.round_no + int(D.num("track", "rounds")))
+				d.length = g["length"]
+				_part_ev(w, s, "track", s.pos)
+
+
+## 지나온 길의 마지막 length 구간을 곧은 홈으로. {start, dir, length}
+static func groove_from_path(path: Array, length: float) -> Dictionary:
+	if path.size() < 2:
+		return {}
+	var end_p: Vector2 = path[path.size() - 1]
+	var acc := 0.0
+	var start: Vector2 = end_p
+	for i in range(path.size() - 1, 0, -1):
+		acc += path[i].distance_to(path[i - 1])
+		start = path[i - 1]
+		if acc >= length:
+			break
+	var v := end_p - start
+	if v.length() < 20.0:
+		return {}
+	return {"start": start, "dir": v.normalized(), "length": v.length()}
 
 
 static func path_midpoint(path: Array) -> Vector2:
@@ -291,6 +389,30 @@ static func aim_preview(w, s, dir: Vector2, power: float) -> Array:
 		var t = magnet_target(w, s, dir)
 		if t != null:
 			out.append({"k": "target", "a": t.pos})
+	if weapon == "sucker":
+		var p1: Vector2 = s.pos + dir * (R + 7.0)
+		out.append({"k": "sucker", "a": p1, "b": p1 + dir * minf(w.ray_to_edge(p1, dir), 420.0)})
+	if weapon == "umbrella_gun":
+		var p2: Vector2 = s.pos + dir * (R + 7.0)
+		var od := D.num("umbrella_gun", "open_dist")
+		out.append({"k": "umbrella", "a": p2, "b": p2 + dir * od, "r": D.num("umbrella_gun", "radius")})
+	if s.parts["prop"] == "clockwork" and power <= D.num("clockwork", "max_power"):
+		out.append({"k": "clock", "a": s.pos + dir * travel_after(power * 1120.0, D.num("clockwork", "delay"))})
+	if D.set_complete(s.parts):
+		out.append({"k": "mecha", "a": s.pos, "dir": dir})
 	if weapon == "stamp":
 		out.append({"k": "note", "a": s.pos, "text": "도장 작동" if power <= D.num("stamp", "max_power") else "도장 X (힘 45% 이하)"})
 	return out
+
+
+## 직선으로 미끄러질 때 t초 뒤까지 간 거리 (world.gd 의 마찰과 같은 식, 근사).
+static func travel_after(v0: float, t: float) -> float:
+	var v := v0
+	var x := 0.0
+	var dt := 1.0 / 120.0
+	var k := 0.0
+	while k < t and v > 0.0:
+		x += v * dt
+		v = maxf(0.0, v - 950.0 * dt - v * 0.25 * dt)
+		k += dt
+	return x

@@ -70,7 +70,52 @@ const CATALOG := {
 	"chute": {"name": "낙하산", "slot": "prop", "when": "판 끝 구역에 들어갈 때",
 		"desc": "내 알이 판 끝 구역에 들어가면 한 번 급제동한다. 너무 빠르면 그대로 떨어질 수 있다.",
 		"power": 550.0},
+	# ── 신규 무기 ─────────────────────────────────────────
+	"trex_head": {"name": "티라노 머리", "slot": "weapon", "when": "첫 정면 충돌", "set": "trex",
+		"desc": "정면에서 처음 부딪힌 상대 알을 잠깐 물고 발사 방향으로 밀어낸다.",
+		"power": 300.0},
+	"sucker": {"name": "빨판총", "slot": "weapon", "when": "발사 순간",
+		"desc": "정면으로 빨판을 쏜다. 맞은 알은 이번 샷에 한 번 짧게 감속한다. 도망가는 알을 세워 몸통으로 칠 수 있다.",
+		"speed": 1150.0, "brake": 0.3},
+	"umbrella_gun": {"name": "우산총", "slot": "weapon", "when": "발사 순간",
+		"desc": "정면으로 접힌 우산을 쏜다. 일정 거리를 지나면 펼쳐지며 옆으로 넓은 범위의 알을 민다.",
+		"speed": 900.0, "open_dist": 190.0, "radius": 90.0, "power": 340.0},
+	"roller": {"name": "페인트 롤러", "slot": "weapon", "when": "첫 정면 충돌",
+		"desc": "처음 정면으로 맞은 알 뒤로 미끄러운 띠를 남긴다. 띠 위를 지나는 알은 마찰이 줄어 더 멀리 미끄러진다.",
+		"length": 200.0, "width": 44.0, "friction": 0.3, "rounds": 1},
+	# ── 신규 보조 ─────────────────────────────────────────
+	"trex_arm": {"name": "티라노 팔", "slot": "aux", "when": "첫 측면 충돌", "set": "trex",
+		"desc": "옆으로 부딪힌 상대 알 하나를 내 알 앞쪽으로 끌어온다."},
+	"shield": {"name": "딱지 방패", "slot": "aux", "when": "처음 탄환을 맞을 때", "side": true,
+		"desc": "이 알이 처음 탄환을 맞으면 방패가 뒤집히며 탄환을 옆으로 튕겨낸다. 튕기는 쪽은 장착할 때 고른다."},
+	"tambourine": {"name": "탬버린", "slot": "aux", "when": "첫 충돌",
+		"desc": "첫 충돌 지점에서 진동이 퍼진다. 직접 부딪히지 않은 가까운 알도 조금씩 밀려난다.",
+		"radius": 130.0, "power": 240.0},
+	"track": {"name": "바퀴 자국", "slot": "aux", "when": "멈출 때",
+		"desc": "멈출 때 지나온 길에 짧은 홈을 남긴다. 다음 샷부터 처음 홈을 밟은 알이 홈 방향으로 살짝 꺾인다.",
+		"length": 140.0, "turn_deg": 30.0, "rounds": 1},
+	# ── 신규 추진 ─────────────────────────────────────────
+	"trex_leg": {"name": "티라노 다리", "slot": "prop", "when": "첫 몸통 충돌 직후", "set": "trex",
+		"desc": "첫 몸통 충돌 뒤 두 발로 버텨 내 알의 반동을 줄인다.",
+		"keep": 0.25},
+	"crab": {"name": "게걸음 바퀴", "slot": "prop", "when": "첫 충돌 직후", "side": true,
+		"desc": "첫 충돌 직후 장착할 때 고른 좌우 방향으로 짧게 튄다.",
+		"power": 480.0},
+	"clockwork": {"name": "딸깍 태엽", "slot": "prop", "when": "약한 샷 뒤 잠깐 뒤",
+		"desc": "힘 50% 이하로 쏘면 출발은 느리지만 잠깐 뒤 한 번 가속한다. 가속할 위치를 조준 중 표시한다.",
+		"max_power": 0.5, "delay": 0.45, "power": 520.0},
+	"brake": {"name": "도장 브레이크", "slot": "prop", "when": "속도가 떨어질 때",
+		"desc": "쏜 알의 속도가 일정 수준 아래로 떨어지면 한 번 급정지한다. 다음 턴에 쓸 자리를 정확히 잡기 좋다.",
+		"threshold": 260.0},
 }
+
+## 세트: 같은 알에 세 부품을 모두 달면 전용 동작이 열린다.
+const SETS := {"trex": {"name": "메카 티라노", "parts": ["trex_head", "trex_arm", "trex_leg"],
+	"move": "물고 던지기", "short": {"trex_head": "머리", "trex_arm": "팔", "trex_leg": "다리"},
+	"throw_power": 420.0}}
+
+## 장착할 때 좌우를 고르는 부품. 보조는 Stone.magnet_side, 추진은 Stone.prop_side 에 저장.
+const SIDE_PARTS := ["magnet", "shield", "crab"]
 
 ## 탄환을 쏘는 무기(데칼코마니 포신의 조건).
 const BULLET_WEAPONS := ["pea", "shotgun"]
@@ -104,3 +149,37 @@ static func unmet_need(id: String, stone_parts: Dictionary) -> String:
 	if need == "bullet" and not BULLET_WEAPONS.has(stone_parts.get("weapon", "")):
 		return "탄환 무기(콩알총·산탄총)가 있어야 작동"
 	return ""
+
+
+static func set_of(id: String) -> String:
+	return CATALOG.get(id, {}).get("set", "")
+
+
+## 이 알에 달린 세트 부품 수. {set, count, missing:[id]}
+static func set_progress(stone_parts: Dictionary, set_id := "trex") -> Dictionary:
+	var have := 0
+	var missing: Array = []
+	for pid in SETS[set_id]["parts"]:
+		if stone_parts.values().has(pid):
+			have += 1
+		else:
+			missing.append(pid)
+	return {"set": set_id, "count": have, "missing": missing, "total": SETS[set_id]["parts"].size()}
+
+
+static func set_complete(stone_parts: Dictionary, set_id := "trex") -> bool:
+	return set_progress(stone_parts, set_id)["count"] == SETS[set_id]["parts"].size()
+
+
+## 예: "메카 티라노 2/3 · 다리 필요"
+static func set_label(stone_parts: Dictionary, set_id := "trex") -> String:
+	var pr := set_progress(stone_parts, set_id)
+	if pr["count"] == 0:
+		return ""
+	var st: Dictionary = SETS[set_id]
+	if pr["count"] == pr["total"]:
+		return "%s 완성 · %s" % [st["name"], st["move"]]
+	var need: Array = []
+	for m in pr["missing"]:
+		need.append(st["short"][m])
+	return "%s %d/%d · %s 필요" % [st["name"], pr["count"], pr["total"], "·".join(need)]

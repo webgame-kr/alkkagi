@@ -114,7 +114,9 @@ func result() -> Dictionary:
 
 const PRIORITY := {"pea": 8, "shotgun": 7, "retro": 8, "magnet": 7, "rocket": 6, "nose": 6,
 	"hook": 6, "claw": 5, "chute": 6, "reel": 5, "bumper": 5, "carousel": 5, "mine": 5,
-	"umbrella": 3, "spring": 4, "flipper": 4, "bubble": 4, "copier": 4, "stamp": 3, "decal": 5}
+	"umbrella": 3, "spring": 4, "flipper": 4, "bubble": 4, "copier": 4, "stamp": 3, "decal": 5,
+	"trex_head": 6, "trex_arm": 5, "trex_leg": 5, "sucker": 4, "umbrella_gun": 5, "roller": 4,
+	"shield": 4, "tambourine": 5, "track": 3, "crab": 5, "clockwork": 4, "brake": 4}
 
 
 ## {part, stone, side}
@@ -135,6 +137,10 @@ static func choose_draft(m, player_id: int, rand: RandomNumberGenerator) -> Dict
 			tmp[slot] = part
 			if PartsData.unmet_need(part, tmp) != "":
 				val -= 6.0
+			# 세트를 모으는 중이면 같은 알에 이어 붙이는 쪽을 크게 쳐준다.
+			if PartsData.set_of(part) != "":
+				var have: int = PartsData.set_progress(s.parts)["count"]
+				val += have * 4.0
 			# 이미 부품이 있는 알에 몰아 다는 쪽을 약간 선호 (조합)
 			var filled := 0
 			for k in tmp:

@@ -26,7 +26,10 @@ static func draw(ci: CanvasItem, parts: Dictionary, magnet_side: int, col: Color
 	var w: String = parts.get("weapon", "")
 	var x: String = parts.get("aux", "")
 	var p: String = parts.get("prop", "")
-	var mirror := x == "magnet" and magnet_side < 0
+	if w == "trex_head" and x == "trex_arm" and p == "trex_leg":
+		draw_mecha(ci, col, a, symbol)
+		return
+	var mirror := (x == "magnet" or x == "shield") and magnet_side < 0
 	if p != "":
 		_prop(ci, p, a)
 	if w != "":
@@ -87,6 +90,16 @@ static func line(ci: CanvasItem, pts: Array, col: Color, width: float, a: float,
 
 static func dashed(ci: CanvasItem, p0: Vector2, p1: Vector2, col: Color, width: float, dash: float, a: float, mirror := false) -> void:
 	ci.draw_dashed_line(T(p0, mirror), T(p1, mirror), _al(col, a), width * K, dash * K)
+
+
+## 2차 베지어를 점 배열로.
+static func qbez(p0: Vector2, c: Vector2, p1: Vector2, steps := 8) -> Array:
+	var out: Array = []
+	for i in steps + 1:
+		var t := float(i) / steps
+		var u := 1.0 - t
+		out.append(p0 * u * u + c * 2.0 * u * t + p1 * t * t)
+	return out
 
 
 ## 3차 베지어를 점 배열로.
@@ -217,6 +230,44 @@ static func _weapon(ci: CanvasItem, w: String, a: float) -> void:
 			rect(ci, 56.5, 16, 7, 12, STEEL_D, a)
 			rect(ci, 46, 27, 28, 12, STEEL, a)
 			line(ci, [Vector2(50, 33), Vector2(70, 33)], STEEL_D, 1.5, a)
+		"trex_head":
+			var hd: Array = bez(Vector2(47, 41), Vector2(45, 28), Vector2(47, 14), Vector2(53, 6))
+			hd.append(Vector2(67, 6))
+			hd.append_array(bez(Vector2(67, 6), Vector2(73, 14), Vector2(75, 28), Vector2(73, 41)).slice(1))
+			poly(ci, hd, STEEL, a)
+			line(ci, [Vector2(50, 14), Vector2(52, 18)], OUT, 1.8, a)
+			line(ci, [Vector2(50, 22), Vector2(53, 25)], OUT, 1.8, a)
+			line(ci, [Vector2(70, 14), Vector2(68, 18)], OUT, 1.8, a)
+			line(ci, [Vector2(70, 22), Vector2(67, 25)], OUT, 1.8, a)
+			line(ci, qbez(Vector2(51, 31), Vector2(55, 27), Vector2(58, 31)), BRASS, 3, a)
+			line(ci, qbez(Vector2(62, 31), Vector2(65, 27), Vector2(69, 31)), BRASS, 3, a)
+			for e in [Vector2(54.5, 33), Vector2(65.5, 33)]:
+				circ(ci, e, 2, OUT, a, false, 0)
+			for e in [Vector2(57, 9.5), Vector2(63, 9.5)]:
+				circ(ci, e, 1.3, OUT, a, false, 0)
+		"sucker":
+			rect(ci, 55, 18, 10, 24, STEEL, a)
+			line(ci, [Vector2(60, 18), Vector2(60, 11)], OUT, 3, a)
+			var cup: Array = qbez(Vector2(46, 12), Vector2(60, 1), Vector2(74, 12))
+			cup.append_array(qbez(Vector2(74, 12), Vector2(60, 9), Vector2(46, 12)).slice(1))
+			poly(ci, cup, RED, a)
+			line(ci, [Vector2(57, 26), Vector2(63, 26)], STEEL_D, 1.5, a)
+			line(ci, [Vector2(57, 32), Vector2(63, 32)], STEEL_D, 1.5, a)
+		"umbrella_gun":
+			poly(ci, [Vector2(60, 3), Vector2(66, 27), Vector2(54, 27)], Color("E1E6EB"), a)
+			line(ci, [Vector2(58, 10), Vector2(57, 22)], Color.WHITE, 1.5, a)
+			rect(ci, 50, 25, 20, 17, STEEL, a)
+			line(ci, [Vector2(54, 30), Vector2(66, 30)], STEEL_D, 1.5, a)
+			line(ci, [Vector2(54, 36), Vector2(66, 36)], STEEL_D, 1.5, a)
+		"roller":
+			var fr: Array = [[Vector2(60, 41), Vector2(60, 28)], [Vector2(45, 28), Vector2(75, 28)], [Vector2(45, 28), Vector2(45, 20)], [Vector2(75, 28), Vector2(75, 20)]]
+			for seg in fr:
+				line(ci, seg, OUT, 3, a)
+			for seg in fr:
+				line(ci, seg, STEEL, 1.2, a)
+			rect(ci, 40, 8, 40, 13, Color("8FD0C8"), a)
+			for xx in [46.0, 54.0, 62.0, 70.0]:
+				line(ci, [Vector2(xx, 11), Vector2(xx, 18)], Color(1, 1, 1, 0.6), 1.5, a)
 		"copier":
 			rect(ci, 51, 5, 18, 11, WHITE, a)
 			rect(ci, 43, 14, 34, 24, STEEL, a)
@@ -270,6 +321,31 @@ static func _aux(ci: CanvasItem, x: String, a: float, m: bool) -> void:
 			ring(ci, Vector2(105, 62), 7, OUT, 2.5, a, m)
 			circ(ci, Vector2(112, 45), 6, Color(0.749, 0.890, 0.918, 0.8), a, m)
 			circ(ci, Vector2(102, 38), 3.5, Color(0.749, 0.890, 0.918, 0.8), a, m)
+		"trex_arm":
+			var arm := [Vector2(83, 63), Vector2(98, 57), Vector2(104, 42)]
+			line(ci, arm, OUT, 8, a, m)
+			line(ci, arm, STEEL, 4, a, m)
+			line(ci, [Vector2(104, 42), Vector2(99, 34)], OUT, 3, a, m)
+			line(ci, [Vector2(104, 42), Vector2(110, 35)], OUT, 3, a, m)
+			circ(ci, Vector2(98, 57), 3.2, BRASS, a, m, 1.5)
+		"shield":
+			poly(ci, [Vector2(84, 50), Vector2(96, 50), Vector2(84, 62)], BRASS, a, m, 0)
+			poly(ci, [Vector2(108, 50), Vector2(108, 62), Vector2(96, 50)], BRASS, a, m, 0)
+			poly(ci, [Vector2(96, 50), Vector2(108, 62), Vector2(96, 74), Vector2(84, 62)], STEEL, a, m, 0)
+			poly(ci, [Vector2(84, 50), Vector2(108, 50), Vector2(108, 74), Vector2(84, 74)], Color(0, 0, 0, 0), a, m)
+			line(ci, [Vector2(84, 50), Vector2(108, 74)], OUT, 1.5, a, m)
+			line(ci, [Vector2(108, 50), Vector2(84, 74)], OUT, 1.5, a, m)
+		"tambourine":
+			rect(ci, 82, 59, 8, 6, STEEL_D, a, m)
+			ring(ci, Vector2(102, 62), 12, OUT, 7, a, m)
+			ring(ci, Vector2(102, 62), 12, BRASS, 3.5, a, m)
+			for b in [Vector2(102, 50), Vector2(114, 62), Vector2(102, 74), Vector2(93.5, 53.5), Vector2(110.5, 70.5)]:
+				circ(ci, b, 3.2, STEEL, a, m, 1.5)
+		"track":
+			rect(ci, 82, 59, 7, 6, STEEL_D, a, m)
+			rect(ci, 89, 46, 15, 32, Color("3A4048"), a, m)
+			for yy in [51.0, 57.0, 63.0, 69.0]:
+				line(ci, [Vector2(91, yy), Vector2(102, yy + 3)], STEEL, 2, a, m)
 		"mine":
 			rect(ci, 82, 50, 22, 24, STEEL, a, m)
 			rect(ci, 98, 56, 4, 12, OUT, a, m, 0)
@@ -303,8 +379,139 @@ static func _prop(ci: CanvasItem, p: String, a: float) -> void:
 			line(ci, [Vector2(60, 87), Vector2(60, 107)], STEEL_D, 1.8, a)
 			line(ci, [Vector2(50, 97), Vector2(70, 97)], STEEL_D, 1.8, a)
 			circ(ci, Vector2(60, 97), 3, OUT, a, false, 0)
+		"trex_leg":
+			for lg in [[Vector2(50, 82), Vector2(46, 100)], [Vector2(70, 82), Vector2(74, 100)]]:
+				line(ci, lg, OUT, 9, a)
+				line(ci, lg, STEEL, 5, a)
+			for toe in [[Vector2(46, 100), Vector2(38, 110)], [Vector2(46, 100), Vector2(46, 113)], [Vector2(46, 100), Vector2(54, 110)],
+					[Vector2(74, 100), Vector2(66, 110)], [Vector2(74, 100), Vector2(74, 113)], [Vector2(74, 100), Vector2(82, 110)]]:
+				line(ci, toe, OUT, 3, a)
+			circ(ci, Vector2(46, 100), 3, BRASS, a, false, 1.5)
+			circ(ci, Vector2(74, 100), 3, BRASS, a, false, 1.5)
+		"crab":
+			line(ci, [Vector2(60, 84), Vector2(60, 96)], OUT, 3, a)
+			line(ci, [Vector2(44, 96), Vector2(76, 96)], OUT, 3, a)
+			rect(ci, 30, 90, 20, 12, Color("3A4048"), a)
+			rect(ci, 70, 90, 20, 12, Color("3A4048"), a)
+			for xx in [34.0, 40.0, 46.0, 74.0, 80.0, 86.0]:
+				line(ci, [Vector2(xx, 93), Vector2(xx, 99)], STEEL, 1.5, a)
+		"clockwork":
+			rect(ci, 57, 84, 6, 12, STEEL_D, a)
+			var key: Array = bez(Vector2(60, 96), Vector2(52, 92), Vector2(40, 96), Vector2(40, 105))
+			key.append_array(bez(Vector2(40, 105), Vector2(40, 114), Vector2(52, 116), Vector2(60, 108)).slice(1))
+			key.append_array(bez(Vector2(60, 108), Vector2(68, 116), Vector2(80, 114), Vector2(80, 105)).slice(1))
+			key.append_array(bez(Vector2(80, 105), Vector2(80, 96), Vector2(68, 92), Vector2(60, 96)).slice(1))
+			poly(ci, key, BRASS, a)
+			circ(ci, Vector2(50, 105), 3.5, CORE, a, false, 0)
+			circ(ci, Vector2(70, 105), 3.5, CORE, a, false, 0)
+		"brake":
+			rect(ci, 56, 84, 8, 9, STEEL_D, a)
+			rect(ci, 45, 92, 30, 9, STEEL, a)
+			rect(ci, 43, 100, 34, 8, RED, a)
+			for xx in [49.0, 55.0, 61.0, 67.0, 73.0]:
+				line(ci, [Vector2(xx, 102), Vector2(xx, 106)], OUT, 1.2, a)
 		"chute":
 			rect(ci, 45, 80, 30, 24, Color("7E8C64"), a)
 			line(ci, [Vector2(47, 91), Vector2(73, 91)], OUT, 1.8, a)
 			line(ci, [Vector2(75, 96), Vector2(80, 96)], OUT, 1.8, a)
 			ring(ci, Vector2(84, 96), 4, BRASS, 2.5, a)
+
+
+# ── 메카 티라노 (세 부품이 한 알에 모였을 때의 변신 외형) ──
+## 장갑판은 주인 색, 강철 골격은 공통. 등판 장갑과 가시는 팔의 반대편(왼쪽)에만.
+
+static func draw_mecha(ci: CanvasItem, col: Color, a: float, symbol: int) -> void:
+	var dark := col.darkened(0.32)
+	ci.draw_colored_polygon(_ellipse(Vector2(62, 68), 36, 54), Color(0, 0, 0, 0.28 * a))
+	# 꼬리
+	poly(ci, [Vector2(51, 82), Vector2(69, 82), Vector2(67, 94), Vector2(53, 94)], STEEL, a)
+	poly(ci, [Vector2(53, 93), Vector2(67, 93), Vector2(65.5, 104), Vector2(54.5, 104)], STEEL, a)
+	poly(ci, [Vector2(54.5, 103), Vector2(65.5, 103), Vector2(64, 113), Vector2(56, 113)], STEEL, a)
+	poly(ci, [Vector2(58, 84), Vector2(62, 84), Vector2(62, 92), Vector2(58, 92)], col, a, false, 0)
+	poly(ci, [Vector2(58.5, 95), Vector2(61.5, 95), Vector2(61.5, 102), Vector2(58.5, 102)], col, a, false, 0)
+	poly(ci, [Vector2(56, 112), Vector2(64, 112), Vector2(60, 124)], BRASS, a)
+	# 다리 두 개 (좌우 대칭)
+	for m in [false, true]:
+		line(ci, [Vector2(40, 98), Vector2(42, 108)], OUT, 6, a, m)
+		line(ci, [Vector2(40, 98), Vector2(42, 108)], STEEL, 3, a, m)
+		poly(ci, [Vector2(33, 106), Vector2(45, 106), Vector2(47, 112), Vector2(31, 112)], STEEL, a, m)
+		for toe in [[Vector2(32, 112), Vector2(27, 120)], [Vector2(39, 112), Vector2(39, 122)], [Vector2(46, 112), Vector2(50, 120)]]:
+			line(ci, toe, OUT, 3.2, a, m)
+			line(ci, toe, BRASS, 1.4, a, m)
+		poly(ci, [Vector2(45, 74), Vector2(33, 82), Vector2(35, 99), Vector2(47, 97), Vector2(51, 84)], col, a, m)
+		poly(ci, [Vector2(45, 74), Vector2(51, 84), Vector2(47, 97), Vector2(42, 97.5), Vector2(45, 84)], dark, a, m, 0)
+		line(ci, [Vector2(36, 84), Vector2(44, 79)], Color(1, 1, 1, 0.35), 1.5, a, m)
+		circ(ci, Vector2(40, 90), 2.4, BRASS, a, m, 1.2)
+	# 등판 장갑과 가시 (왼쪽)
+	var plates := [
+		[[Vector2(31, 45), Vector2(22, 42), Vector2(28.5, 51)], [Vector2(41, 41), Vector2(31, 45), Vector2(28, 56), Vector2(39, 55)], Vector2(35, 50)],
+		[[Vector2(28, 57), Vector2(19, 58), Vector2(26.5, 64)], [Vector2(38, 54), Vector2(28, 56), Vector2(26, 68), Vector2(37, 67)], Vector2(32, 61)],
+		[[Vector2(27, 70), Vector2(19, 75), Vector2(28, 76)], [Vector2(37, 66), Vector2(26.5, 69), Vector2(30, 81), Vector2(41, 77)], Vector2(33, 73)]]
+	for pl in plates:
+		poly(ci, pl[0], BRASS, a)
+		poly(ci, pl[1], col, a)
+		circ(ci, pl[2], 1.4, OUT, a, false, 0)
+	line(ci, [Vector2(31, 46), Vector2(40, 42)], Color(1, 1, 1, 0.4), 1.4, a)
+	line(ci, [Vector2(28.5, 57), Vector2(37.5, 55)], Color(1, 1, 1, 0.4), 1.4, a)
+	line(ci, [Vector2(27, 70), Vector2(36.5, 67)], Color(1, 1, 1, 0.4), 1.4, a)
+	# 팔 (오른쪽): 유압 실린더와 세 발톱
+	var arm := [Vector2(88, 56), Vector2(101, 52), Vector2(106, 39)]
+	line(ci, arm, OUT, 8, a)
+	line(ci, arm, STEEL, 4.2, a)
+	line(ci, [Vector2(86, 61), Vector2(100, 56)], OUT, 3.6, a)
+	line(ci, [Vector2(86, 61), Vector2(100, 56)], STEEL_D, 1.6, a)
+	for cl in [qbez(Vector2(106, 39), Vector2(99, 32), Vector2(101, 25)), qbez(Vector2(106, 39), Vector2(113, 32), Vector2(111, 25)), qbez(Vector2(106, 39), Vector2(104, 34), Vector2(100, 33))]:
+		line(ci, cl, OUT, 3.6, a)
+		line(ci, cl, BRASS, 1.5, a)
+	circ(ci, Vector2(101, 52), 3, BRASS, a, false, 1.4)
+	poly(ci, [Vector2(79, 49), Vector2(92, 46), Vector2(96, 57), Vector2(84, 63)], col, a)
+	poly(ci, [Vector2(84, 63), Vector2(96, 57), Vector2(94.5, 53), Vector2(83, 58)], dark, a, false, 0)
+	line(ci, [Vector2(81, 50), Vector2(91, 47.5)], Color(1, 1, 1, 0.4), 1.4, a)
+	# 목
+	var neck: Array = qbez(Vector2(48, 42), Vector2(60, 36), Vector2(72, 42))
+	neck.append(Vector2(70, 46))
+	neck.append_array(qbez(Vector2(70, 46), Vector2(60, 41), Vector2(50, 46)).slice(1))
+	poly(ci, neck, STEEL_D, a)
+	# 머리: 이빨 줄, 볏, 바이저
+	var hd: Array = bez(Vector2(45.5, 40), Vector2(42.5, 30), Vector2(44.5, 16), Vector2(51, 7))
+	hd.append_array(qbez(Vector2(51, 7), Vector2(60, 1), Vector2(69, 7)).slice(1))
+	hd.append_array(bez(Vector2(69, 7), Vector2(75.5, 16), Vector2(77.5, 30), Vector2(74.5, 40)).slice(1))
+	hd.append_array(qbez(Vector2(74.5, 40), Vector2(60, 45), Vector2(45.5, 40)).slice(1))
+	poly(ci, hd, STEEL, a)
+	for yy in [13.0, 19.0, 25.0, 31.0]:
+		var xo := 48.2 if yy == 13.0 else 46.6
+		var xt := 45.0 if yy == 13.0 else 43.0
+		poly(ci, [Vector2(xo, yy), Vector2(xt, yy + 2.2), Vector2(xo, yy + 4.2)], WHITE, a, false, 1)
+		poly(ci, [Vector2(120 - xo, yy), Vector2(120 - xt, yy + 2.2), Vector2(120 - xo, yy + 4.2)], WHITE, a, false, 1)
+	var crest: Array = qbez(Vector2(57, 6), Vector2(60, 4.5), Vector2(63, 6))
+	crest.append(Vector2(62.2, 28))
+	crest.append(Vector2(57.8, 28))
+	poly(ci, crest, col, a, false, 1.5)
+	poly(ci, [Vector2(48.5, 29), Vector2(56.5, 25.5), Vector2(57.5, 31), Vector2(49.5, 34)], Color("3A4048"), a, false, 1.5)
+	poly(ci, [Vector2(71.5, 29), Vector2(63.5, 25.5), Vector2(62.5, 31), Vector2(70.5, 34)], Color("3A4048"), a, false, 1.5)
+	line(ci, [Vector2(51, 35.5), Vector2(69, 35.5)], Color(1.0, 0.42, 0.29, 0.35), 5, a)
+	line(ci, [Vector2(51, 35.5), Vector2(69, 35.5)], Color("FF6B4A"), 2.2, a)
+	line(ci, [Vector2(55, 35.5), Vector2(57, 35.5)], Color("FFE3D6"), 2.2, a)
+	line(ci, [Vector2(56, 11), Vector2(57, 15)], OUT, 1.5, a)
+	line(ci, [Vector2(64, 11), Vector2(63, 15)], OUT, 1.5, a)
+	line(ci, qbez(Vector2(49, 16), Vector2(51, 10), Vector2(56, 7)), Color(1, 1, 1, 0.5), 1.5, a)
+	# 몸통 퍽
+	circ(ci, C0, 24, col, a)
+	var q: Array = [C0]
+	q.append_array(arc_pts(C0, 24, 0, 90, 10))
+	poly(ci, q, Color(dark, 0.6), a, false, 0)
+	line(ci, arc_pts(Vector2(60, 60.6), 22, 197, 343), Color(1, 1, 1, 0.38), 2.0, a)
+	for rv in [[Vector2(71, 73), Vector2(76.6, 78.6)], [Vector2(49, 73), Vector2(43.4, 78.6)], [Vector2(49, 51), Vector2(43.4, 45.4)], [Vector2(71, 51), Vector2(76.6, 45.4)]]:
+		line(ci, rv, OUT, 1.3, a)
+	circ(ci, C0, 15, CORE, a)
+	ring(ci, C0, 12, Color(1.0, 0.42, 0.29, 0.55), 1.4, a)
+	if symbol >= 0:
+		draw_symbol(ci, symbol, col, a, T(C0), 0.55 * K, true)
+
+
+static func _ellipse(c: Vector2, rx: float, ry: float) -> PackedVector2Array:
+	var out := PackedVector2Array()
+	for i in 24:
+		var t := TAU * i / 24.0
+		out.append(T(c + Vector2(cos(t) * rx, sin(t) * ry)))
+	return out

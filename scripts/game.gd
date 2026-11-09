@@ -25,8 +25,11 @@ const TEXT := Color("F2F4F1")
 const SUB := Color("A9B1BA")
 const SUB_FELT := Color("B9CCC4")
 const POWER := Color("E9BE62")
-const PANEL_BG := Color(14 / 255.0, 16 / 255.0, 19 / 255.0, 0.78)
-const PANEL_LINE := Color(1, 1, 1, 0.1)
+const PANEL_BG := Color(1, 1, 1, 0.04)
+const PANEL_LINE := Color(1, 1, 1, 0.09)
+const MUTED := Color("5C6370")
+const HINT_GOLD := Color("E3C27E")
+const LABEL := Color("C9CED6")
 
 const MAX_DRAG := 150.0      # 화면 px: 이만큼 당기면 최대 힘
 const CANCEL_R := 2.0        # 퍽 반지름의 몇 배 안으로 돌아오면 조준 취소 (점선 원)
@@ -87,10 +90,11 @@ func _ready() -> void:
 	_panel_sb.bg_color = PANEL_BG
 	_panel_sb.border_color = PANEL_LINE
 	_panel_sb.set_border_width_all(1)
-	_panel_sb.set_corner_radius_all(10)
+	_panel_sb.set_corner_radius_all(12)
 	ui = CanvasLayer.new()
 	add_child(ui)
-	menu_btn = _button("처음으로", func(): _show_setup())
+	menu_btn = _button("≡", func(): _show_setup())
+	menu_btn.tooltip_text = "처음으로"
 	menu_btn.theme = theme_
 	menu_btn.add_theme_font_size_override("font_size", 14)
 	menu_btn.visible = false
@@ -177,6 +181,15 @@ func _debug_args() -> void:
 		# 사람(빨강)이 먼저 고르도록 순서를 맞춘다
 		m.draft_queue.erase(0)
 		m.draft_queue.push_front(0)
+	if args.has("--trex"):
+		var mine: Array = m.world.alive_stones_of(0)
+		mine[0].parts = {"weapon": "trex_head", "aux": "trex_arm", "prop": "trex_leg"}
+		mine[1].parts = {"weapon": "trex_head", "aux": "", "prop": "clockwork"}
+		if not args.has("--draft"):
+			mine[1].pos += Vector2(160, 0)
+		if m.phase == "draft":
+			m.offers[0] = m.roll_offer(0)
+			turn_key = ""
 
 
 # ── 배치 ─────────────────────────────────────────────────
@@ -203,31 +216,34 @@ func _place() -> void:
 		extent = m.world.size
 	var rail := 1.07  # 레일까지 포함한 바깥 반지름 비율
 	if portrait:
-		var top := 124.0
-		var bottom := vs.y - 196.0
+		var top := 168.0
+		var bottom := vs.y - 206.0
 		view_center = Vector2(vs.x * 0.5, (top + bottom) * 0.5)
 		var r_px := minf((bottom - top) * 0.5, vs.x * 0.5 - 8.0)
 		view_scale = r_px / (extent * rail)
 		var half := (vs.x - 36.0) * 0.5
-		hud = {"turn": Rect2(12, 12, vs.x - 24, 66),
-			"left": Rect2(12, vs.y - 184, half, 172),
-			"parts": Rect2(24 + half, vs.y - 184, half, 172)}
+		hud = {"turn": Rect2(12, 12, vs.x - 24, 100),
+			"order": Rect2(12, vs.y - 196, half, 184),
+			"aimed": Rect2(24 + half, vs.y - 196, half, 184)}
 		if menu_btn:
-			menu_btn.position = Vector2(12, 86)
-			parts_btn.position = Vector2(108, 86)
+			parts_btn.position = Vector2(vs.x - 12 - 44 - 8 - parts_btn.size.x, 120)
+			menu_btn.position = Vector2(vs.x - 12 - 44, 120)
 	else:
-		var side := 24.0 + 232.0 + 16.0
+		var side := 24.0 + 268.0 + 16.0
 		var r_px := minf(vs.y * 0.5 - 20.0, vs.x * 0.5 - side)
 		view_center = vs * 0.5
 		view_scale = r_px / (extent * rail)
-		hud = {"turn": Rect2(24, 24, 268, 76),
-			"legend": Rect2(24, 168, 232, 0),
-			"power": Rect2(24, vs.y - 24 - 72, 232, 72),
-			"left": Rect2(vs.x - 24 - 232, 24, 232, 0),
-			"parts": Rect2(vs.x - 24 - 232, vs.y - 24 - 150, 232, 150)}
+		hud = {"turn": Rect2(24, 24, 268, 124),
+			"order": Rect2(24, 164, 268, 0),
+			"power": Rect2(24, vs.y - 24 - 106, 268, 106),
+			"aimed": Rect2(vs.x - 24 - 268, 92, 268, 0),
+			"log": Rect2(vs.x - 24 - 268, 0, 268, 0)}
 		if menu_btn:
-			menu_btn.position = Vector2(24, 112)
-			parts_btn.position = Vector2(120, 112)
+			menu_btn.position = Vector2(vs.x - 24 - 44, 24)
+			parts_btn.position = Vector2(vs.x - 24 - 44 - 8 - parts_btn.size.x, 24)
+	if menu_btn:
+		menu_btn.custom_minimum_size = Vector2(44, 44)
+		parts_btn.custom_minimum_size = Vector2(0, 44)
 
 
 func w2s(p: Vector2) -> Vector2:
@@ -258,7 +274,8 @@ func _start_match() -> void:
 	menu_btn.visible = true
 	parts_btn.visible = true
 	_layout()
-	_log("%d인전 시작 · 선공 %s" % [m.n, m.players[m.current_player()].name])
+	var sp: Dictionary = m.players[m.current_player()]
+	_log("%d인전 시작, 선공은 %s" % [m.n, sp.name], sp.color)
 
 
 func _process(delta: float) -> void:
@@ -305,7 +322,7 @@ func _update_play(delta: float) -> void:
 				aim_left -= delta
 				if aim_left <= 0.0:
 					drag_stone = -1
-					_log("%s 시간 초과 — 턴을 넘깁니다" % m.players[pid].name)
+					_log("%s 시간 초과, 차례를 넘겨요" % m.players[pid].name, m.players[pid].color)
 					_banner("시간 초과")
 					m.skip_turn()
 		"over":
@@ -378,14 +395,15 @@ func _after_shot() -> void:
 	for k in outs:
 		by_owner[k["owner"]] = by_owner.get(k["owner"], 0) + 1
 	for o in by_owner:
+		var col: Color = m.players[shooter_owner].color
 		if o == shooter_owner:
-			_log("%s 자기 퍽 %d개 추락" % [who, by_owner[o]])
+			_log("%s 퍽 %d개가 스스로 떨어졌어요" % [who, by_owner[o]], col)
 		else:
-			_log("%s → %s 퍽 %d개 탈락" % [who, m.players[o].name, by_owner[o]])
+			_log("%s %s 퍽 %d개를 떨어뜨렸어요" % [_j(who, "이", "가"), m.players[o].name, by_owner[o]], col)
 	for pid in m.out_order:
 		if not _logged_out.has(pid):
 			_logged_out[pid] = true
-			_log("%s 탈락" % m.players[pid].name)
+			_log("%s 탈락했어요" % _j(m.players[pid].name, "이", "가"), m.players[pid].color)
 
 
 var _logged_out := {}
@@ -393,10 +411,20 @@ var _shot_dir := ""
 var _shot_n := 0
 
 
-func _log(s: String) -> void:
-	log_lines.append(s)
+func _log(s: String, col := SUB) -> void:
+	log_lines.append({"t": s, "c": col})
 	if log_lines.size() > 40:
 		log_lines.pop_front()
+
+
+## 받침에 따라 조사 고르기: _j("빨강", "이", "가") → "빨강이"
+static func _j(word: String, with_final: String, without_final: String) -> String:
+	if word.is_empty():
+		return word
+	var c := word.unicode_at(word.length() - 1)
+	if c >= 0xAC00 and c <= 0xD7A3 and (c - 0xAC00) % 28 != 0:
+		return word + with_final
+	return word + without_final
 
 
 func _banner(s: String, c := TEXT) -> void:
@@ -422,7 +450,10 @@ func _consume_events() -> void:
 				fx.append({"k": "text", "pos": e["pos"], "t": 0.0, "life": 1.4, "text": "탈락!", "c": owner_col, "size": 30})
 				fx.append({"k": "ring", "pos": e["pos"], "t": 0.0, "life": 0.6, "r": 46.0, "c": owner_col})
 			"part":
-				fx.append({"k": "text", "pos": e["pos"] + Vector2(0, -30), "t": 0.0, "life": 1.1, "text": e.get("text", ""), "c": owner_col.lightened(0.35), "size": 20})
+				var big: bool = e.get("big", false)
+				fx.append({"k": "text", "pos": e["pos"] + Vector2(0, -30), "t": 0.0, "life": 1.6 if big else 1.1, "text": e.get("text", ""), "c": POWER if big else owner_col.lightened(0.35), "size": 28 if big else 20})
+				if big:
+					fx.append({"k": "ring", "pos": e["pos"], "t": 0.0, "life": 0.7, "r": 70.0, "c": POWER})
 				fx.append({"k": "ring", "pos": e["pos"], "t": 0.0, "life": 0.4, "r": 30.0, "c": owner_col.lightened(0.3)})
 				if e.has("from"):
 					fx.append({"k": "line", "a": e["from"], "b": e["pos"], "t": 0.0, "life": 0.45, "c": owner_col.lightened(0.5)})
@@ -434,6 +465,11 @@ func _consume_events() -> void:
 				fx.append({"k": "text", "pos": e["pos"] + Vector2(0, -30), "t": 0.0, "life": 1.0, "text": "쾅!", "c": Color(1.0, 0.75, 0.3), "size": 28})
 			"device":
 				fx.append({"k": "ring", "pos": e["pos"], "t": 0.0, "life": 0.4, "r": 22.0, "c": owner_col})
+			"umbrella":
+				fx.append({"k": "fan", "pos": e["pos"], "dir": e["dir"], "t": 0.0, "life": 0.5, "r": e["radius"], "c": Color("E1E6EB")})
+			"ripple":
+				for k in 3:
+					fx.append({"k": "ring", "pos": e["pos"], "t": -0.08 * k, "life": 0.5, "r": e["radius"] * 0.8, "c": Color(BRASS, 0.9)})
 	m.world.events.clear()
 
 
@@ -512,7 +548,7 @@ func _on_card_picked(pid: int, part: String) -> void:
 
 
 func _pick_stone_for_part(pid: int, sid: int) -> void:
-	if draft_part == "magnet":
+	if PartsData.SIDE_PARTS.has(draft_part):
 		draft_stone = sid
 		_show_side_choice(pid)
 	else:
@@ -524,12 +560,23 @@ func _apply_equip(pid: int, part: String, sid: int, side: int) -> void:
 	var slot := PartsData.slot_of(part)
 	var old: String = s.parts[slot]
 	if m.equip(pid, part, sid, side):
-		var txt := PartsData.part_name(part)
-		if part == "magnet":
+		var nm := PartsData.part_name(part)
+		var txt := nm
+		if PartsData.SIDE_PARTS.has(part):
 			txt += "(왼쪽)" if side < 0 else "(오른쪽)"
-		_log("%s: %s 장착%s" % [m.players[pid].name, txt, ("  (%s 교체)" % PartsData.part_name(old)) if old != "" else ""])
-		fx.append({"k": "text", "pos": s.pos + Vector2(0, -34), "t": 0.0, "life": 1.3, "text": txt, "c": m.players[pid].color.lightened(0.35), "size": 20})
-		fx.append({"k": "ring", "pos": s.pos, "t": 0.0, "life": 0.5, "r": 34.0, "c": m.players[pid].color})
+		var pl: Dictionary = m.players[pid]
+		var line := "%d바퀴 시작, %s %s 달았어요" % [m.round_no, _j(pl.name, "이", "가"), _j(nm, "을", "를")]
+		if old != "":
+			line += " (%s 교체)" % PartsData.part_name(old)
+		_log(line, pl.color)
+		var set_txt := PartsData.set_label(s.parts)
+		if set_txt != "":
+			_log(set_txt, BRASS)
+		fx.append({"k": "text", "pos": s.pos + Vector2(0, -34), "t": 0.0, "life": 1.3, "text": txt, "c": pl.color.lightened(0.35), "size": 20})
+		if PartsData.set_complete(s.parts):
+			fx.append({"k": "text", "pos": s.pos + Vector2(0, -58), "t": 0.0, "life": 1.8, "text": "메카 티라노!", "c": POWER, "size": 24})
+			fx.append({"k": "ring", "pos": s.pos, "t": 0.0, "life": 0.8, "r": 60.0, "c": POWER})
+		fx.append({"k": "ring", "pos": s.pos, "t": 0.0, "life": 0.5, "r": 34.0, "c": pl.color})
 	draft_part = ""
 	draft_stone = -1
 	_clear_overlay()
@@ -540,8 +587,9 @@ func _apply_equip(pid: int, part: String, sid: int, side: int) -> void:
 func _draw() -> void:
 	var vs := get_viewport_rect().size
 	if m == null:
-		_draw_page_felt(vs)
-		_draw_title_backdrop(vs)
+		draw_rect(Rect2(Vector2.ZERO, vs), BG_OUT)
+		if state == "setup" and not portrait:
+			_draw_lobby_preview(vs)
 		return
 	draw_rect(Rect2(Vector2.ZERO, vs), BG_OUT)
 	_draw_board()
@@ -574,18 +622,60 @@ func _draw_page_felt(vs: Vector2) -> void:
 		y += 20.0
 
 
-func _draw_title_backdrop(vs: Vector2) -> void:
-	var c := vs * 0.5
-	var rr := minf(vs.x, vs.y) * 0.40
-	for i in 8:
-		var ang := time * 0.2 + TAU * i / 8.0
-		var p := c + Vector2.from_angle(ang) * rr
-		draw_set_transform(p, ang + PI, Vector2.ONE * 1.5)
-		var parts := {"weapon": ["pea", "shotgun", "hook", "claw", "nose", "stamp", "copier", "pea"][i],
-			"aux": ["magnet", "bumper", "decal", "umbrella", "spring", "carousel", "bubble", "mine"][i],
-			"prop": ["rocket", "retro", "reel", "chute", "rocket", "retro", "reel", "chute"][i]}
-		Art.draw(self, parts, 1, Match.COLORS[i], 0.55, i)
-		draw_set_transform_matrix(Transform2D.IDENTITY)
+## 로비 오른쪽: 고른 인원의 판 크기와 시작 배치. 사람 자리는 밝은 테두리.
+func _draw_lobby_preview(vs: Vector2) -> void:
+	var n: int = settings["n"]
+	var top := maxf(40.0, (vs.y - 680.0) * 0.5 + 40.0)
+	var c := Vector2(vs.x - 120.0 - 230.0, top + 230.0)
+	var half := 218.0
+	var square := n == 2
+	var units := 16.0 if square else (18.0 if n <= 4 else 24.0)
+	var u := 2.0 * half / units
+	var r := u * 0.5
+	if square:
+		_round_rect(Rect2(c - Vector2(half + 11, half + 5), Vector2(2 * half + 22, 2 * half + 22)), Color(0, 0, 0, 0.5), 8)
+		_round_rect(Rect2(c - Vector2(half + 11, half + 11), Vector2(2 * half + 22, 2 * half + 22)), RAIL, 8, RAIL_OUT)
+		draw_rect(Rect2(c - Vector2(half, half), Vector2(2 * half, 2 * half)), FELT)
+		draw_rect(Rect2(c - Vector2(half, half), Vector2(2 * half, 2 * half)), INK, false, 2.0)
+		draw_rect(Rect2(c - Vector2(half - u, half - u), Vector2(2 * (half - u), 2 * (half - u))), Color(WARN, 0.45), false, 1.5)
+	else:
+		draw_circle(c + Vector2(0, 6), half + 14, Color(0, 0, 0, 0.5))
+		draw_circle(c, half + 11, RAIL)
+		draw_arc(c, half + 11, 0, TAU, 96, RAIL_OUT, 2.0, true)
+		var light := c + Vector2(-0.1, -0.2) * half
+		for i in 24:
+			var t := float(i) / 24.0
+			draw_circle(c.lerp(light, t), half * (1.0 - t * 0.92), FELT_DARK.lerp(FELT_LIGHT, t * 0.95))
+		draw_arc(c, half, 0, TAU, 96, INK, 2.0, true)
+		draw_arc(c, half - u, 0, TAU, 96, Color(WARN, 0.45), 1.5, true)
+	var pucks: Array = []
+	if square:
+		for i in 2:
+			var y := c.y + (1.0 if i == 0 else -1.0) * (half - 4.0 * u)
+			for j in 3:
+				pucks.append([i, Vector2(c.x + (j - 1) * 2.5 * u, y)])
+	else:
+		var R := half / u
+		for i in n:
+			var a := deg_to_rad(90.0 + 360.0 * i / n)
+			for rr in [R - 4.0, R - 5.5]:
+				pucks.append([i, c + Vector2(cos(a), sin(a)) * rr * u])
+	for pk in pucks:
+		var i: int = pk[0]
+		if not settings["cpu"][i]:
+			draw_arc(pk[1], r + 4, 0, TAU, 24, BG_OUT, 3.0, true)
+			draw_arc(pk[1], r + 5.5, 0, TAU, 24, BRASS, 2.0, true)
+		Art.draw_icon(self, pk[1], 2 * r, Match.COLORS[i], i)
+	# 판 정보
+	var info := [["판", "정사각 16칸" if square else "원형 지름 %d칸" % int(units)], ["퍽", "%d개씩" % (3 if square else 2)],
+		["최대", "%d바퀴" % (12 if square else (8 if n <= 4 else 6))], ["개조", "1, 2, 3바퀴" if n >= 5 else "2, 3, 4바퀴"]]
+	var x0 := c.x - 230.0
+	var y0 := c.y + 230.0 + 40.0
+	for k in 4:
+		var x := x0 + k * 118.0
+		_txt(Vector2(x, y0), info[k][0], 13, SUB, font)
+		_txt(Vector2(x, y0 + 24), info[k][1], 15, TEXT, font_semi, 110)
+	_txt(Vector2(x0, y0 + 64), "밝은 테두리가 사람 자리예요. 인원을 바꾸면 판 크기와 시작 배치가 함께 바뀝니다.", 13, SUB, font, 460)
 
 
 func _draw_board() -> void:
@@ -722,6 +812,31 @@ func _draw_devices() -> void:
 				draw_arc(p, r, 0, TAU, 28, INK, 2.0, true)
 				draw_arc(p + Vector2(-r * 0.2, -r * 0.2), r * 0.55, PI * 1.05, PI * 1.45, 8, Color(1, 1, 1, 0.8), 2.0, true)
 				draw_arc(p, r + 3, 0, TAU, 28, Color(col, 0.7), 1.5, true)
+			"slick":
+				var a2 := p
+				var b2 := w2s(d.pos + d.dir * d.length)
+				var hw := PartsData.num("roller", "width") * 0.5 * k
+				var nn: Vector2 = d.dir.orthogonal() * hw
+				draw_colored_polygon(PackedVector2Array([a2 + nn, b2 + nn, b2 - nn, a2 - nn]), Color("8FD0C8", 0.22))
+				draw_line(a2 + nn, b2 + nn, Color("8FD0C8", 0.55), 1.5, true)
+				draw_line(a2 - nn, b2 - nn, Color("8FD0C8", 0.55), 1.5, true)
+				var steps := int(d.length / 24.0)
+				for i in steps:
+					var c0 := a2.lerp(b2, (i + 0.5) / steps)
+					draw_line(c0 - nn * 0.6, c0 + nn * 0.6 + (b2 - a2).normalized() * 6, Color(1, 1, 1, 0.18), 2.0, true)
+				_small_label(b2 + (b2 - a2).normalized() * 14, _left_text(d), SUB_FELT)
+			"groove":
+				var a3 := p
+				var b3 := w2s(d.pos + d.dir * d.length)
+				var n3: Vector2 = d.dir.orthogonal() * 5.0 * k
+				draw_line(a3 + n3, b3 + n3, Color(0, 0, 0, 0.45), 3.0, true)
+				draw_line(a3 - n3, b3 - n3, Color(0, 0, 0, 0.45), 3.0, true)
+				var dd: Vector2 = (b3 - a3).normalized()
+				var cnt := int(a3.distance_to(b3) / 16.0)
+				for i in cnt:
+					var c1 := a3.lerp(b3, (i + 0.5) / maxf(1, cnt))
+					draw_polyline(PackedVector2Array([c1 - dd * 3 + n3, c1 + dd * 3, c1 - dd * 3 - n3]), Color(Art.STEEL, 0.5), 1.5, true)
+				_small_label(b3 + dd * 14, _left_text(d), SUB_FELT)
 			"turret":
 				var dir: Vector2 = d.dir
 				draw_set_transform(p, dir.angle(), Vector2.ONE * k)
@@ -753,6 +868,16 @@ func _draw_projs() -> void:
 			draw_circle(sp, 3.5 * view_scale, TEXT if p.source != "decal" else Color(col.lightened(0.5)))
 			if p.source == "reflect":
 				draw_arc(sp, 9 * view_scale, 0, TAU, 12, Color("E1E6EB"), 1.5)
+		elif p.kind == "sucker":
+			var dv: Vector2 = p.vel.normalized()
+			draw_line(sp - dv * 18 * view_scale, sp, Color(col, 0.6), 2.0, true)
+			draw_arc(sp, 7 * view_scale, dv.angle() - 1.3, dv.angle() + 1.3, 10, Art.RED, 4.0 * view_scale, true)
+		elif p.kind == "umbrella":
+			var du: Vector2 = p.vel.normalized()
+			var tri := PackedVector2Array([sp + du * 12 * view_scale, sp - du * 10 * view_scale + du.orthogonal() * 5 * view_scale, sp - du * 10 * view_scale - du.orthogonal() * 5 * view_scale])
+			draw_colored_polygon(tri, Color("E1E6EB"))
+			tri.append(tri[0])
+			draw_polyline(tri, INK, 1.5, true)
 		else:
 			var r := World.RUBBER_R * view_scale
 			draw_circle(sp, r, BRASS)
@@ -761,6 +886,8 @@ func _draw_projs() -> void:
 
 func _draw_fx() -> void:
 	for f in fx:
+		if f["t"] < 0.0:
+			continue
 		var u: float = f["t"] / f["life"]
 		var c: Color = f["c"]
 		match f["k"]:
@@ -771,6 +898,10 @@ func _draw_fx() -> void:
 				draw_arc(w2s(f["pos"]), f["r"] * view_scale * (0.3 + u * 0.7), 0, TAU, 40, Color(c, 1.0 - u), 4.0, true)
 			"line":
 				draw_line(w2s(f["a"]), w2s(f["b"]), Color(c, 0.9 * (1.0 - u)), 3.0, true)
+			"fan":
+				var base: float = f["dir"].angle()
+				var rr: float = f["r"] * view_scale * (0.4 + 0.6 * u)
+				draw_arc(w2s(f["pos"]), rr, base - 1.2, base + 1.2, 20, Color(c, 1.0 - u), 4.0, true)
 			"text":
 				var p := w2s(f["pos"]) + Vector2(0, -24.0 * u)
 				_text_outline(p, f["text"], f["size"], Color(c, clampf(2.0 - 2.0 * u, 0.0, 1.0)), true)
@@ -819,6 +950,20 @@ func _draw_aim_over() -> void:
 				_dashed_ring(w2s(item["a"]), (World.STONE_R + 6) * view_scale, line_col)
 			"note":
 				_text_outline(sp + Vector2(0, (World.STONE_R + 30) * view_scale + 12), item["text"], 15, TEXT, true)
+			"sucker":
+				draw_dashed_line(w2s(item["a"]), w2s(item["b"]), Color(Art.RED, 0.8), 2.5, 6.0)
+			"umbrella":
+				var ua := w2s(item["a"])
+				var ub := w2s(item["b"])
+				draw_dashed_line(ua, ub, Color("E1E6EB", 0.8), 2.0, 7.0)
+				var ud := (ub - ua).normalized()
+				draw_arc(ub, item["r"] * view_scale, ud.angle() - 1.2, ud.angle() + 1.2, 20, Color("E1E6EB", 0.7), 2.0, true)
+			"clock":
+				var cp := w2s(item["a"])
+				_dashed_ring(cp, World.STONE_R * view_scale, Color(BRASS, 0.95))
+				_text_outline(cp + Vector2(0, -(World.STONE_R + 8) * view_scale), "딸깍", 13, BRASS, true)
+			"mecha":
+				_text_outline(sp + Vector2(0, (World.STONE_R + 30) * view_scale + 12), "옆을 스치면 물고 던지기", 14, POWER, true)
 	if info.has("finger"):
 		var f: Vector2 = info["finger"]
 		_dashed_ring(sp, World.STONE_R * CANCEL_R * view_scale, Color(1, 1, 1, 0.3))
@@ -926,10 +1071,9 @@ func _focus_stone():
 
 func _draw_hud(vs: Vector2) -> void:
 	_draw_turn_card(hud["turn"])
-	_draw_remaining(hud["left"])
-	_draw_parts_panel(hud["parts"])
+	_draw_order(hud["order"])
+	_draw_aimed(hud["aimed"])
 	if not portrait:
-		_draw_legend(hud["legend"])
 		_draw_power(hud["power"])
 		_draw_log()
 
@@ -943,116 +1087,145 @@ func _draw_turn_card(r: Rect2) -> void:
 			pid = m.current_player()
 			title = "%s 차례" % m.players[pid].name
 			if m.players[pid].cpu:
-				sub = "CPU · " + ("생각 중…" if m.phase == "aim" else "%d바퀴째, %d바퀴까지" % [m.round_no, m.max_rounds])
+				sub = "CPU가 생각 중이에요" if m.phase == "aim" else "CPU가 쐈어요"
 			else:
-				sub = "%d바퀴째, %d바퀴까지" % [m.round_no, m.max_rounds]
+				sub = "퍽 하나를 당겨 조준하세요" if m.phase == "aim" else "퍽이 멈추길 기다려요"
 		"draft":
 			pid = m.current_drafter()
 			title = "%s 개조" % m.players[pid].name
-			sub = "%d바퀴 시작 · 부품 고르기" % m.round_no
+			sub = "후보 세 개 중 하나를 골라요"
 		_:
 			title = "경기 끝"
-			sub = "%d바퀴" % m.round_no
 	_panel(r)
+	var x := r.position.x + 18
 	if pid >= 0:
-		Art.draw_icon(self, r.position + Vector2(14 + 22, r.size.y * 0.5 - 1), 44, m.players[pid].color, pid)
-	var x := r.position.x + 72
-	_txt(Vector2(x, r.position.y + 33), title, 22, TEXT, font_bold, r.size.x - 84)
-	_txt(Vector2(x, r.position.y + 56), sub, 14, SUB, font, r.size.x - 84)
-	# 세로 화면: 힘을 카드 오른쪽에
+		Art.draw_icon(self, r.position + Vector2(18 + 24, 18 + 24), 48, m.players[pid].color, pid)
+		x += 62
+	_txt(Vector2(x, r.position.y + 42), title, 24, TEXT, font_bold, r.end.x - x - 12)
+	_txt(Vector2(x, r.position.y + 64), sub, 14, SUB, font, r.end.x - x - 12)
+	# 바퀴 진행
+	var y := r.position.y + 96
+	_txt(Vector2(r.position.x + 18, y), "%d바퀴째" % m.round_no, 13, LABEL, font_semi)
+	_txt(Vector2(r.end.x - 18, y), "%d바퀴까지" % m.max_rounds, 13, SUB, font, 120, HORIZONTAL_ALIGNMENT_RIGHT)
+	var seg_r := Rect2(r.position.x + 18, y + 8, r.size.x - 36, 5)
+	var n := m.max_rounds
+	var gap := 3.0
+	var w := (seg_r.size.x - gap * (n - 1)) / n
+	for i in n:
+		draw_rect(Rect2(seg_r.position.x + i * (w + gap), seg_r.position.y, w, 5), BRASS if i < m.round_no else Color(1, 1, 1, 0.14))
+	# 세로 화면: 힘을 카드 오른쪽 위에
 	if portrait and m.phase == "aim":
 		var info := _current_aim()
-		if not info.is_empty():
-			var pw := int(round(info["power"] * 100))
-			_txt(Vector2(r.end.x - 16, r.position.y + 33), "%d%%" % pw, 22, POWER, font_bold, 80, HORIZONTAL_ALIGNMENT_RIGHT)
-			_segments(Rect2(r.end.x - 116, r.position.y + 44, 100, 8), info["power"])
+		if not info.is_empty() and not info.has("cancel"):
+			_txt(Vector2(r.end.x - 16, r.position.y + 42), "%d%%" % int(round(info["power"] * 100)), 22, POWER, font_bold, 80, HORIZONTAL_ALIGNMENT_RIGHT)
 	if m.phase == "aim" and m.aim_limit > 0.0 and not m.players[m.current_player()].cpu:
 		var frac := clampf(aim_left / m.aim_limit, 0.0, 1.0)
-		draw_rect(Rect2(r.position.x + 10, r.end.y - 6, (r.size.x - 20) * frac, 3), POWER if frac > 0.3 else Art.RED)
+		draw_rect(Rect2(r.position.x + 12, r.end.y - 5, (r.size.x - 24) * frac, 3), POWER if frac > 0.3 else Art.RED)
 
 
-func _draw_remaining(r: Rect2) -> void:
-	var row := 26.0
+## 차례 순서: 이번 바퀴 순서대로, 지금 차례가 맨 위. 탈락한 사람은 아래에 흐리게.
+func _draw_order(r: Rect2) -> void:
+	var rows: Array = []
+	var cur := m.current_player() if m.phase != "draft" else m.current_drafter()
+	var seq: Array = m.order.duplicate()
+	if m.phase == "draft":
+		seq = m.draft_queue.duplicate()
+		for pid in m.order:
+			if not seq.has(pid):
+				seq.append(pid)
+	var start := seq.find(cur)
+	if start < 0:
+		start = 0
+	for k in seq.size():
+		var pid: int = seq[(start + k) % seq.size()]
+		if not rows.has(pid) and not m.players[pid].out:
+			rows.append(pid)
+	for p in m.players:
+		if not rows.has(p.id):
+			rows.append(p.id)
+	var row_h := 40.0
 	var fs := 15
 	if portrait:
-		row = 18.0 if m.n > 6 else 22.0
-		fs = 13 if m.n > 6 else 14
-	var h := 16.0 + 22.0 + row * m.n + 6.0
+		row_h = clampf((r.size.y - 36.0) / rows.size(), 17.0, 30.0)
+		fs = 13 if row_h < 24.0 else 14
 	if not portrait:
-		r.size.y = h
-		hud["left_end"] = r.end.y
+		r.size.y = 14 + 24 + rows.size() * row_h + 10
+		hud["order_end"] = r.end.y
 	_panel(r)
-	_txt(r.position + Vector2(18, 28), "남은 퍽", 13, SUB, font_semi)
-	var y := r.position.y + 40
-	for p in m.players:
+	_txt(r.position + Vector2(18, 27), "차례 순서", 13, SUB, font_semi)
+	var y := r.position.y + 36
+	var i := 0
+	for pid in rows:
+		var p: Dictionary = m.players[pid]
 		var a := 0.4 if p.out else 1.0
-		var cy := y + row * 0.5
-		Art.draw_icon(self, Vector2(r.position.x + 18 + 10, cy), row - 4, p.color, p.id, a)
-		var name_s: String = p.name + ("  CPU" if p.cpu else "")
-		_txt(Vector2(r.position.x + 48, cy + fs * 0.36), name_s, fs, Color(TEXT, a), font, r.size.x - 110)
+		var row := Rect2(r.position.x + 10, y, r.size.x - 20, row_h - 2)
+		if pid == cur and not p.out:
+			_round_rect(row, Color(1, 1, 1, 0.07), 8)
+		var cy := y + row_h * 0.5 - 1
+		Art.draw_icon(self, Vector2(row.position.x + 8 + 12, cy), minf(24.0, row_h - 6), p.color, pid, a)
+		var nx := row.position.x + 44
+		_txt(Vector2(nx, cy + fs * 0.36), p.name, fs, Color(TEXT, a), font_bold if pid == cur else font, 70)
+		var name_w := (font_bold if pid == cur else font).get_string_size(p.name, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
+		_txt(Vector2(nx + name_w + 8, cy + 4), "CPU" if p.cpu else "사람", 12, Color(SUB, a), font, 40)
+		var right := row.end.x - 8
 		if p.out:
-			_txt(Vector2(r.end.x - 16, cy + 5), "탈락", 13, Color(SUB, 0.8), font, 60, HORIZONTAL_ALIGNMENT_RIGHT)
+			_txt(Vector2(right, cy + 4), "탈락", 12, Color(SUB, 0.8), font, 50, HORIZONTAL_ALIGNMENT_RIGHT)
 		else:
-			var left := m.stones_left(p.id)
-			for k in left:
-				draw_circle(Vector2(r.end.x - 18 - k * 13, cy), 4.5, p.color)
-		y += row
+			var left := m.stones_left(pid)
+			for k2 in left:
+				draw_circle(Vector2(right - 4 - k2 * 12, cy), 4.0, p.color)
+			var tag := ""
+			if pid == cur:
+				tag = "지금"
+			elif i == 1 and m.phase != "draft":
+				tag = "다음"
+			if tag != "" and not portrait:
+				_txt(Vector2(right - 12 - left * 12, cy + 4), tag, 12, HINT_GOLD if tag == "지금" else SUB, font_semi, 40, HORIZONTAL_ALIGNMENT_RIGHT)
+		y += row_h
+		i += 1
 
 
 func _draw_log() -> void:
 	if log_lines.is_empty():
 		return
-	var shown: Array = log_lines.slice(maxi(0, log_lines.size() - 4))
-	var r := Rect2(hud["left"].position.x, hud.get("left_end", 200.0) + 12, 232, 18 + shown.size() * 19)
-	if r.end.y > hud["parts"].position.y - 12:
+	var shown: Array = log_lines.slice(maxi(0, log_lines.size() - 3))
+	shown.reverse()
+	var r: Rect2 = hud["log"]
+	var lh := 22.0
+	var lines: Array = []
+	for e in shown:
+		lines.append(_wrap(e["t"], font, 14, r.size.x - 54))
+	var total := 0
+	for l in lines:
+		total += l.size()
+	r.size.y = 14 + 24 + total * lh + 12
+	r.position.y = get_viewport_rect().size.y - 24 - r.size.y
+	if r.position.y < hud.get("aimed_end", 0.0) + 12:
 		return
 	_panel(r)
-	var y := r.position.y + 24
-	for l in shown:
-		_txt(Vector2(r.position.x + 14, y), l, 12, SUB, font, r.size.x - 28)
-		y += 19
+	_txt(r.position + Vector2(18, 27), "기록", 13, SUB, font_semi)
+	var y := r.position.y + 54
+	for k in shown.size():
+		var e: Dictionary = shown[k]
+		draw_circle(Vector2(r.position.x + 22, y - 5), 4, e["c"])
+		for ln in lines[k]:
+			_txt(Vector2(r.position.x + 36, y), ln, 14, TEXT if k == 0 else SUB, font)
+			y += lh
 
 
-func _draw_legend(r: Rect2) -> void:
-	if m.phase != "aim" or m.players[m.current_player()].cpu:
-		return
-	var s = _focus_stone()
-	if s == null:
-		return
-	var rows: Array = [["move", "진행 방향, 길이가 곧 힘"]]
-	if PartsData.BULLET_WEAPONS.has(s.parts["weapon"]):
-		rows.append(["bullet", "총탄 사선"])
-		if s.parts["aux"] == "decal":
-			rows.append(["decal", "반대편 보조 사선"])
-	if s.parts["aux"] == "magnet":
-		rows.append(["magnet", "자석 작동 범위"])
-	if s.parts["weapon"] == "hook":
-		rows.append(["hook", "갈고리 사거리"])
-	rows.append(["cancel", "이 안으로 되돌리면 취소"])
-	r.size.y = 40 + rows.size() * 26
-	_panel(r)
-	_txt(r.position + Vector2(18, 28), "조준선", 13, SUB, font_semi)
-	var col: Color = m.players[s.owner].color.lightened(0.25)
-	var y := r.position.y + 50
-	for row in rows:
-		var x0 := r.position.x + 18
-		match row[0]:
-			"move":
-				draw_line(Vector2(x0 + 2, y - 5), Vector2(x0 + 34, y - 5), TEXT, 4.0, true)
-				draw_colored_polygon(PackedVector2Array([Vector2(x0 + 33, y - 10), Vector2(x0 + 42, y - 5), Vector2(x0 + 33, y)]), TEXT)
-			"bullet":
-				draw_dashed_line(Vector2(x0 + 2, y - 5), Vector2(x0 + 42, y - 5), col, 2.5, 7.0)
-			"decal":
-				draw_dashed_line(Vector2(x0 + 2, y - 5), Vector2(x0 + 42, y - 5), Color(col, 0.5), 2.5, 7.0)
-			"hook":
-				draw_dashed_line(Vector2(x0 + 2, y - 5), Vector2(x0 + 42, y - 5), Color(Art.STEEL, 0.6), 2.0, 4.0)
-			"magnet":
-				var pts := PackedVector2Array([Vector2(x0 + 2, y), Vector2(x0 + 42, y), Vector2(x0 + 34, y - 10)])
-				draw_colored_polygon(pts, Color(col, 0.25))
-			"cancel":
-				_dashed_ring(Vector2(x0 + 22, y - 5), 5.5, Color(1, 1, 1, 0.5))
-		_txt(Vector2(x0 + 56, y), row[1], 14, TEXT, font, r.size.x - 78)
-		y += 26
+## 폭에 맞춰 줄바꿈 (글자 단위).
+func _wrap(t: String, f: Font, size: int, maxw: float) -> Array:
+	var out: Array = []
+	var cur := ""
+	for ch in t:
+		if f.get_string_size(cur + ch, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x > maxw and cur != "":
+			out.append(cur)
+			cur = ch.strip_edges(true, false) if ch == " " else ch
+		else:
+			cur += ch
+	if cur != "":
+		out.append(cur)
+	return out
 
 
 func _segments(r: Rect2, frac: float) -> void:
@@ -1073,32 +1246,50 @@ func _draw_power(r: Rect2) -> void:
 	_panel(r)
 	_txt(r.position + Vector2(18, 30), "힘", 13, SUB, font_semi)
 	var label := "%d%%" % int(round(pw * 100)) if not info.is_empty() and not info.has("cancel") else ("취소" if info.has("cancel") else "—")
-	_txt(Vector2(r.end.x - 18, r.position.y + 34), label, 22, POWER, font_bold, 120, HORIZONTAL_ALIGNMENT_RIGHT)
-	_segments(Rect2(r.position.x + 18, r.position.y + 46, r.size.x - 36, 12), pw)
+	_txt(Vector2(r.end.x - 18, r.position.y + 36), label, 22, POWER, font_bold, 120, HORIZONTAL_ALIGNMENT_RIGHT)
+	_segments(Rect2(r.position.x + 18, r.position.y + 48, r.size.x - 36, 12), pw)
+	_txt(Vector2(r.position.x + 18, r.position.y + 88), "점선 원 안으로 되돌리면 조준을 취소해요.", 13, SUB, font, r.size.x - 36)
 
 
-func _draw_parts_panel(r: Rect2) -> void:
+## 조준 중인 퍽 (또는 손을 올린 퍽)의 부품.
+func _draw_aimed(r: Rect2) -> void:
 	var s = _focus_stone()
+	var empty: bool = s == null or (s.parts["weapon"] == "" and s.parts["aux"] == "" and s.parts["prop"] == "")
+	var set_txt: String = PartsData.set_label(s.parts) if s != null else ""
+	var first_hint := ""
+	if empty and m.round_no < (m.draft_rounds[0] if not m.draft_rounds.is_empty() else 99):
+		first_hint = "첫 개조는 %d바퀴가 시작될 때 해요." % m.draft_rounds[0]
+	var step := 34.0
+	if not portrait:
+		r.size.y = 14 + 26 + 3 * step + 8 + (30.0 if set_txt != "" else 0.0) + (50.0 if first_hint != "" else 0.0)
+		hud["aimed_end"] = r.end.y
 	_panel(r)
-	_txt(r.position + Vector2(18, 28), "이 퍽의 부품", 13, SUB, font_semi)
+	_txt(r.position + Vector2(18, 27), "조준 중인 퍽" if drag_stone >= 0 or (m.phase == "aim" and not m.players[m.current_player()].cpu and hover_stone < 0) else "이 퍽의 부품", 13, SUB, font_semi)
 	if s == null:
 		return
-	Art.draw_icon(self, Vector2(r.end.x - 26, r.position.y + 22), 20, m.players[s.owner].color, s.owner)
-	var y := r.position.y + 54
-	var step := 32.0 if not portrait else 36.0
+	Art.draw_icon(self, Vector2(r.end.x - 28, r.position.y + 22), 22, m.players[s.owner].color, s.owner)
+	var y := r.position.y + 40 + step * 0.5
+	if portrait:
+		step = minf(34.0, (r.size.y - 50.0 - (26.0 if set_txt != "" else 0.0)) / 3.0)
 	for slot in PartsData.SLOTS:
 		var id: String = s.parts[slot]
-		Art.draw_slot_icon(self, Vector2(r.position.x + 30, y - 5), 24, slot)
-		_txt(Vector2(r.position.x + 50, y), PartsData.SLOT_LABEL[slot], 13, SUB, font)
-		var nm := PartsData.part_name(id) if id != "" else "없음"
-		if id == "magnet":
-			nm += " (왼쪽)" if s.magnet_side < 0 else " (오른쪽)"
-		_txt(Vector2(r.position.x + 88, y), nm, 15, TEXT if id != "" else Color(SUB, 0.7), font_semi if id != "" else font, r.size.x - 100)
-		if id != "":
-			var warn := PartsData.unmet_need(id, s.parts)
-			if warn != "":
-				_txt(Vector2(r.position.x + 88, y + 15), "⚠ 탄환 무기 없음", 11, Color(POWER, 0.9), font, r.size.x - 100)
+		Art.draw_slot_icon(self, Vector2(r.position.x + 18 + 11, y), 22, slot)
+		_txt(Vector2(r.position.x + 50, y + 5), PartsData.SLOT_LABEL[slot], 13, SUB, font)
+		var nm := PartsData.part_name(id) if id != "" else "비어 있음"
+		if PartsData.SIDE_PARTS.has(id):
+			var sd: int = s.prop_side if slot == "prop" else s.magnet_side
+			nm += " (왼쪽)" if sd < 0 else " (오른쪽)"
+		_txt(Vector2(r.position.x + 90, y + 5), nm, 15, TEXT if id != "" else MUTED, font_semi, r.size.x - 102)
+		if id != "" and PartsData.unmet_need(id, s.parts) != "":
+			_txt(Vector2(r.end.x - 14, y + 5), "⚠", 13, POWER, font, 20, HORIZONTAL_ALIGNMENT_RIGHT)
 		y += step
+	if set_txt != "":
+		_txt(Vector2(r.position.x + 18, y + 6), set_txt, 13, POWER, font_semi, r.size.x - 36)
+		y += 30
+	if first_hint != "":
+		var hb := Rect2(r.position.x + 14, y - 8, r.size.x - 28, 40)
+		_round_rect(hb, Color(BRASS, 0.12), 8)
+		_txt(Vector2(hb.position.x + 12, hb.position.y + 25), first_hint, 13, HINT_GOLD, font, hb.size.x - 24)
 
 
 func _small_label(p: Vector2, t: String, c: Color) -> void:
@@ -1229,66 +1420,150 @@ func _show_setup() -> void:
 	menu_btn.visible = false
 	parts_btn.visible = false
 	var root := _new_overlay(false)
-	var box := _centered_panel(root, 640)
-	box.add_child(_label("개조 알까기", 40, TEXT, 2))
-	box.add_child(_label("펠트 테이블 위의 금속 퍽을 튕겨 상대를 판 밖으로. 바퀴마다 부품을 골라 내 퍽을 개조한다.", 16, SUB_FELT))
-	box.add_child(_label("인원", 15, SUB, 1))
+	var vs := get_viewport_rect().size
+	var narrow := vs.x < 900
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", 26 if not narrow else 18)
+	var width := 540.0 if not narrow else vs.x - 32.0
+	col.custom_minimum_size = Vector2(width, 0)
+	col.position = Vector2(72, maxf(40.0, (vs.y - 680.0) * 0.5 + 56.0)) if not narrow else Vector2(16, 24)
+	root.add_child(col)
+	# 제목
+	var head := VBoxContainer.new()
+	head.add_theme_constant_override("separation", 8)
+	head.add_child(_label("개조 알까기", 44, TEXT, 2))
+	head.add_child(_label("퍽을 튕겨 상대를 판 밖으로. 바퀴마다 부품을 골라 개조합니다.", 16, SUB))
+	col.add_child(head)
+	# 인원: 분절 버튼
+	var g1 := VBoxContainer.new()
+	g1.add_theme_constant_override("separation", 10)
+	g1.add_child(_label("인원", 14, LABEL, 1))
+	var seg := PanelContainer.new()
+	var segsb := _sb(Color(1, 1, 1, 0.05), Color(1, 1, 1, 0.1), 10)
+	segsb.set_content_margin_all(4)
+	seg.add_theme_stylebox_override("panel", segsb)
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 6)
-	var narrow := get_viewport_rect().size.x < 640
+	seg.add_child(row)
 	for n in range(2, 9):
 		var b := _button("%d인" % n, func(): _set_count(n))
-		b.toggle_mode = true
-		b.button_pressed = settings["n"] == n
-		b.custom_minimum_size = Vector2(50 if narrow else 64, 44)
+		b.custom_minimum_size = Vector2(0, 44)
+		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		b.add_theme_font_override("font", font_semi)
+		b.add_theme_font_size_override("font_size", 16)
+		var on: bool = settings["n"] == n
+		var st := _sb(BRASS if on else Color(0, 0, 0, 0), Color(0, 0, 0, 0), 7)
+		st.set_border_width_all(0)
+		b.add_theme_stylebox_override("normal", st)
+		var sth := _sb(BRASS.lightened(0.1) if on else Color(1, 1, 1, 0.08), Color(0, 0, 0, 0), 7)
+		sth.set_border_width_all(0)
+		b.add_theme_stylebox_override("hover", sth)
+		b.add_theme_stylebox_override("pressed", sth)
+		for k in ["font_color", "font_hover_color", "font_pressed_color"]:
+			b.add_theme_color_override(k, INK if on else TEXT)
 		row.add_child(b)
-	box.add_child(row)
-	box.add_child(_label("자리 (눌러서 사람/CPU 바꾸기)", 15, SUB, 1))
-	var grid := GridContainer.new()
-	grid.columns = 2 if narrow else 4
-	grid.add_theme_constant_override("h_separation", 6)
-	grid.add_theme_constant_override("v_separation", 6)
+	g1.add_child(seg)
+	col.add_child(g1)
+	# 자리
+	var g2 := VBoxContainer.new()
+	g2.add_theme_constant_override("separation", 10)
+	var hr := HBoxContainer.new()
+	var sl := _nw(_label("자리", 14, LABEL, 1))
+	sl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	hr.add_child(sl)
+	var humans := 0
 	for i in settings["n"]:
-		var b2 := _button("", func(): _toggle_cpu(i))
-		b2.text = "%s · %s" % [Match.NAMES[i], "CPU" if settings["cpu"][i] else "사람"]
-		b2.alignment = HORIZONTAL_ALIGNMENT_LEFT
-		b2.add_theme_constant_override("h_separation", 8)
-		b2.custom_minimum_size = Vector2(0 if narrow else 138, 46)
-		b2.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		var sb := _sb(Color(1, 1, 1, 0.06), Color(1, 1, 1, 0.14), 8)
-		sb.content_margin_left = 40
-		b2.add_theme_stylebox_override("normal", sb)
-		var sbh := _sb(Color(1, 1, 1, 0.11), Color(1, 1, 1, 0.24), 8)
-		sbh.content_margin_left = 40
-		b2.add_theme_stylebox_override("hover", sbh)
-		b2.add_theme_stylebox_override("pressed", sbh)
-		var ic := _icon_pic(Match.COLORS[i], i, 24)
-		ic.position = Vector2(8, 8)
-		b2.add_child(ic)
-		grid.add_child(b2)
-	box.add_child(grid)
+		if not settings["cpu"][i]:
+			humans += 1
+	hr.add_child(_nw(_label("사람 %d명, CPU %d명" % [humans, settings["n"] - humans], 13, SUB)))
+	g2.add_child(hr)
+	var grid := GridContainer.new()
+	grid.columns = 2
+	grid.add_theme_constant_override("h_separation", 8)
+	grid.add_theme_constant_override("v_separation", 8)
+	for i in settings["n"]:
+		grid.add_child(_seat_button(i))
+	g2.add_child(grid)
+	g2.add_child(_label("자리를 누르면 사람과 CPU가 바뀝니다.", 13, SUB))
+	col.add_child(g2)
+	# 조준 시간 제한
+	var tp := PanelContainer.new()
+	var tsb := _sb(Color(1, 1, 1, 0.05), Color(1, 1, 1, 0.1), 10)
+	tsb.set_content_margin_all(12)
+	tp.add_theme_stylebox_override("panel", tsb)
+	var th := HBoxContainer.new()
+	tp.add_child(th)
+	var tv := VBoxContainer.new()
+	tv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	tv.add_theme_constant_override("separation", 2)
+	tv.add_child(_label("조준 8초 제한", 15, TEXT, 1))
+	tv.add_child(_label("시간이 끝나면 차례가 넘어갑니다", 13, SUB))
+	th.add_child(tv)
 	var cb := CheckButton.new()
-	cb.text = "조준 8초 제한 (시간이 끝나면 턴 넘김)"
 	cb.button_pressed = settings["timed"]
 	cb.focus_mode = Control.FOCUS_NONE
 	cb.toggled.connect(func(v): settings["timed"] = v)
-	box.add_child(cb)
-	var info := "판: %s · 퍽 %d개씩 · 최대 %d바퀴 · 개조: %s바퀴 시작" % [
-		"정사각형 16칸" if settings["n"] == 2 else ("원형 지름 18칸" if settings["n"] <= 4 else "넓은 원형 지름 24칸"),
-		3 if settings["n"] == 2 else 2,
-		12 if settings["n"] == 2 else (8 if settings["n"] <= 4 else 6),
-		"2·3·4" if settings["n"] <= 4 else "1·2·3"]
-	box.add_child(_label(info, 14, SUB))
+	th.add_child(cb)
+	col.add_child(tp)
+	# 시작
 	var row2 := HBoxContainer.new()
-	row2.add_theme_constant_override("separation", 8)
+	row2.add_theme_constant_override("separation", 10)
 	var start := _primary(_button("시작", func(): _start_match()))
-	start.custom_minimum_size = Vector2(200, 54)
-	start.add_theme_font_size_override("font_size", 21)
+	start.custom_minimum_size = Vector2(0, 52)
+	start.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	start.add_theme_font_size_override("font_size", 18)
 	row2.add_child(start)
 	var cat := _button("부품 도감", func(): _show_catalog(true))
-	cat.custom_minimum_size = Vector2(140, 54)
+	cat.custom_minimum_size = Vector2(130, 52)
+	cat.add_theme_font_override("font", font_semi)
+	var csb := _sb(Color(0, 0, 0, 0), Color(1, 1, 1, 0.18), 10)
+	cat.add_theme_stylebox_override("normal", csb)
 	row2.add_child(cat)
-	box.add_child(row2)
+	col.add_child(row2)
+
+
+func _seat_button(i: int) -> Button:
+	var human: bool = not settings["cpu"][i]
+	var b := _button("", func(): _toggle_cpu(i))
+	b.custom_minimum_size = Vector2(0, 44)
+	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	b.tooltip_text = "%s 자리, 지금 %s. 눌러서 바꾸기" % [Match.NAMES[i], "사람" if human else "CPU"]
+	var border := Color(BRASS, 0.7) if human else Color(1, 1, 1, 0.12)
+	b.add_theme_stylebox_override("normal", _sb(Color(1, 1, 1, 0.05), border, 8))
+	b.add_theme_stylebox_override("hover", _sb(Color(1, 1, 1, 0.09), border, 8))
+	b.add_theme_stylebox_override("pressed", _sb(Color(1, 1, 1, 0.09), border, 8))
+	var h := HBoxContainer.new()
+	h.set_anchors_preset(Control.PRESET_FULL_RECT)
+	h.offset_left = 10
+	h.offset_right = -8
+	h.add_theme_constant_override("separation", 10)
+	h.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	b.add_child(h)
+	var ic := _icon_pic(Match.COLORS[i], i, 24)
+	ic.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	h.add_child(ic)
+	var nm := _nw(_label(Match.NAMES[i], 15, TEXT))
+	nm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	nm.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	nm.size_flags_vertical = Control.SIZE_FILL
+	nm.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	h.add_child(nm)
+	var pill := PanelContainer.new()
+	var psb := _sb(BRASS if human else Color(1, 1, 1, 0.1), Color(0, 0, 0, 0), 999)
+	psb.set_border_width_all(0)
+	psb.content_margin_left = 10
+	psb.content_margin_right = 10
+	psb.content_margin_top = 2
+	psb.content_margin_bottom = 2
+	pill.add_theme_stylebox_override("panel", psb)
+	pill.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	pill.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var pl := _nw(_label("사람" if human else "CPU", 13, INK if human else LABEL, 1))
+	pl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	pl.custom_minimum_size = Vector2(28, 0)
+	pill.add_child(pl)
+	h.add_child(pill)
+	return b
 
 
 func _set_count(n: int) -> void:
@@ -1319,7 +1594,7 @@ func _show_catalog(from_setup: bool) -> void:
 	v.add_theme_constant_override("separation", 10)
 	pc.add_child(v)
 	var head := HBoxContainer.new()
-	var title := _nw(_label("퍽과 부품 · 20종", 26, TEXT, 2))
+	var title := _nw(_label("퍽과 부품 · %d종" % PartsData.ids().size(), 26, TEXT, 2))
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	head.add_child(title)
 	head.add_child(_button("닫기", func():
@@ -1372,13 +1647,26 @@ func _show_catalog(from_setup: bool) -> void:
 			cell.add_child(tv)
 			grid.add_child(cell)
 		list.add_child(grid)
+	# 세트
+	var st: Dictionary = PartsData.SETS["trex"]
+	list.add_child(_label(st["name"], 20, TEXT, 1))
+	var srow := HBoxContainer.new()
+	srow.add_theme_constant_override("separation", 14)
+	srow.add_child(_puck_pic({"weapon": "trex_head", "aux": "trex_arm", "prop": "trex_leg"}, Match.COLORS[0], 0, Vector2(130, 150), 1.3))
+	var sv := VBoxContainer.new()
+	sv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	sv.add_child(_label("티라노 머리·팔·다리를 한 퍽에 모두 달면 메카 티라노로 변신하고 「%s」가 열린다." % st["move"], 15, TEXT))
+	sv.add_child(_label("상대 옆을 스치듯 쏴서 팔이 먼저 닿으면 한 번: ① 팔이 끌어오고 ② 머리가 물어 조준 방향으로 던지고 ③ 다리가 버텨 반동을 줄인다. 정면으로 먼저 받으면 머리의 기본 물기만 나간다.", 13, SUB))
+	sv.add_child(_label("내 살아 있는 퍽에 티라노 부품이 있으면, 다음 개조 후보 세 자리 중 한 자리는 아직 없는 티라노 부품이다.", 13, BRASS))
+	srow.add_child(sv)
+	list.add_child(srow)
 
 
 func _part_card(pid: int, part: String) -> Button:
 	var d := PartsData.get_part(part)
 	var b := Button.new()
 	b.focus_mode = Control.FOCUS_NONE
-	b.custom_minimum_size = Vector2(196, 300)
+	b.custom_minimum_size = Vector2(196, 326)
 	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	b.add_theme_stylebox_override("normal", _sb(Color("1A1D21"), PANEL_LINE, 10))
 	b.add_theme_stylebox_override("hover", _sb(Color("20242A"), BRASS, 10))
@@ -1416,6 +1704,26 @@ func _part_card(pid: int, part: String) -> Button:
 	for l in [name_l, desc_l]:
 		l.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		v.add_child(l)
+	var tag := ""
+	var tag_col := SUB
+	if PartsData.set_of(part) != "":
+		var best := 0
+		for st in m.world.alive_stones_of(pid):
+			var c: int = PartsData.set_progress(st.parts)["count"]
+			if c < 3:
+				best = maxi(best, c)
+		if best == 2:
+			tag = "고르면 세트 완성 · 메카 티라노"
+			tag_col = POWER
+		else:
+			tag = "티라노 세트 %d/3" % (best + 1)
+			tag_col = HINT_GOLD
+	elif not m.trex_missing(pid).is_empty():
+		tag = "일반 부품"
+	if tag != "":
+		var tl := _label(tag, 13, tag_col, 1)
+		tl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		v.add_child(tl)
 	var need: String = d.get("needs", "")
 	if need != "":
 		var any_ok := false
@@ -1449,6 +1757,11 @@ func _show_draft_cards(pid: int) -> void:
 	head.add_child(_nw(_label("%s 개조 · %d바퀴" % [p.name, m.round_no], 24, TEXT, 2)))
 	v.add_child(head)
 	v.add_child(_label("후보 세 개 중 하나를 골라 살아 있는 내 퍽에 장착합니다. 같은 슬롯의 부품은 교체돼요.", 14, SUB))
+	for st in m.world.alive_stones_of(pid):
+		var lbl := PartsData.set_label(st.parts)
+		if lbl != "" and not PartsData.set_complete(st.parts):
+			v.add_child(_label("장착 화면 표시: " + lbl, 14, POWER, 1))
+			break
 	if portrait and vs.x < 640:
 		var col := VBoxContainer.new()
 		col.add_theme_constant_override("separation", 8)
@@ -1494,7 +1807,10 @@ func _show_stone_hint(pid: int) -> void:
 
 func _show_side_choice(pid: int) -> void:
 	var v := _hint_panel(pid)
-	v.add_child(_label("자석팔을 어느 쪽에 달까요? (쏘는 방향 기준)", 17, TEXT, 1))
+	var q := {"magnet": "자석팔을 어느 쪽에 달까요? (쏘는 방향 기준)",
+		"shield": "딱지 방패가 탄환을 어느 쪽으로 튕길까요? (쏘는 방향 기준)",
+		"crab": "게걸음 바퀴가 어느 쪽으로 튈까요? (쏘는 방향 기준)"}
+	v.add_child(_label(q.get(draft_part, "어느 쪽에 달까요?"), 17, TEXT, 1))
 	var h := HBoxContainer.new()
 	h.add_theme_constant_override("separation", 8)
 	var sid := draft_stone
