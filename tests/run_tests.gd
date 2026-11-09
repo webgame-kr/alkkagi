@@ -361,7 +361,11 @@ func test_layout_all_counts() -> void:
 func test_draft_schedule_and_equip() -> void:
 	var m := Match.new()
 	m.setup(4, [], 3, false)
-	check(m.phase == "draft" and m.round_no == 1, "draft from round 1")
+	# 1바퀴는 맨 알로 쏘고, 2바퀴부터 개조
+	check(m.phase == "aim" and m.round_no == 1, "round 1 starts bare: %s" % m.phase)
+	for i in 4:
+		m.skip_turn()
+	check(m.phase == "draft" and m.round_no == 2, "draft from round 2")
 	check(m.draft_queue.size() == 4, "everyone alive picks")
 	var pid := m.current_drafter()
 	check(pid == m.order[0], "local draft follows the start order")
@@ -381,11 +385,11 @@ func test_draft_schedule_and_equip() -> void:
 	_finish_draft(m)
 	for i in 4:
 		m.skip_turn()
-	check(m.round_no == 2 and m.phase == "draft", "draft again at round 2")
+	check(m.round_no == 3 and m.phase == "draft", "draft again at round 3")
 	_finish_draft(m)
 	for i in 4:
 		m.skip_turn()
-	check(m.round_no == 3 and m.phase == "draft", "and every round after")
+	check(m.round_no == 4 and m.phase == "draft", "and every round after")
 	# 시작 자리는 바퀴마다 넘어간다
 	var m3 := Match.new()
 	m3.setup(3, [], 5, false)

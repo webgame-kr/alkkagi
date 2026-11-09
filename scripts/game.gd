@@ -1171,7 +1171,7 @@ func _draw_lobby_preview(ci: Control) -> void:
 		Art.draw_puck_top(ci, pk[1], r, Match.COLORS[i], i, -PI / 2)
 	# 판 정보
 	var info := [["판", "정사각 16칸" if square else "원형 지름 %d칸" % int(units)], ["퍽", "%d개씩" % (4 if square else 3)],
-		["승리", "한 명 남을 때까지"], ["개조", "매 바퀴"]]
+		["승리", "한 명 남을 때까지"], ["개조", "2바퀴부터 매 바퀴"]]
 	var x0 := c.x + half + 36.0
 	var y0 := pr.position.y + 34.0
 	for k in 4:
@@ -2148,8 +2148,8 @@ func _draw_aimed(r: Rect2) -> void:
 	var empty: bool = s == null or (s.parts["weapon"] == "" and s.parts["aux"] == "" and s.parts["prop"] == "")
 	var set_txt: String = PartsData.set_label(s.parts) if s != null else ""
 	var first_hint := ""
-	if empty and not m.draft_rounds.is_empty() and m.round_no < m.draft_rounds[0]:
-		first_hint = "첫 개조는 %d바퀴가 시작될 때 해요." % m.draft_rounds[0]
+	if empty and m.round_no < m.first_draft_round:
+		first_hint = "첫 개조는 %d바퀴가 시작될 때 해요." % m.first_draft_round
 	var step := 34.0
 	if not portrait:
 		r.size.y = 14 + 26 + 3 * step + 8 + (62.0 if set_txt != "" else 0.0) + (50.0 if first_hint != "" else 0.0)
@@ -4343,6 +4343,8 @@ func _draw_timeline(vs: Vector2) -> void:
 		_round_rect(cr, col, 6)
 		draw_string(font_semi, Vector2(cr.position.x, cr.position.y + 17), str(rd), HORIZONTAL_ALIGNMENT_CENTER, cw, 12, tc)
 	var txt := "%d바퀴째" % cur
+	if cur < m.first_draft_round:
+		txt += " · 맨 알"
 	if m.max_rounds > 0:
 		txt += " · %d바퀴까지" % m.max_rounds
 	else:

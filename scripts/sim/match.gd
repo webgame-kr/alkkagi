@@ -18,6 +18,7 @@ var world: World
 var round_no := 1
 var max_rounds := 0           # 0 = 바퀴 제한 없음: 한 사람만 남을 때까지
 var draft_rounds: Array = []  # 비어 있으면 매 바퀴 개조
+var first_draft_round := 2    # 1바퀴는 맨 알로 두고, 2바퀴부터 개조한다 (모든 모드)
 var aim_limit := 0.0          # 0 = 제한 없음
 var start_seat := 0
 var order: Array = []         # 이번 바퀴의 차례 (플레이어 id)
@@ -127,7 +128,7 @@ func current_drafter() -> int:
 
 
 func is_draft_round(r: int) -> bool:
-	return draft_rounds.is_empty() or draft_rounds.has(r)
+	return r >= first_draft_round and (draft_rounds.is_empty() or draft_rounds.has(r))
 
 
 # ── 바퀴 ─────────────────────────────────────────────────
