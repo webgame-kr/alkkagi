@@ -8,10 +8,10 @@ const PartsDataRef = preload("res://scripts/sim/parts_data.gd")
 const Ex = preload("res://scripts/sim/expansion.gd")
 
 const STONE_R := 22.0
-const MAX_SPEED := 1120.0
-const FRICTION := 950.0       # 고정 감속 px/s²
-const DRAG := 0.35            # 속도에 비례하는 감속 1/s
-const RESTITUTION := 0.6
+const MAX_SPEED := Parts.LAUNCH_V
+const FRICTION := Parts.FRICTION   # 고정 감속 px/s²
+const DRAG := Parts.DRAG           # 속도에 비례하는 감속 1/s
+const RESTITUTION := 0.9
 const STOP_SPEED := 6.0
 const DT := 1.0 / 120.0
 const EDGE_ZONE := 44.0       # 판 끝 경고 띠(1칸). 낙하산이 여기서 작동한다
@@ -407,7 +407,7 @@ func launch(stone_id: int, dir: Vector2, power: float, opts := {}) -> void:
 	if s == null or not s.alive:
 		return
 	dir = dir.normalized()
-	power = clampf(power, 0.05, 1.0)
+	power = clampf(power, 0.0, 1.0)
 	shot = ShotCtx.new()
 	shot.stone_id = s.id
 	shot.owner = s.owner
@@ -419,7 +419,7 @@ func launch(stone_id: int, dir: Vector2, power: float, opts := {}) -> void:
 	knockouts.clear()
 	for o in stones:
 		o.cause = {}
-	s.vel = dir * MAX_SPEED * power
+	s.vel = dir * Parts.launch_speed(power)
 	s.facing = dir.angle()
 	emit({"t": "launch", "pos": s.pos, "owner": s.owner, "power": power})
 	# 지뢰·방울은 다음 샷부터 작동한다. 지금 닿아 있는 알은 떠날 때까지 무시.
@@ -675,7 +675,7 @@ func _collide_stones() -> void:
 			var imp := rel * (1.0 + RESTITUTION) * 0.5
 			a.vel -= nrm * imp
 			b.vel += nrm * imp
-			emit({"t": "hit", "pos": a.pos + nrm * STONE_R, "strength": rel})
+			emit({"t": "hit", "pos": a.pos + nrm * STONE_R, "strength": rel, "a": a.id, "b": b.id, "n": nrm})
 			if shot != null and record_events:
 				if a.id == shot.stone_id:
 					b.cause = {"owner": shot.owner, "part": "body"}

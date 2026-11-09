@@ -23,6 +23,12 @@ const ArtData = preload("res://scripts/art_data.gd")
 ## 만화 연출 중인 알: 모든 색을 먹선 흑백으로 그린다.
 static var mono := false
 static var _poly_ok := {}
+## 판 위에서는 퍽 몸통을 화면 공간에서 따로 그린다 (draw_puck_top). 이때 draw() 는 부품만 그린다.
+static var skip_body := false
+## draw() 가 몸통까지 그릴 때 로컬 공간이 화면에 대해 돌아간 각도 (도감·카드 그림은 정면이 위: -PI/2).
+static var view_rot := -PI / 2.0
+static var outline := Color("1A1D21")
+static var shadow := Color(40 / 255.0, 25 / 255.0, 10 / 255.0, 0.32)
 
 
 ## 판 위의 퍽. symbol: 0~7 플레이어 각인. tick: 정면 눈금.
@@ -47,7 +53,17 @@ static func draw(ci: CanvasItem, parts: Dictionary, magnet_side: int, col: Color
 		_weapon(ci, w, a)
 	if x != "":
 		_aux(ci, x, a, mirror)
-	_puck(ci, col, a, symbol, tick)
+	if not skip_body:
+		draw_puck_shadow(ci, Vector2.ZERO, R, a, view_rot)
+		draw_puck_top(ci, Vector2.ZERO, R, col, symbol, 0.0, a, view_rot)
+
+
+static func is_set_form(parts: Dictionary) -> bool:
+	var w: String = parts.get("weapon", "")
+	var x: String = parts.get("aux", "")
+	var p: String = parts.get("prop", "")
+	return (w == "trex_head" and x == "trex_arm" and p == "trex_leg") or (w == "moon_staff" and x == "star_cloak" and p == "moon_boots") \
+		or (w == "hero_band" and x == "torn_cape" and p == "awaken_shoes")
 
 
 # ── 좌표 변환 ────────────────────────────────────────────
@@ -151,13 +167,15 @@ static func _puck(ci: CanvasItem, col: Color, a: float, symbol: int, tick: bool)
 
 ## 플레이어 각인 (원·삼각·사각·마름모·육각·십자·두 줄·갈매기). 100단위 도면, 중심 (50,50).
 ## rotate: 판 위 퍽처럼 로컬(+x 정면) 공간이면 true, 화면에 똑바로 그릴 땐 false.
-static func draw_symbol(ci: CanvasItem, symbol: int, col: Color, a: float, center: Vector2, scale: float, rotate: bool) -> void:
+static func draw_symbol(ci: CanvasItem, symbol: int, col: Color, a: float, center: Vector2, scale: float, rotate: bool, width := -1.0, turn := 0.0) -> void:
 	var c := _al(col, a)
-	var wdt := 4.5 * scale
+	var wdt := 4.5 * scale if width < 0.0 else width
 	var f := func(v: Vector2) -> Vector2:
 		var d := v - Vector2(50, 50)
 		if rotate:
 			d = Vector2(-d.y, d.x)
+		if turn != 0.0:
+			d = d.rotated(turn)
 		return center + d * scale
 	var pl := func(arr: Array, closed: bool) -> void:
 		var pp := PackedVector2Array()
@@ -168,7 +186,7 @@ static func draw_symbol(ci: CanvasItem, symbol: int, col: Color, a: float, cente
 		ci.draw_polyline(pp, c, wdt, true)
 	match symbol % 8:
 		0:
-			ci.draw_arc(center, 9 * scale, 0, TAU, 20, c, wdt, true)
+			ci.draw_arc(center, 10 * scale, 0, TAU, 20, c, wdt, true)
 		1:
 			pl.call([Vector2(50, 38.5), Vector2(61.5, 58.5), Vector2(38.5, 58.5)], true)
 		2:
@@ -187,8 +205,70 @@ static func draw_symbol(ci: CanvasItem, symbol: int, col: Color, a: float, cente
 			pl.call([Vector2(39, 56), Vector2(50, 45), Vector2(61, 56)], false)
 
 
+# ── 퍽 몸통 (디자인 사양 「퍽 디자인」) ──────────────────
+## u: 퍽 반지름(px). front: 정면 방향(로컬 각도). rot: 로컬 공간이 화면에 대해 돌아간 각도.
+## 빛·그림자·각인은 화면 기준(왼쪽 위 조명, 각인은 항상 똑바로)이라 rot 만큼 되돌려 그린다.
+
+static func draw_puck_shadow(ci: CanvasItem, c: Vector2, u: float, a := 1.0, rot := 0.0) -> void:
+	var pts := _ellipse_rot(c + Vector2(0.12 * u, 0.32 * u).rotated(-rot), 1.02 * u, 0.88 * u, -rot)
+	ci.draw_colored_polygon(pts, Color(shadow, shadow.a * a))
+
+
+static func draw_puck_top(ci: CanvasItem, c: Vector2, u: float, col: Color, symbol: int, front: float, a := 1.0, rot := 0.0) -> void:
+	var oc := _al(outline, a)
+	var ow := 0.12 * u
+	var down := Vector2(0, 1).rotated(-rot)
+	# 옆면 두께
+	var side := c + down * 0.16 * u
+	ci.draw_circle(side, u, _al(Color(col.r * 0.55, col.g * 0.55, col.b * 0.55), a))
+	ci.draw_arc(side, u, 0, TAU, 40, oc, ow, true)
+	# 윗면: 왼쪽 위에서 밝은 방사형
+	var hi := Color(minf(1.0, col.r * 1.22), minf(1.0, col.g * 1.22), minf(1.0, col.b * 1.22))
+	ci.draw_circle(c, u, _al(col, a))
+	var lp := c + Vector2(-0.35 * u, -0.45 * u).rotated(-rot)
+	var steps := 10
+	for i in range(1, steps):
+		var t := float(i) / steps
+		ci.draw_circle(c.lerp(lp, t), u * (1.0 - t * 0.85), _al(col.lerp(hi, t), a))
+	ci.draw_arc(c, u, 0, TAU, 40, oc, ow, true)
+	# 안쪽 밝은 테두리 (같은 계열 펠트 위에서도 묻히지 않게)
+	ci.draw_arc(c, 0.9 * u, 0, TAU, 40, Color(1, 1, 1, 0.75 * a), 0.09 * u, true)
+	# 경사면: 왼쪽 위 흰 호, 오른쪽 아래 검은 호
+	ci.draw_arc(c, 0.78 * u, PI - rot, 1.5 * PI - rot, 12, Color(1, 1, 1, 0.35 * a), 0.08 * u, true)
+	ci.draw_arc(c, 0.78 * u, 0.0 - rot, 0.5 * PI - rot, 12, Color(0, 0, 0, 0.18 * a), 0.08 * u, true)
+	# 정면 홈
+	var fd := Vector2.from_angle(front)
+	var fp := fd.orthogonal()
+	ci.draw_colored_polygon(PackedVector2Array([c + fd * u + fp * 0.2 * u, c + fd * u - fp * 0.2 * u, c + fd * 0.7 * u]), oc)
+	# 광택
+	var gl := _ellipse_rot(c + Vector2(-0.35 * u, -0.5 * u).rotated(-rot), 0.42 * u, 0.18 * u, -0.5 - rot)
+	ci.draw_colored_polygon(gl, Color(1, 1, 1, 0.32 * a))
+	# 각인: 항상 똑바로. 노랑처럼 밝은 퍽은 진한 기호.
+	if symbol >= 0:
+		var lum := col.r * 0.3 + col.g * 0.59 + col.b * 0.11
+		var sc := Color("1B1E22") if lum > 0.62 else Color.WHITE
+		var k := 0.42 * u / 11.0
+		var w := 0.13 * u
+		draw_symbol(ci, symbol, Color(0, 0, 0, 0.35), a, c + down * 0.05 * u, k, false, w, -rot)
+		draw_symbol(ci, symbol, sc, a, c, k, false, w, -rot)
+
+
+static func _ellipse_rot(c: Vector2, rx: float, ry: float, ang: float) -> PackedVector2Array:
+	var out := PackedVector2Array()
+	for i in 24:
+		var t := TAU * i / 24.0
+		out.append(c + Vector2(cos(t) * rx, sin(t) * ry).rotated(ang))
+	return out
+
+
 ## HUD용 퍽 아이콘 (똑바로 선 모습). size: 지름 px.
 static func draw_icon(ci: CanvasItem, center: Vector2, size: float, col: Color, symbol: int, alpha := 1.0) -> void:
+	var u := size * 0.5 * 0.86
+	draw_puck_shadow(ci, center, u, alpha)
+	draw_puck_top(ci, center + Vector2(0, -0.08 * u), u, col, symbol, -PI / 2.0, alpha)
+
+
+static func _old_icon(ci: CanvasItem, center: Vector2, size: float, col: Color, symbol: int, alpha := 1.0) -> void:
 	var s := size / 80.0
 	ci.draw_circle(center + Vector2(0, 4 * s), 40 * s, Color(0, 0, 0, 0.35 * alpha))
 	ci.draw_circle(center, 40 * s, _al(col, alpha))

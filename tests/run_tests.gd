@@ -110,7 +110,7 @@ func test_pea_bullet() -> void:
 	var a := w.add_stone(0, Vector2(-200, 0), 0)
 	var b := w.add_stone(1, Vector2(150, 0), 0)
 	a.parts["weapon"] = "pea"
-	w.launch(a.id, Vector2.RIGHT, 0.1)
+	w.launch(a.id, Vector2.RIGHT, 0.0)
 	check(w.projs.size() == 1, "pea fires one bullet")
 	w.run_until_settled()
 	check(b.pos.x > 150.0 + 50.0, "bullet pushed b along the line: %.1f" % b.pos.x)
@@ -166,12 +166,12 @@ func test_rocket_pushes_further() -> void:
 	var p := make_world()
 	var a := p.add_stone(0, Vector2(-200, 0), 0)
 	var b := p.add_stone(1, Vector2(-100, 0), 0)
-	shoot(p, a.id, Vector2.RIGHT, 0.45)
+	shoot(p, a.id, Vector2.RIGHT, 0.3)
 	var w := make_world()
 	var a2 := w.add_stone(0, Vector2(-200, 0), 0)
 	var b2 := w.add_stone(1, Vector2(-100, 0), 0)
 	a2.parts["prop"] = "rocket"
-	shoot(w, a2.id, Vector2.RIGHT, 0.45)
+	shoot(w, a2.id, Vector2.RIGHT, 0.3)
 	check(count_events(w, "part", "rocket") == 1, "rocket fired")
 	check(a2.pos.x > a.pos.x + 30.0, "rocket shooter travels further after the hit: %.0f vs %.0f" % [a2.pos.x, a.pos.x])
 	check(not b2.alive or b2.pos.x > b.pos.x, "and pushes the target further")
@@ -300,12 +300,12 @@ func test_copier_turret_fires_next_shot() -> void:
 func test_chute_brakes() -> void:
 	var plain := make_world()
 	var p := plain.add_stone(0, Vector2(0, 0), 0)
-	shoot(plain, p.id, Vector2.RIGHT, 0.95)
+	shoot(plain, p.id, Vector2.RIGHT, 0.8)
 	check(not p.alive, "without chute it slides off")
 	var w := make_world()
 	var a := w.add_stone(0, Vector2(0, 0), 0)
 	a.parts["prop"] = "chute"
-	shoot(w, a.id, Vector2.RIGHT, 0.95)
+	shoot(w, a.id, Vector2.RIGHT, 0.8)
 	check(a.alive, "chute brakes in the edge zone")
 	var w2 := make_world()
 	var b := w2.add_stone(0, Vector2(200, 0), 0)
@@ -629,15 +629,16 @@ func test_track_groove_bends() -> void:
 func test_trex_leg_reduces_recoil() -> void:
 	var p := make_world()
 	var a := p.add_stone(0, Vector2(-200, 0), 0)
-	p.add_stone(1, Vector2(-100, 0), 0)
+	p.add_stone(1, Vector2(-100, 15), 0)
 	shoot(p, a.id, Vector2.RIGHT, 0.8)
 	var w := make_world()
 	var a2 := w.add_stone(0, Vector2(-200, 0), 0)
-	w.add_stone(1, Vector2(-100, 0), 0)
+	w.add_stone(1, Vector2(-100, 15), 0)
 	a2.parts["prop"] = "trex_leg"
 	shoot(w, a2.id, Vector2.RIGHT, 0.8)
 	check(count_events(w, "part", "trex_leg") == 1, "leg fired")
-	check(a2.pos.x < a.pos.x - 3.0, "slides less after the hit: %.1f vs %.1f" % [a2.pos.x, a.pos.x])
+	var st := Vector2(-200, 0)
+	check(a2.pos.distance_to(st) < a.pos.distance_to(st) - 3.0, "slides less after the hit: %s vs %s" % [a2.pos, a.pos])
 
 
 
@@ -1221,8 +1222,13 @@ func test_offer_fits_empty_slots() -> void:
 func test_min_power_moves_one_cell() -> void:
 	var w := make_world()
 	var a := w.add_stone(0, Vector2(0, 0), 0)
-	shoot(w, a.id, Vector2.RIGHT, 0.27)
-	check(a.pos.x > 30.0 and a.pos.x < 70.0, "shortest pull moves about one puck width: %.0f" % a.pos.x)
+	# 1칸만 당긴 샷: p = (1 − 0.65) / (3.2 − 0.65)
+	shoot(w, a.id, Vector2.RIGHT, (1.0 - 0.65) / (3.2 - 0.65))
+	check(a.pos.x > 44.0 * 3.0, "one-cell pull moves at least three puck widths: %.0f" % a.pos.x)
+	var w2 := make_world("circle", 800.0)
+	var b := w2.add_stone(0, Vector2(-300, 0), 0)
+	shoot(w2, b.id, Vector2.RIGHT, 1.0)
+	check(absf(b.pos.x + 300.0 - 680.0) < 20.0, "full pull glides about 15.5 cells: %.0f" % (b.pos.x + 300.0))
 
 
 func test_knockout_causes() -> void:

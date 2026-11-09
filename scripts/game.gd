@@ -13,31 +13,33 @@ const SoundMgr = preload("res://scripts/sound.gd")
 const NetMgr = preload("res://scripts/net.gd")
 
 # 팔레트 (디자인 시안의 「테이블과 재질」)
-const BG_OUT := Color("121417")          # 판 밖
-const FELT := Color("1F4A44")
-const FELT_LIGHT := Color("2A5E56")
-const FELT_DARK := Color("1A3F3A")
-const PAGE_FELT := Color("23463E")       # 설정·도감 화면 바탕
-const RAIL := Color("5A3A24")            # 월넛 레일
-const RAIL_OUT := Color("2E1D12")
-const RAIL_IN := Color("7A5233")
-const WARN := Color("D9A441")            # 경고 띠
+const Themes = preload("res://scripts/themes.gd")
+const Arena = preload("res://scripts/arena.gd")
 const BRASS := Color("C9A15A")
 const INK := Color("0E1013")
-const TEXT := Color("F2F4F1")
-const SUB := Color("A9B1BA")
-const SUB_FELT := Color("B9CCC4")
-const POWER := Color("E9BE62")
-const PANEL_BG := Color(1, 1, 1, 0.04)
-const PANEL_LINE := Color(1, 1, 1, 0.09)
-const MUTED := Color("5C6370")
-const HINT_GOLD := Color("E3C27E")
-const LABEL := Color("C9CED6")
+const SUB_FELT := Color("E6F2EC")       # 펠트 위 작은 글자
+# 아래 색은 고른 맵 테마에서 온다 (_apply_map).
+var th: Dictionary = Themes.get_theme("play")
+var map_id := "play"
+var BG_OUT := Color("121417")           # 판 밖
+var PAGE_FELT := Color("23463E")        # 도감 화면 바탕
+var WARN := Color("D9A441")             # 힘 게이지 채움
+var TEXT := Color("F2F4F1")
+var SUB := Color("A9B1BA")
+var POWER := Color("E9BE62")            # 강조 글자
+var PANEL_BG := Color(1, 1, 1, 0.04)
+var PANEL_LINE := Color(1, 1, 1, 0.09)
+var MUTED := Color("5C6370")
+var HINT_GOLD := Color("E3C27E")
+var LABEL := Color("C9CED6")
+var FG := Color.WHITE                   # 패널 위 반투명 선·바탕의 기준색 (밝은 맵은 진한 색)
+var SOLID := Color("0E1013")            # 떠 있는 창 바탕
+var _theme_fade := 0.0
+var _fade_rect: ColorRect
 
-const MAX_DRAG := 170.0      # 화면 px: 이만큼 당기면 최대 힘
-const MIN_POWER := 0.27      # 취소 구간을 막 넘었을 때의 힘: 알 하나 너비(1칸)쯤 움직인다
-const POWER_CURVE := 1.4     # 짧은 당김은 섬세하게, 길게 당기면 빠르게 커진다
-const CANCEL_R := 2.0        # 퍽 반지름의 몇 배 안으로 돌아오면 조준 취소 (점선 원)
+const MAX_PULL := 3.2        # 칸: 이만큼 당기면 최대 힘
+const CANCEL_PULL := 0.65    # 칸: 이보다 짧게 당기면 취소 (점선 원)
+const GRAB_R := 0.9          # 칸: 퍽 잡기 판정
 const CELL := World.STONE_R * 2.0
 
 var font: Font
@@ -119,6 +121,7 @@ var lobby_col: Control = null  # 대기실 왼쪽 열: 매 프레임 세로 위�
 var sound_btn: Button
 var ff_btn: Button
 var fast_forward := false     # CPU 차례 빠른 진행 (내 차례가 오면 자동으로 꺼진다)
+var view_opts := {"shake": true, "hitstop": true, "reduce_motion": false}
 var _cancel_state := false    # 조준이 취소 원 안에 있었는지 (소리용)
 var _tick_mark := -1          # 마지막으로 째깍 소리를 낸 초
 
@@ -127,20 +130,39 @@ func _ready() -> void:
 	font = load("res://fonts/IBMPlexSansKR-Regular.ttf")
 	font_semi = load("res://fonts/IBMPlexSansKR-SemiBold.ttf")
 	font_bold = load("res://fonts/IBMPlexSansKR-Bold.ttf")
+	var cfg := ConfigFile.new()
+	if cfg.load("user://settings.cfg") == OK:
+		map_id = cfg.get_value("view", "map", "play")
+		for k in ["shake", "hitstop", "reduce_motion"]:
+			view_opts[k] = cfg.get_value("view", k, view_opts[k])
+	if not Themes.THEMES.has(map_id):
+		map_id = "play"
+	if not cfg.has_section_key("view", "reduce_motion") and OS.has_feature("web"):
+		var rm = JavaScriptBridge.eval("window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches", true)
+		view_opts["reduce_motion"] = bool(rm) if rm != null else false
+	_set_theme_colors()
 	theme_ = _make_theme()
 	_panel_sb = StyleBoxFlat.new()
-	_panel_sb.bg_color = PANEL_BG
-	_panel_sb.border_color = PANEL_LINE
 	_panel_sb.set_border_width_all(1)
 	_panel_sb.set_corner_radius_all(12)
+	_panel_sb.bg_color = PANEL_BG
+	_panel_sb.border_color = PANEL_LINE
 	snd = SoundMgr.new()
 	add_child(snd)
 	net = NetMgr.new()
 	add_child(net)
 	ui = CanvasLayer.new()
 	add_child(ui)
-	menu_btn = _button("≡", func(): _show_setup())
-	menu_btn.tooltip_text = "처음으로"
+	var top := CanvasLayer.new()
+	top.layer = 5
+	add_child(top)
+	_fade_rect = ColorRect.new()
+	_fade_rect.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_fade_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_fade_rect.color = Color(0, 0, 0, 0)
+	top.add_child(_fade_rect)
+	menu_btn = _button("≡", func(): _show_settings(false))
+	menu_btn.tooltip_text = "메뉴"
 	menu_btn.theme = theme_
 	menu_btn.add_theme_font_size_override("font_size", 14)
 	menu_btn.visible = false
@@ -178,8 +200,8 @@ func _make_theme() -> Theme:
 	var t := Theme.new()
 	t.default_font = font
 	t.default_font_size = 17
-	var normal := _sb(Color(1, 1, 1, 0.06), Color(1, 1, 1, 0.14), 8)
-	var hover := _sb(Color(1, 1, 1, 0.11), Color(1, 1, 1, 0.24), 8)
+	var normal := _sb(Color(FG, 0.06) if th["dark"] else PANEL_BG, Color(FG, 0.14), 8)
+	var hover := _sb(Color(FG, 0.11), Color(FG, 0.24), 8)
 	var pressed := _sb(Color(BRASS, 0.22), BRASS, 8)
 	for cls in ["Button", "CheckButton"]:
 		t.set_stylebox("normal", cls, normal)
@@ -188,9 +210,9 @@ func _make_theme() -> Theme:
 		t.set_stylebox("hover_pressed", cls, pressed)
 		t.set_stylebox("focus", cls, StyleBoxEmpty.new())
 		t.set_color("font_color", cls, TEXT)
-		t.set_color("font_hover_color", cls, Color.WHITE)
-		t.set_color("font_pressed_color", cls, Color.WHITE)
-		t.set_color("font_hover_pressed_color", cls, Color.WHITE)
+		t.set_color("font_hover_color", cls, TEXT)
+		t.set_color("font_pressed_color", cls, TEXT)
+		t.set_color("font_hover_pressed_color", cls, TEXT)
 	t.set_stylebox("normal", "CheckButton", StyleBoxEmpty.new())
 	t.set_stylebox("hover", "CheckButton", StyleBoxEmpty.new())
 	t.set_stylebox("pressed", "CheckButton", StyleBoxEmpty.new())
@@ -215,6 +237,9 @@ func _sb(bg: Color, border: Color, radius: int, margin := 10.0) -> StyleBoxFlat:
 ## 개발용: godot --path . -- --auto 4 [--draft] 로 바로 경기를 띄운다 (화면 점검·녹화용).
 func _debug_args() -> void:
 	var args := OS.get_cmdline_user_args()
+	var mi := args.find("--map")
+	if mi >= 0 and args.size() > mi + 1:
+		_apply_map(args[mi + 1], false)
 	var i := args.find("--auto")
 	if i < 0:
 		return
@@ -233,6 +258,8 @@ func _debug_args() -> void:
 			_shot_n += 1
 			get_viewport().get_texture().get_image().save_png("%s/s%03d.png" % [_shot_dir, _shot_n]))
 		add_child(t)
+	if args.has("--settings"):
+		_show_settings(false)
 	if args.has("--catalog"):
 		_show_catalog(false)
 	if args.has("--draft"):
@@ -333,11 +360,11 @@ func _place() -> void:
 
 
 func w2s(p: Vector2) -> Vector2:
-	return view_center + p * view_scale
+	return view_center + shake_off + p * view_scale
 
 
 func s2w(p: Vector2) -> Vector2:
-	return (p - view_center) / view_scale
+	return (p - view_center - shake_off) / view_scale
 
 
 # ── 경기 시작 ────────────────────────────────────────────
@@ -368,6 +395,11 @@ func _start_match(seed_value := -1) -> void:
 	net_seq_out = 0
 	waiting_req = false
 	fx.clear()
+	vis.clear()
+	confetti.clear()
+	win_t = -1.0
+	hitstop = 0.0
+	shake = 0.0
 	log_lines.clear()
 	bot = null
 	cpu_aim = {}
@@ -404,11 +436,15 @@ func _process(delta: float) -> void:
 		var h3 := lobby_col.get_combined_minimum_size().y
 		lobby_col.position.y = clampf((vs3.y - h3) * 0.5, 12.0, maxf(12.0, vs3.y - h3 - 12.0))
 	banner_t = maxf(0.0, banner_t - delta)
+	if _theme_fade > 0.0:
+		_theme_fade = maxf(0.0, _theme_fade - delta)
+		_fade_rect.color.a = _theme_fade / 0.25
 	for f in fx:
 		f["t"] += delta
 	fx = fx.filter(func(f): return f["t"] < f["life"])
 	if state == "play" and m != null:
 		_update_play(delta)
+	_decay_motion(delta)
 	queue_redraw()
 
 
@@ -434,8 +470,12 @@ func _update_play(delta: float) -> void:
 			if slowmo > 0.0:
 				slowmo -= delta
 				spd = 0.3
+			if hitstop > 0.0:
+				hitstop -= delta
+				spd = 0.0
 			accum += minf(delta, 0.05) * spd * _sp("play")
-			while accum >= World.DT and m.phase == "moving":
+			_motion_tick(delta)
+			while accum >= World.DT and m.phase == "moving" and hitstop <= 0.0:
 				accum -= World.DT
 				m.world.step()
 				_consume_events()
@@ -474,7 +514,14 @@ func _update_play(delta: float) -> void:
 					_act({"k": "skip", "pid": pid})
 		"over":
 			if state == "play":
-				_show_result()
+				if win_t < 0.0:
+					win_t = time
+					snd.slide(0.0)
+					if not m.winners.is_empty():
+						snd.play("victory")
+						_spawn_confetti()
+				elif time - win_t > (1.8 if not m.winners.is_empty() else 0.3):
+					_show_result()
 
 
 func _update_cpu(delta: float, pid: int) -> void:
@@ -600,7 +647,7 @@ static func _j(word: String, with_final: String, without_final: String) -> Strin
 
 func _banner(s: String, c := TEXT) -> void:
 	banner = s
-	banner_t = 1.6
+	banner_t = 1.05 if not _reduced() else 0.8
 	_banner_col = c
 
 
@@ -614,14 +661,26 @@ func _consume_events() -> void:
 		var owner_col: Color = m.players[e["owner"]].color if e.has("owner") and e["owner"] >= 0 and e["owner"] < m.players.size() else TEXT
 		match e["t"]:
 			"hit":
-				var st_: float = e["strength"]
-				snd.play("puck_hit_heavy" if st_ > 520.0 else "puck_hit_light", lerpf(-12.0, 0.0, clampf(st_ / 900.0, 0.0, 1.0)), randf_range(0.95, 1.05))
-				fx.append({"k": "ring", "pos": e["pos"], "t": 0.0, "life": 0.25, "r": 8.0 + minf(e["strength"], 1200.0) / 60.0, "c": Color(1, 1, 1, 0.8)})
+				_on_hit(e)
 			"bullet_hit":
 				fx.append({"k": "ring", "pos": e["pos"], "t": 0.0, "life": 0.3, "r": 16.0, "c": owner_col.lightened(0.4)})
+			"launch":
+				var ls = m.world.get_stone(m.world.shot.stone_id) if m.world.shot != null else null
+				if ls != null:
+					var vv: Dictionary = vis.get(ls.id, {})
+					vv["pop_t"] = time
+					vv["sq_dir"] = m.world.shot.dir
+					vv["vf"] = m.world.shot.dir.angle()
+					vis[ls.id] = vv
 			"out":
 				snd.play("puck_fall")
-				fx.append({"k": "text", "pos": e["pos"], "t": 0.0, "life": 1.4, "text": "탈락!", "c": owner_col, "size": 30})
+				var ks = m.world.get_stone(int(e.get("stone", -1)))
+				if ks != null:
+					var kv: Dictionary = vis.get(ks.id, {})
+					fx.append({"k": "ko", "pos": e["pos"], "t": 0.0, "life": 0.55, "c": owner_col, "parts": ks.parts.duplicate(),
+						"owner": int(e["owner"]), "facing": float(kv.get("vf", ks.facing)), "out": m.world.outward(e["pos"])})
+				hud_pop[int(e["owner"])] = time
+				fx.append({"k": "text", "pos": e["pos"], "t": 0.0, "life": 0.9, "text": "탈락!", "c": owner_col, "size": 30, "pop": true})
 				var why := _cause_text(e.get("cause", {}), int(e["owner"]))
 				var cc: Dictionary = e.get("cause", {})
 				fx.append({"k": "text", "pos": e["pos"] + Vector2(0, 30), "t": 0.0, "life": 2.2, "text": why,
@@ -755,7 +814,7 @@ func _unhandled_input(event: InputEvent) -> void:
 
 func _stone_at(wp: Vector2, owner: int) -> int:
 	var best := -1
-	var best_d := World.STONE_R * 1.6
+	var best_d := CELL * GRAB_R
 	for s in m.world.stones:
 		if not s.alive or (owner >= 0 and s.owner != owner):
 			continue
@@ -810,12 +869,12 @@ func _aim_of(stone_id: int, screen_pos: Vector2) -> Dictionary:
 	var sp := w2s(_origin_of(stone_id))
 	var pull := sp - screen_pos
 	var dist := pull.length()
-	var cancel := World.STONE_R * CANCEL_R * view_scale
-	if dist < cancel:
+	var cells := dist / (CELL * view_scale)
+	if cells < CANCEL_PULL:
 		return {}
-	# 짧은 드래그는 위치를 다듬는 샷, 긴 드래그는 밀어내는 샷
-	var t := clampf((dist - cancel) / maxf(1.0, MAX_DRAG - cancel), 0.0, 1.0)
-	return {"dir": pull.normalized(), "power": MIN_POWER + (1.0 - MIN_POWER) * pow(t, POWER_CURVE)}
+	# 힘 비율 p: (당긴 거리 − 0.65) ÷ (3.2 − 0.65). 속도 곡선은 world.launch 가 맡는다.
+	var t := clampf((cells - CANCEL_PULL) / (MAX_PULL - CANCEL_PULL), 0.0, 1.0)
+	return {"dir": pull.normalized(), "power": t}
 
 
 # ── 개조 선택 ────────────────────────────────────────────
@@ -903,7 +962,17 @@ func _do_equip(pid: int, part: String, sid: int, side: int, reserve := "") -> vo
 		elif done_set2 != "" and PartsData.set_progress(s.parts, done_set2)["count"] >= 2:
 			snd.play("set_progress", -3.0)
 		else:
-			snd.play("part_equip", -3.0)
+			get_tree().create_timer(0.0 if _reduced() else 0.285).timeout.connect(func(): snd.play("part_equip", -3.0))
+		# 장착 모션: 부품이 슬롯 바깥에서 미끄러져 들어오고, 75% 지점에서 딸깍 + 불꽃 10개
+		var vv: Dictionary = vis.get(sid, {})
+		vv["equip_t"] = time
+		vv["equip_part"] = part
+		vis[sid] = vv
+		var spos: Vector2 = s.pos
+		get_tree().create_timer(0.0 if _reduced() else 0.285).timeout.connect(func():
+			for i in 10:
+				fx.append({"k": "spark", "pos": spos, "vel": Vector2.from_angle(TAU * i / 10.0 + randf() * 0.3) * randf_range(70.0, 130.0),
+					"t": 0.0, "life": randf_range(0.25, 0.45), "c": th["spark"]}))
 		fx.append({"k": "text", "pos": s.pos + Vector2(0, -34), "t": 0.0, "life": 1.3, "text": txt, "c": pl.color.lightened(0.35), "size": 20})
 		var done_set := PartsData.set_of(part)
 		if done_set != "" and PartsData.set_complete(s.parts, done_set):
@@ -921,11 +990,16 @@ func _do_equip(pid: int, part: String, sid: int, side: int, reserve := "") -> vo
 func _draw() -> void:
 	var vs := get_viewport_rect().size
 	if m == null:
-		draw_rect(Rect2(Vector2.ZERO, vs), BG_OUT)
+		Arena.background(self, Rect2(Vector2.ZERO, vs), th)
+		# 로비 왼쪽 열 바탕: 어떤 맵에서도 글자가 읽히게 HUD 패널 색을 깐다
+		if state == "setup" and is_instance_valid(lobby_col):
+			var lr := lobby_col.get_global_rect().grow(22)
+			lr.size.y = minf(lr.size.y, vs.y - lr.position.y + 40.0)
+			_round_rect(lr, PANEL_BG, 14, PANEL_LINE)
 		if state == "setup" and not portrait:
 			_draw_lobby_preview(vs)
 		return
-	draw_rect(Rect2(Vector2.ZERO, vs), BG_OUT)
+	Arena.background(self, Rect2(Vector2.ZERO, vs), th)
 	_draw_board()
 	_draw_devices()
 	_draw_aim_under()
@@ -938,9 +1012,8 @@ func _draw() -> void:
 	_draw_draft_marks()
 	_draw_hud(vs)
 	if banner_t > 0.0:
-		var a := clampf(banner_t / 0.4, 0.0, 1.0)
-		var y := view_center.y - 40.0 if not portrait else 160.0
-		_text_outline(Vector2(view_center.x, y), banner, 30, Color(_banner_col, a), true)
+		_draw_banner(vs)
+	_draw_confetti()
 
 
 ## 설정·도감 화면 바탕: 펠트 위의 100px / 20px 격자.
@@ -966,22 +1039,7 @@ func _draw_lobby_preview(vs: Vector2) -> void:
 	var units := 16.0 if square else (18.0 if n <= 4 else 24.0)
 	var u := 2.0 * half / units
 	var r := u * 0.5
-	if square:
-		_round_rect(Rect2(c - Vector2(half + 11, half + 5), Vector2(2 * half + 22, 2 * half + 22)), Color(0, 0, 0, 0.5), 8)
-		_round_rect(Rect2(c - Vector2(half + 11, half + 11), Vector2(2 * half + 22, 2 * half + 22)), RAIL, 8, RAIL_OUT)
-		draw_rect(Rect2(c - Vector2(half, half), Vector2(2 * half, 2 * half)), FELT)
-		draw_rect(Rect2(c - Vector2(half, half), Vector2(2 * half, 2 * half)), INK, false, 2.0)
-		draw_rect(Rect2(c - Vector2(half - u, half - u), Vector2(2 * (half - u), 2 * (half - u))), Color(WARN, 0.45), false, 1.5)
-	else:
-		draw_circle(c + Vector2(0, 6), half + 14, Color(0, 0, 0, 0.5))
-		draw_circle(c, half + 11, RAIL)
-		draw_arc(c, half + 11, 0, TAU, 96, RAIL_OUT, 2.0, true)
-		var light := c + Vector2(-0.1, -0.2) * half
-		for i in 24:
-			var t := float(i) / 24.0
-			draw_circle(c.lerp(light, t), half * (1.0 - t * 0.92), FELT_DARK.lerp(FELT_LIGHT, t * 0.95))
-		draw_arc(c, half, 0, TAU, 96, INK, 2.0, true)
-		draw_arc(c, half - u, 0, TAU, 96, Color(WARN, 0.45), 1.5, true)
+	Arena.board(self, c, half, u, square, th)
 	var pucks: Array = []
 	if square:
 		for i in 2:
@@ -1000,14 +1058,16 @@ func _draw_lobby_preview(vs: Vector2) -> void:
 	for pk in pucks:
 		var i: int = pk[0]
 		if not settings["cpu"][i]:
-			draw_arc(pk[1], r + 4, 0, TAU, 24, BG_OUT, 3.0, true)
+			draw_arc(pk[1], r + 4, 0, TAU, 24, th["outline"], 3.0, true)
 			draw_arc(pk[1], r + 5.5, 0, TAU, 24, BRASS, 2.0, true)
-		Art.draw_icon(self, pk[1], 2 * r, Match.COLORS[i], i)
+		Art.draw_puck_shadow(self, pk[1], r)
+		Art.draw_puck_top(self, pk[1], r, Match.COLORS[i], i, -PI / 2)
 	# 판 정보
 	var info := [["판", "정사각 16칸" if square else "원형 지름 %d칸" % int(units)], ["퍽", "%d개씩" % (4 if square else 3)],
 		["승리", "한 명 남을 때까지"], ["개조", "매 바퀴"]]
 	var x0 := c.x - 230.0
 	var y0 := c.y + 230.0 + 40.0
+	_round_rect(Rect2(x0 - 20, y0 - 34, 500, 116), PANEL_BG, 12, PANEL_LINE)
 	for k in 4:
 		var x := x0 + k * 118.0
 		_txt(Vector2(x, y0), info[k][0], 13, SUB, font)
@@ -1017,49 +1077,17 @@ func _draw_lobby_preview(vs: Vector2) -> void:
 
 func _draw_board() -> void:
 	var w := m.world
-	var k := view_scale
-	var c := view_center
-	var R := w.size * k
-	var rail := R * 16.0 / 300.0
-	if w.shape == "circle":
-		draw_circle(c + Vector2(0, 8), R + rail + 6, Color(0, 0, 0, 0.5))
-		draw_circle(c, R + rail, RAIL)
-		draw_arc(c, R + rail, 0, TAU, 128, RAIL_OUT, 2.0, true)
-		draw_arc(c, R + rail * 0.69, 0, TAU, 128, RAIL_IN, 2.0, true)
-		# 펠트: 왼쪽 위가 밝은 방사형 그라데이션
-		var light := c + Vector2(-0.1, -0.2) * R
-		var steps := 28
-		for i in steps:
-			var t := float(i) / steps
-			draw_circle(c.lerp(light, t), R * (1.0 - t * 0.92), FELT_DARK.lerp(FELT_LIGHT, t * 0.95))
-		_draw_grid_circle(c, R, CELL * k)
-		draw_arc(c, R, 0, TAU, 128, INK, 2.0, true)
-		# 경고 띠: 판 끝 1칸
-		var band := World.EDGE_ZONE * k
-		draw_arc(c, R - band * 0.5, 0, TAU, 128, Color(WARN, 0.13), band, true)
-		draw_arc(c, R - band, 0, TAU, 128, Color(WARN, 0.45), 1.5, true)
-		_dotted_circle(c, R - 1.6 * CELL * k, Color(WARN, 0.6))
-	else:
-		var tl := c - Vector2(R, R)
-		_round_rect(Rect2(tl - Vector2(rail + 3, rail - 5), Vector2(2 * (R + rail) + 6, 2 * (R + rail) + 6)), Color(0, 0, 0, 0.5), 8)
-		_round_rect(Rect2(tl - Vector2(rail, rail), Vector2(2 * (R + rail), 2 * (R + rail))), RAIL, 6, RAIL_OUT)
-		draw_rect(Rect2(tl, Vector2(2 * R, 2 * R)), FELT_DARK)
-		var light := c + Vector2(-0.1, -0.2) * R
-		var steps := 28
-		for i in steps:
-			var t := float(i) / steps
-			draw_circle(c.lerp(light, t), R * (1.0 - t * 0.92) * 0.98, FELT_DARK.lerp(FELT_LIGHT, t * 0.95))
-		var g := CELL * k
-		var x := -R + g
-		while x < R - 0.5:
-			draw_line(c + Vector2(x, -R), c + Vector2(x, R), Color(1, 1, 1, 0.06), 1.0)
-			draw_line(c + Vector2(-R, x), c + Vector2(R, x), Color(1, 1, 1, 0.06), 1.0)
-			x += g
-		draw_rect(Rect2(tl, Vector2(2 * R, 2 * R)), INK, false, 2.0)
-		var band := World.EDGE_ZONE * k
-		draw_rect(Rect2(tl + Vector2(band, band) * 0.5, Vector2(2 * R - band, 2 * R - band)), Color(WARN, 0.13), false, band)
-		draw_rect(Rect2(tl + Vector2(band, band), Vector2(2 * R - 2 * band, 2 * R - 2 * band)), Color(WARN, 0.45), false, 1.5)
-	draw_arc(c, 5, 0, TAU, 20, Color(1, 1, 1, 0.18), 1.5, true)
+	Arena.board(self, view_center + shake_off, w.size * view_scale, CELL * view_scale, w.shape != "circle", th)
+	# 위험 구역 깜빡임: 퍽이 가장자리 띠에서 움직이면 그 방향 호
+	for f in fx:
+		if f["k"] == "danger":
+			var u2: float = f["t"] / f["life"]
+			var R2 := w.size * view_scale
+			if w.shape == "circle":
+				draw_arc(view_center + shake_off, R2 - 0.5 * CELL * view_scale, f["ang"] - 0.22, f["ang"] + 0.22, 12, Color(th["danger"], 0.55 * (1.0 - u2)), CELL * view_scale, true)
+			else:
+				var pp: Vector2 = w2s(f["pos"])
+				draw_circle(pp, CELL * view_scale, Color(th["danger"], 0.35 * (1.0 - u2)))
 
 
 func _draw_grid_circle(c: Vector2, R: float, g: float) -> void:
@@ -1102,6 +1130,8 @@ func _draw_stone(s) -> void:
 		at = _origin_of(s.id)
 	elif not cpu_aim.is_empty() and cpu_aim["stone"] == s.id:
 		facing = cpu_aim["dir"].angle()
+	elif vis.has(s.id) and vis[s.id].has("vf"):
+		facing = vis[s.id]["vf"]
 	var p := w2s(at)
 	var manga = null
 	for f in fx:
@@ -1113,18 +1143,17 @@ func _draw_stone(s) -> void:
 		draw_set_transform(w2s(s.pos), s.facing, Vector2.ONE * view_scale)
 		Art.draw(self, s.parts, s.magnet_side, col, 0.3, s.owner)
 		draw_set_transform_matrix(Transform2D.IDENTITY)
-	# 지금 차례인 퍽 표시
+	var u := World.STONE_R * view_scale
+	# 지금 차례인 퍽: 숨 쉬는 주인 색 고리 (1.35u ± 0.12u, 초당 4라디안)
 	if m.phase == "aim" and s.owner == m.current_player() and drag_stone < 0:
-		var pulse := 0.5 + 0.5 * sin(time * 4.0)
+		var ph := sin(time * 4.0)
+		var ra := 0.35 + 0.4 * (0.5 + 0.5 * ph)
 		if _is_mine(s.owner):
-			# 내 차례: 퍽 테두리를 황동색으로 굵게
-			draw_arc(p, (World.STONE_R + 5) * view_scale, 0, TAU, 40, Color(BRASS, 0.95), 3.5, true)
-			draw_arc(p, (World.STONE_R + 9 + pulse * 3) * view_scale, 0, TAU, 40, Color(POWER, 0.4 + 0.4 * pulse), 2.0, true)
-		else:
-			draw_arc(p, (World.STONE_R + 6 + pulse * 3) * view_scale, 0, TAU, 40, Color(col.lightened(0.35), 0.55 + 0.3 * pulse), 2.0, true)
+			draw_arc(p, 1.18 * u, 0, TAU, 40, Color(BRASS, 0.95), maxf(2.0, 0.14 * u), true)
+		draw_arc(p, (1.35 + 0.12 * ph) * u, 0, TAU, 48, Color(col, ra), maxf(2.0, 0.12 * u), true)
 		if m.aim_limit > 0.0 and not m.players[s.owner].cpu:
 			var frac := clampf(aim_left / m.aim_limit, 0.0, 1.0)
-			draw_arc(p, (World.STONE_R + 13) * view_scale, -PI / 2, -PI / 2 + TAU * frac, 40, Color(POWER, 0.85), 3.0, true)
+			draw_arc(p, 1.62 * u, -PI / 2, -PI / 2 + TAU * frac, 40, Color(POWER, 0.85), 3.0, true)
 	# 충전 (모으고 쏘는 손바닥)
 	if drag_stone == s.id and s.parts["weapon"] == "charge_palm":
 		var cf := clampf(drag_hold / PartsData.num("charge_palm", "charge"), 0.0, 1.0)
@@ -1133,9 +1162,7 @@ func _draw_stone(s) -> void:
 			draw_circle(p, (World.STONE_R + 14) * view_scale, Color("7FD8FF", 0.15 + 0.1 * sin(time * 12.0)))
 	if manga != null:
 		Art.mono = true
-	draw_set_transform(p, facing, Vector2.ONE * view_scale)
-	Art.draw(self, s.parts, s.magnet_side, col, 1.0, s.owner)
-	draw_set_transform_matrix(Transform2D.IDENTITY)
+	_draw_puck_at(p, s.id, s.parts, s.magnet_side, col, s.owner, facing, 1.0)
 	Art.mono = false
 	# 상태 표시: 봉인, 저주, 표식, 시간 정지
 	var badges: Array = []
@@ -1440,6 +1467,18 @@ func _draw_fx() -> void:
 		var u: float = f["t"] / f["life"]
 		var c: Color = f["c"]
 		match f["k"]:
+			"spark":
+				var sp0 := w2s(f["pos"] + f["vel"] * f["t"] * (1.0 - u * 0.5))
+				var dv: Vector2 = f["vel"].normalized() * 5.0 * (1.0 - u) * view_scale
+				draw_line(sp0 - dv, sp0 + dv, Color(c, 1.0 - u), 2.0 * (1.0 - u * 0.5), true)
+			"ghost":
+				draw_circle(w2s(f["pos"]), World.STONE_R * view_scale * 0.92, Color(c, 0.28 * (1.0 - u)))
+			"ko":
+				var kp: Vector2 = w2s(f["pos"])
+				var e2 := u * u
+				var od: Vector2 = f["out"]
+				_draw_puck_at(kp, -1, f["parts"], 1, c, f["owner"], f["facing"], 1.0 - e2,
+					{"scale": 1.0 - 0.6 * u, "sq": 0.35 * u, "sq_dir": od})
 			"ring":
 				draw_arc(w2s(f["pos"]), f["r"] * view_scale * (0.6 + u * 0.8), 0, TAU, 32, Color(c, 1.0 - u), 3.0, true)
 			"boom":
@@ -1475,7 +1514,13 @@ func _draw_fx() -> void:
 				draw_arc(w2s(f["pos"]), rr, base - 1.2, base + 1.2, 20, Color(c, 1.0 - u), 4.0, true)
 			"text":
 				var p := w2s(f["pos"]) + Vector2(0, -24.0 * u)
-				_text_outline(p, f["text"], f["size"], Color(c, clampf(2.0 - 2.0 * u, 0.0, 1.0)), true)
+				var fsz: int = f["size"]
+				if f.get("pop", false):
+					# 튀어나왔다(0~0.2) 위로 사라짐
+					var popk := clampf(f["t"] / 0.2, 0.0, 1.0)
+					fsz = int(fsz * (0.6 + 0.4 * _ease_back(popk)))
+					p = w2s(f["pos"]) + Vector2(0, -40.0 * maxf(0.0, u - 0.3))
+				_text_outline(p, f["text"], fsz, Color(c, clampf(2.0 - 2.0 * u, 0.0, 1.0)), true)
 
 
 ## 바닥에 깔리는 조준 정보: 자석 작동 범위.
@@ -1554,23 +1599,30 @@ func _draw_aim_over() -> void:
 				draw_circle(w2s(item["b"]), 6, Color("D9A77E", 0.85))
 	if info.has("finger"):
 		var f: Vector2 = info["finger"]
-		_dashed_ring(sp, World.STONE_R * CANCEL_R * view_scale, Color(1, 1, 1, 0.3))
+		_dashed_ring(sp, CELL * CANCEL_PULL * view_scale, Color(1, 1, 1, 0.3))
 		var d: Vector2 = (sp - f).normalized()
-		var side := d.orthogonal() * World.STONE_R * 0.8 * view_scale
-		draw_line(sp + side, f, BRASS, 2.5, true)
-		draw_line(sp - side, f, BRASS, 2.5, true)
+		var side := d.orthogonal() * World.STONE_R * 0.95 * view_scale
+		var bw := maxf(2.0, 0.14 * World.STONE_R * view_scale)
+		draw_line(sp + side, f, Color(BRASS.darkened(0.35), 0.9), bw + 1.5, true)
+		draw_line(sp - side, f, Color(BRASS.darkened(0.35), 0.9), bw + 1.5, true)
+		draw_line(sp + side, f, BRASS, bw, true)
+		draw_line(sp - side, f, BRASS, bw, true)
 		draw_circle(f, 16, Color(1, 1, 1, 0.12))
 		draw_arc(f, 16, 0, TAU, 24, Color(1, 1, 1, 0.7), 1.5, true)
 	for item in info["preview"]:
 		if item["k"] == "move":
 			var a := w2s(item["a"])
 			var b := w2s(item["b"])
+			var pw: float = item.get("power", 0.0)
+			var acol := Color.WHITE if pw < 0.6 else (Color("FFD27A") if pw < 0.85 else Color("FF7A5C"))
+			if pw > 0.9 and not _reduced():
+				b += Vector2(randf_range(-1.0, 1.0), randf_range(-1.0, 1.0))
 			var dd := (b - a).normalized()
 			a += dd * (World.STONE_R + 4) * view_scale
 			draw_line(a, b, INK, 7.0, true)
-			draw_line(a, b, TEXT, 3.5, true)
+			draw_line(a, b, acol, 3.5, true)
 			var head := PackedVector2Array([b + dd * 14, b + dd.orthogonal() * 8 - dd * 2, b - dd.orthogonal() * 8 - dd * 2])
-			draw_colored_polygon(head, TEXT)
+			draw_colored_polygon(head, acol)
 			head.append(head[0])
 			draw_polyline(head, INK, 2.0, true)
 
@@ -1783,7 +1835,7 @@ func _draw_turn_card(r: Rect2) -> void:
 	var gap := 3.0
 	var w := (seg_r.size.x - gap * (n - 1)) / n
 	for i2 in n:
-		draw_rect(Rect2(seg_r.position.x + i2 * (w + gap), seg_r.position.y, w, 5), BRASS if i2 < lit else Color(1, 1, 1, 0.14))
+		draw_rect(Rect2(seg_r.position.x + i2 * (w + gap), seg_r.position.y, w, 5), BRASS if i2 < lit else Color(FG, 0.14))
 	# 세로 화면: 힘을 카드 오른쪽 위에
 	if portrait and m.phase == "aim":
 		var info := _current_aim()
@@ -1831,7 +1883,7 @@ func _draw_order(r: Rect2) -> void:
 		var a := 0.4 if p.out else 1.0
 		var row := Rect2(r.position.x + 10, y, r.size.x - 20, row_h - 2)
 		if pid == cur and not p.out:
-			_round_rect(row, Color(1, 1, 1, 0.07), 8)
+			_round_rect(row, Color(FG, 0.07), 8)
 		var cy := y + row_h * 0.5 - 1
 		Art.draw_icon(self, Vector2(row.position.x + 8 + 12, cy), minf(24.0, row_h - 6), p.color, pid, a)
 		var nx := row.position.x + 44
@@ -1847,6 +1899,11 @@ func _draw_order(r: Rect2) -> void:
 			var left := m.stones_left(pid)
 			for k2 in left:
 				draw_circle(Vector2(right - 4 - k2 * 12, cy), 4.0, p.color)
+			# 방금 잃은 퍽 점: 커졌다 사라짐 (0.35초)
+			var pt: float = time - float(hud_pop.get(pid, -9.0))
+			if pt >= 0.0 and pt < 0.35 and not _reduced():
+				var k3 := pt / 0.35
+				draw_circle(Vector2(right - 4 - left * 12, cy), 4.0 * (1.0 + 1.2 * k3), Color(p.color, 1.0 - k3))
 			var tag := ""
 			if pid == cur:
 				tag = "지금"
@@ -1908,7 +1965,7 @@ func _segments(r: Rect2, frac: float) -> void:
 	var lit := int(round(frac * n))
 	for i in n:
 		var rr := Rect2(r.position.x + i * (w + gap), r.position.y, w, r.size.y)
-		draw_rect(rr, WARN if i < lit else Color(1, 1, 1, 0.12))
+		draw_rect(rr, WARN if i < lit else Color(FG, 0.12))
 
 
 func _draw_power(r: Rect2) -> void:
@@ -2072,7 +2129,7 @@ func _new_overlay(dim: bool) -> Control:
 	return root
 
 
-func _centered_panel(root: Control, min_w: float, bg := Color(14 / 255.0, 16 / 255.0, 19 / 255.0, 0.9)) -> VBoxContainer:
+func _centered_panel(root: Control, min_w: float, bg := Color(SOLID, 0.9)) -> VBoxContainer:
 	var cc := CenterContainer.new()
 	cc.set_anchors_preset(Control.PRESET_FULL_RECT)
 	cc.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -2119,7 +2176,7 @@ func _show_setup() -> void:
 	g1.add_theme_constant_override("separation", 10)
 	g1.add_child(_label("인원", 14, LABEL, 1))
 	var seg := PanelContainer.new()
-	var segsb := _sb(Color(1, 1, 1, 0.05), Color(1, 1, 1, 0.1), 10)
+	var segsb := _sb(Color(FG, 0.05), Color(FG, 0.1), 10)
 	segsb.set_content_margin_all(4)
 	seg.add_theme_stylebox_override("panel", segsb)
 	var row := HBoxContainer.new()
@@ -2135,7 +2192,7 @@ func _show_setup() -> void:
 		var st := _sb(BRASS if on else Color(0, 0, 0, 0), Color(0, 0, 0, 0), 7)
 		st.set_border_width_all(0)
 		b.add_theme_stylebox_override("normal", st)
-		var sth := _sb(BRASS.lightened(0.1) if on else Color(1, 1, 1, 0.08), Color(0, 0, 0, 0), 7)
+		var sth := _sb(BRASS.lightened(0.1) if on else Color(FG, 0.08), Color(0, 0, 0, 0), 7)
 		sth.set_border_width_all(0)
 		b.add_theme_stylebox_override("hover", sth)
 		b.add_theme_stylebox_override("pressed", sth)
@@ -2144,6 +2201,8 @@ func _show_setup() -> void:
 		row.add_child(b)
 	g1.add_child(seg)
 	col.add_child(g1)
+	# 맵
+	col.add_child(_map_row(false))
 	# 자리
 	var g2 := VBoxContainer.new()
 	g2.add_theme_constant_override("separation", 10)
@@ -2168,7 +2227,7 @@ func _show_setup() -> void:
 	col.add_child(g2)
 	# 조준 시간 제한
 	var tp := PanelContainer.new()
-	var tsb := _sb(Color(1, 1, 1, 0.05), Color(1, 1, 1, 0.1), 10)
+	var tsb := _sb(Color(FG, 0.05), Color(FG, 0.1), 10)
 	tsb.set_content_margin_all(12)
 	tp.add_theme_stylebox_override("panel", tsb)
 	var th := HBoxContainer.new()
@@ -2203,9 +2262,9 @@ func _show_setup() -> void:
 			settings["speed"] = i
 			_show_setup())
 		sb2.custom_minimum_size = Vector2(76, 38)
-		var st2 := _sb(BRASS if on else Color(1, 1, 1, 0.05), Color(1, 1, 1, 0.1), 8)
+		var st2 := _sb(BRASS if on else Color(FG, 0.05), Color(FG, 0.1), 8)
 		sb2.add_theme_stylebox_override("normal", st2)
-		sb2.add_theme_stylebox_override("hover", _sb(BRASS.lightened(0.1) if on else Color(1, 1, 1, 0.1), Color(1, 1, 1, 0.14), 8))
+		sb2.add_theme_stylebox_override("hover", _sb(BRASS.lightened(0.1) if on else Color(FG, 0.1), Color(FG, 0.14), 8))
 		for k in ["font_color", "font_hover_color", "font_pressed_color"]:
 			sb2.add_theme_color_override(k, INK if on else TEXT)
 		sp_row.add_child(sb2)
@@ -2214,6 +2273,9 @@ func _show_setup() -> void:
 		_show_setup())
 	snd_b.custom_minimum_size = Vector2(96, 38)
 	sp_row.add_child(snd_b)
+	var set_b := _button("설정", func(): _show_settings(true))
+	set_b.custom_minimum_size = Vector2(64, 38)
+	sp_row.add_child(set_b)
 	col.add_child(sp_row)
 	# 친구 초대
 	col.add_child(_invite_row())
@@ -2228,7 +2290,7 @@ func _show_setup() -> void:
 	var cat := _button("부품 도감", func(): _show_catalog(true))
 	cat.custom_minimum_size = Vector2(130, 52)
 	cat.add_theme_font_override("font", font_semi)
-	var csb := _sb(Color(0, 0, 0, 0), Color(1, 1, 1, 0.18), 10)
+	var csb := _sb(Color(0, 0, 0, 0), Color(FG, 0.18), 10)
 	cat.add_theme_stylebox_override("normal", csb)
 	row2.add_child(cat)
 	col.add_child(row2)
@@ -2242,10 +2304,10 @@ func _seat_button(i: int) -> Button:
 	b.custom_minimum_size = Vector2(0, 44)
 	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	b.tooltip_text = "%s 자리, 지금 %s. 눌러서 바꾸기" % [Match.NAMES[i], "사람" if human else "CPU"]
-	var border := Color(BRASS, 0.7) if human else (Color("7FB2FF", 0.7) if friend else Color(1, 1, 1, 0.12))
-	b.add_theme_stylebox_override("normal", _sb(Color(1, 1, 1, 0.05), border, 8))
-	b.add_theme_stylebox_override("hover", _sb(Color(1, 1, 1, 0.09), border, 8))
-	b.add_theme_stylebox_override("pressed", _sb(Color(1, 1, 1, 0.09), border, 8))
+	var border := Color(BRASS, 0.7) if human else (Color("7FB2FF", 0.7) if friend else Color(FG, 0.12))
+	b.add_theme_stylebox_override("normal", _sb(Color(FG, 0.05), border, 8))
+	b.add_theme_stylebox_override("hover", _sb(Color(FG, 0.09), border, 8))
+	b.add_theme_stylebox_override("pressed", _sb(Color(FG, 0.09), border, 8))
 	var h := HBoxContainer.new()
 	h.set_anchors_preset(Control.PRESET_FULL_RECT)
 	h.offset_left = 10
@@ -2263,7 +2325,7 @@ func _seat_button(i: int) -> Button:
 	nm.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	h.add_child(nm)
 	var pill := PanelContainer.new()
-	var psb := _sb(BRASS if human else (Color("7FB2FF") if friend else Color(1, 1, 1, 0.1)), Color(0, 0, 0, 0), 999)
+	var psb := _sb(BRASS if human else (Color("7FB2FF") if friend else Color(FG, 0.1)), Color(0, 0, 0, 0), 999)
 	psb.set_border_width_all(0)
 	psb.content_margin_left = 10
 	psb.content_margin_right = 10
@@ -2339,7 +2401,7 @@ func _show_catalog(from_setup: bool) -> void:
 		cc.add_theme_constant_override("margin_" + side, 24)
 	root.add_child(cc)
 	var pc := PanelContainer.new()
-	pc.add_theme_stylebox_override("panel", _panel_style(Color(14 / 255.0, 16 / 255.0, 19 / 255.0, 0.92)))
+	pc.add_theme_stylebox_override("panel", _panel_style(Color(SOLID, 0.92)))
 	cc.add_child(pc)
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", 10)
@@ -2511,7 +2573,7 @@ func _show_draft_cards(pid: int) -> void:
 	var root := _new_overlay(false)
 	var vs := get_viewport_rect().size
 	var pc := PanelContainer.new()
-	pc.add_theme_stylebox_override("panel", _panel_style(Color(14 / 255.0, 16 / 255.0, 19 / 255.0, 0.94), Color(p.color, 0.8)))
+	pc.add_theme_stylebox_override("panel", _panel_style(Color(SOLID, 0.94), Color(p.color, 0.8)))
 	var width := minf(780.0, vs.x - 24.0)
 	pc.custom_minimum_size = Vector2(width, 0)
 	pc.position = Vector2((vs.x - width) * 0.5, 0)
@@ -2553,7 +2615,7 @@ func _show_draft_cards(pid: int) -> void:
 func _hint_panel(pid: int) -> VBoxContainer:
 	var root := _new_overlay(false)
 	var pc := PanelContainer.new()
-	var sb := _panel_style(Color(14 / 255.0, 16 / 255.0, 19 / 255.0, 0.92), Color(m.players[pid].color, 0.8))
+	var sb := _panel_style(Color(SOLID, 0.92), Color(m.players[pid].color, 0.8))
 	sb.set_content_margin_all(16)
 	pc.add_theme_stylebox_override("panel", sb)
 	var vs := get_viewport_rect().size
@@ -2633,7 +2695,8 @@ func _show_side_choice(pid: int) -> void:
 func _show_result() -> void:
 	state = "result"
 	snd.slide(0.0)
-	snd.play("draw" if m.winners.is_empty() else "victory")
+	if m.winners.is_empty():
+		snd.play("draw")
 	drag_stone = -1
 	var root := _new_overlay(true)
 	var box := _centered_panel(root, 520)
@@ -2915,7 +2978,7 @@ func _lobby_state() -> Dictionary:
 		else:
 			kinds.append("host")
 	return {"t": "lobby", "n": settings["n"], "kinds": kinds, "timed": settings["timed"], "speed": settings["speed"],
-		"workshop": settings.get("workshop", "junk"), "mode": settings.get("mode", "survival")}
+		"workshop": settings.get("workshop", "junk"), "mode": settings.get("mode", "survival"), "map": map_id}
 
 
 func _host_broadcast_lobby() -> void:
@@ -2945,7 +3008,7 @@ func _host_start() -> void:
 	var seed_value := randi()
 	net.broadcast({"t": "start", "seed": seed_value, "n": settings["n"], "cpu": cpu, "timed": settings["timed"],
 		"workshop": settings.get("workshop", "junk"), "mode": settings.get("mode", "survival"),
-		"speed": settings["speed"], "owners": owners})
+		"speed": settings["speed"], "owners": owners, "map": map_id})
 	_start_match(seed_value)
 
 
@@ -3031,6 +3094,8 @@ func _guest_msg(from: String, d: Dictionary) -> void:
 		"lobby":
 			host_peer = from
 			guest_lobby = d
+			if str(d.get("map", map_id)) != map_id:
+				_apply_map(str(d.get("map", map_id)), false)
 			settings["n"] = int(d["n"])
 			for i in 8:
 				settings["cpu"][i] = i < d["kinds"].size() and d["kinds"][i] == "cpu"
@@ -3046,6 +3111,8 @@ func _guest_msg(from: String, d: Dictionary) -> void:
 			settings["speed"] = int(d["speed"])
 			settings["workshop"] = str(d.get("workshop", "junk"))
 			settings["mode"] = str(d.get("mode", "survival"))
+			if str(d.get("map", map_id)) != map_id:
+				_apply_map(str(d.get("map", map_id)), false)
 			for i in 8:
 				settings["cpu"][i] = i < d["cpu"].size() and bool(d["cpu"][i])
 			my_seats = []
@@ -3106,6 +3173,7 @@ func _show_guest_lobby() -> void:
 		var ws_key: String = str(guest_lobby.get("workshop", "junk"))
 		var ws_name: String = "무작위 공방" if ws_key == "random" else PartsData.WORKSHOPS.get(ws_key, PartsData.WORKSHOPS["junk"])["name"]
 		col.add_child(_label("오늘의 공방: %s%s" % [ws_name, "  ·  개조 더비" if str(guest_lobby.get("mode", "")) == "derby" else ""], 15, HINT_GOLD, 1))
+		col.add_child(_map_row(true))
 		var grid := GridContainer.new()
 		grid.columns = 2
 		grid.add_theme_constant_override("h_separation", 8)
@@ -3152,8 +3220,8 @@ func _workshop_row() -> Control:
 			_show_setup())
 		b.custom_minimum_size = Vector2(0, 38)
 		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		b.add_theme_stylebox_override("normal", _sb(BRASS if on else Color(1, 1, 1, 0.05), Color(1, 1, 1, 0.1), 8))
-		b.add_theme_stylebox_override("hover", _sb(BRASS.lightened(0.1) if on else Color(1, 1, 1, 0.1), Color(1, 1, 1, 0.14), 8))
+		b.add_theme_stylebox_override("normal", _sb(BRASS if on else Color(FG, 0.05), Color(FG, 0.1), 8))
+		b.add_theme_stylebox_override("hover", _sb(BRASS.lightened(0.1) if on else Color(FG, 0.1), Color(FG, 0.14), 8))
 		for c in ["font_color", "font_hover_color", "font_pressed_color"]:
 			b.add_theme_color_override(c, INK if on else TEXT)
 		row.add_child(b)
@@ -3342,8 +3410,8 @@ func _mode_row() -> Control:
 			_show_setup())
 		b.custom_minimum_size = Vector2(0, 38)
 		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		b.add_theme_stylebox_override("normal", _sb(BRASS if on else Color(1, 1, 1, 0.05), Color(1, 1, 1, 0.1), 8))
-		b.add_theme_stylebox_override("hover", _sb(BRASS.lightened(0.1) if on else Color(1, 1, 1, 0.1), Color(1, 1, 1, 0.14), 8))
+		b.add_theme_stylebox_override("normal", _sb(BRASS if on else Color(FG, 0.05), Color(FG, 0.1), 8))
+		b.add_theme_stylebox_override("hover", _sb(BRASS.lightened(0.1) if on else Color(FG, 0.1), Color(FG, 0.14), 8))
 		for c in ["font_color", "font_hover_color", "font_pressed_color"]:
 			b.add_theme_color_override(c, INK if on else TEXT)
 		row.add_child(b)
@@ -3351,3 +3419,422 @@ func _mode_row() -> Control:
 	if cur == "derby":
 		v.add_child(_label("정해진 %d바퀴 동안 모두 계속 둡니다. 떨어진 퍽은 다음 바퀴에 부품을 단 채 돌아오고, 상대 퍽을 떨어뜨리면 1점." % (Match.DERBY_ROUNDS_SMALL if settings["n"] <= 4 else Match.DERBY_ROUNDS_BIG), 12, SUB))
 	return v
+
+
+# ── 맵 테마 ──────────────────────────────────────────────
+
+func _set_theme_colors() -> void:
+	th = Themes.get_theme(map_id)
+	var dark: bool = th["dark"]
+	BG_OUT = th["bg"]
+	TEXT = th["text"]
+	SUB = th["sub"]
+	LABEL = TEXT.lerp(SUB, 0.35)
+	MUTED = SUB.lerp(th["bg"], 0.35)
+	PANEL_BG = th["panel"]
+	PANEL_LINE = th["line"]
+	WARN = th["gauge"]
+	POWER = th["gold"]
+	HINT_GOLD = th["gold"]
+	FG = Color.WHITE if dark else th["text"]
+	SOLID = Color(th["panel"], 1.0) if not dark else Color("141C42")
+	PAGE_FELT = th["bg"]
+	Art.outline = th["outline"]
+	Art.shadow = th["shadow"]
+
+
+## 맵을 바꾼다: 색을 다시 읽고, 버튼 테마와 열려 있는 화면을 새로 만든다. 경기는 멈추지 않는다.
+func _apply_map(id: String, save := true) -> void:
+	if not Themes.THEMES.has(id):
+		return
+	_fade_rect.color = Color(BG_OUT, 1.0)
+	_theme_fade = 0.25
+	map_id = id
+	_set_theme_colors()
+	theme_ = _make_theme()
+	for b in [menu_btn, parts_btn, sound_btn, ff_btn]:
+		b.theme = theme_
+	_panel_sb.bg_color = PANEL_BG
+	_panel_sb.border_color = PANEL_LINE
+	if save:
+		_save_view()
+	if overlay != null and overlay.has_meta("settings"):
+		_show_settings(state == "setup")
+	elif state == "setup":
+		_show_setup()
+	elif overlay != null:
+		overlay.theme = theme_
+
+
+func _save_view() -> void:
+	var cfg := ConfigFile.new()
+	cfg.load("user://settings.cfg")
+	cfg.set_value("view", "map", map_id)
+	for k in view_opts:
+		cfg.set_value("view", k, view_opts[k])
+	cfg.save("user://settings.cfg")
+
+
+# ── 퍽 그리기와 모션 ─────────────────────────────────────
+var vis := {}                 # 알 id → {sq_dir, sq, pop_t, equip_t, equip_part, vf, trail}
+var shake_off := Vector2.ZERO
+var hud_pop := {}             # 플레이어 → 남은 퍽 점이 사라지기 시작한 시각
+var _trail_t := 0.0
+var shake := 0.0
+var hitstop := 0.0
+var win_t := -1.0
+
+
+## 퍽 한 개: 그림자(제자리) → 부품(정면 방향으로 회전) → 몸통(화면 공간, 각인은 똑바로).
+## 눌림·튐·떠오름은 여기서 한 번에 얹는다.
+func _draw_puck_at(p: Vector2, sid: int, parts: Dictionary, mside: int, col: Color, symbol: int, facing: float, alpha: float, extra := {}) -> void:
+	var u := World.STONE_R * view_scale
+	var st: Dictionary = vis.get(sid, {})
+	var scl: float = extra.get("scale", 1.0)
+	var sq: float = extra.get("sq", 0.0)
+	var sq_dir: Vector2 = extra.get("sq_dir", Vector2.RIGHT)
+	var lift: float = extra.get("lift", 0.0)
+	if not _reduced():
+		if st.get("sq", 0.0) > 0.002 and sq == 0.0:
+			sq = st["sq"]
+			sq_dir = st["sq_dir"]
+		var pt: float = time - float(st.get("pop_t", -9.0))
+		if pt >= 0.0 and pt < 0.17:
+			var k := pt / 0.17
+			scl *= 1.0 + 0.14 * sin(PI * k)
+			sq = -0.22 * (1.0 - k)
+			sq_dir = st.get("sq_dir", Vector2.RIGHT)
+		# 조준 당기기: 당기는 쪽으로 눌림
+		if drag_stone == sid and extra.is_empty():
+			var aim := _aim_of(sid, drag_screen)
+			if not aim.is_empty() and not aim.has("cancel"):
+				sq = 0.12 * float(aim.get("power", 0.0))
+				sq_dir = -aim["dir"]
+		var et: float = time - float(st.get("equip_t", -9.0))
+		if et >= 0.285 and et < 0.45:
+			lift += 0.25 * u * sin(PI * (et - 0.285) / 0.165)
+	if win_t >= 0.0 and m != null and m.winners.has(symbol) and sid >= 0:
+		var wt := clampf((time - win_t) / 0.6, 0.0, 1.0)
+		var e := 1.0 - pow(1.0 - wt, 3.0)
+		lift += 0.5 * u * e
+		scl *= 1.0 + 0.25 * e
+	var q := Transform2D.IDENTITY.scaled(Vector2.ONE * scl)
+	if absf(sq) > 0.001:
+		var d := sq_dir.normalized()
+		var pp := d.orthogonal()
+		var a1 := 1.0 - sq
+		var a2 := 1.0 + sq * 0.5
+		var bx := Vector2(d.x * d.x * a1 + pp.x * pp.x * a2, d.y * d.x * a1 + pp.y * pp.x * a2)
+		var by := Vector2(d.x * d.y * a1 + pp.x * pp.y * a2, d.y * d.y * a1 + pp.y * pp.y * a2)
+		q = Transform2D(bx * scl, by * scl, Vector2.ZERO)
+	Art.draw_puck_shadow(self, p, u * scl, alpha)
+	var pc := p + Vector2(0, -lift)
+	var base := Transform2D(q.x, q.y, pc)
+	draw_set_transform_matrix(base * Transform2D(facing, Vector2.ONE * view_scale, 0.0, Vector2.ZERO))
+	Art.skip_body = true
+	Art.draw(self, parts, mside, col, alpha, symbol)
+	Art.skip_body = false
+	draw_set_transform_matrix(base)
+	if not Art.is_set_form(parts):
+		Art.draw_puck_top(self, Vector2.ZERO, u, col, symbol, facing, alpha)
+	draw_set_transform_matrix(Transform2D.IDENTITY)
+	# 부품 장착: 슬롯 바깥 1.6u 에서 미끄러져 들어온다 (0.38초, 살짝 넘쳤다 돌아옴)
+	if not _reduced():
+		var et2: float = time - float(st.get("equip_t", -9.0))
+		if et2 >= 0.0 and et2 < 0.38 and st.has("equip_part"):
+			var k2 := et2 / 0.38
+			var back := 1.0 - _ease_back(k2)
+			var slot_ang: float = {"weapon": 0.0, "aux": PI / 2.0, "prop": PI}.get(PartsData.slot_of(st["equip_part"]), 0.0)
+			var off := Vector2.from_angle(facing + slot_ang) * 1.6 * u * back
+			draw_set_transform_matrix(Transform2D(facing, Vector2.ONE * view_scale, 0.0, pc + off))
+			var only := {"weapon": "", "aux": "", "prop": ""}
+			only[PartsData.slot_of(st["equip_part"])] = st["equip_part"]
+			Art.skip_body = true
+			Art.draw(self, only, mside, col, alpha * (1.0 - k2 * 0.3), symbol)
+			Art.skip_body = false
+			draw_set_transform_matrix(Transform2D.IDENTITY)
+
+
+func _ease_back(t: float) -> float:
+	var c1 := 1.70158
+	var c3 := c1 + 1.0
+	return 1.0 + c3 * pow(t - 1.0, 3.0) + c1 * pow(t - 1.0, 2.0)
+
+
+func _reduced() -> bool:
+	return bool(view_opts.get("reduce_motion", false))
+
+
+## 충돌: 히트스톱·흔들림·눌림·불꽃·소리가 충격 세기 J(칸/초)에 비례한다.
+func _on_hit(e: Dictionary) -> void:
+	var J: float = float(e["strength"]) / (CELL * Parts.TIME_K)
+	snd.play("puck_hit_heavy" if J >= 4.0 else "puck_hit_light", lerpf(-16.0, 0.0, clampf(J / 10.0, 0.0, 1.0)), randf_range(0.92, 1.08))
+	if J > 2.0 and view_opts["hitstop"] and not _reduced():
+		hitstop = maxf(hitstop, minf(0.09, 0.02 + 0.008 * J))
+	if view_opts["shake"] and not _reduced():
+		shake = maxf(shake, minf(6.0, 0.55 * J))
+	if not _reduced() and e.has("n"):
+		var amt := minf(0.32, 0.035 * J)
+		for id in [e["a"], e["b"]]:
+			var vv: Dictionary = vis.get(id, {})
+			if amt > float(vv.get("sq", 0.0)):
+				vv["sq"] = amt
+				vv["sq_dir"] = e["n"]
+			vis[id] = vv
+	var nrm: Vector2 = e.get("n", Vector2.RIGHT)
+	var cnt := mini(18, int(4.0 + 1.4 * J))
+	for i in cnt:
+		var side := 1.0 if i % 2 == 0 else -1.0
+		var dirv := nrm.orthogonal().rotated(randf_range(-0.5, 0.5)) * side
+		fx.append({"k": "spark", "pos": e["pos"], "vel": dirv * randf_range(60.0, 140.0 + 12.0 * J), "t": 0.0,
+			"life": randf_range(0.25, 0.5), "c": th["spark"]})
+
+
+## 움직이는 동안: 정면이 진행 방향을 따라가고, 잔상과 위험 구역 깜빡임을 남긴다.
+func _motion_tick(delta: float) -> void:
+	var w := m.world
+	for st in w.stones:
+		if not st.alive:
+			continue
+		var vv: Dictionary = vis.get(st.id, {})
+		var sp: float = st.vel.length()
+		var cur: float = vv.get("vf", st.facing)
+		if sp > 1.0:
+			vv["vf"] = lerp_angle(cur, st.vel.angle(), minf(1.0, 3.0 * delta))
+		else:
+			vv["vf"] = lerp_angle(cur, st.facing, minf(1.0, 10.0 * delta))
+		if sp >= 2.5 * CELL * Parts.TIME_K and not _reduced():
+			vv["trail"] = float(vv.get("trail", 0.0)) + delta
+			if vv["trail"] >= 0.035:
+				vv["trail"] = 0.0
+				fx.append({"k": "ghost", "pos": st.pos, "t": 0.0, "life": 0.22, "c": m.players[st.owner].color})
+		if sp > 1.0 and w.edge_distance(st.pos) < World.EDGE_ZONE:
+			var last: float = vv.get("danger_t", -9.0)
+			if time - last > 0.12:
+				vv["danger_t"] = time
+				fx.append({"k": "danger", "ang": st.pos.angle(), "pos": st.pos, "t": 0.0, "life": 0.3, "c": th["danger"]})
+		vis[st.id] = vv
+
+
+func _decay_motion(delta: float) -> void:
+	if shake > 0.0:
+		shake = maxf(0.0, shake - 30.0 * delta)
+		shake_off = Vector2(randf_range(-1.0, 1.0), randf_range(-1.0, 1.0)) * shake
+	else:
+		shake_off = Vector2.ZERO
+	var k := pow(0.0008, delta)
+	for id in vis:
+		var vv: Dictionary = vis[id]
+		if vv.get("sq", 0.0) > 0.0:
+			vv["sq"] = float(vv["sq"]) * k
+
+
+# ── 차례 배너 · 승리 색종이 ───────────────────────────────
+
+## 「○○ 차례」: 왼쪽에서 들어와 가운데 머물다 오른쪽으로 빠진다 (1.05초, -8도 기울임).
+func _draw_banner(vs: Vector2) -> void:
+	var total := 1.05 if not _reduced() else 0.8
+	var k := 1.0 - banner_t / total
+	var y := view_center.y - 40.0 if not portrait else 160.0
+	var x := view_center.x
+	var a := 1.0
+	if not _reduced():
+		if k < 0.22:
+			var e := 1.0 - pow(1.0 - k / 0.22, 3.0)
+			x = lerpf(-200.0, view_center.x, e)
+		elif k > 0.78:
+			var e2 := pow((k - 0.78) / 0.22, 2.0)
+			x = lerpf(view_center.x, vs.x + 200.0, e2)
+	else:
+		a = clampf(banner_t / 0.3, 0.0, 1.0)
+	var fsz := 30
+	var w := font_bold.get_string_size(banner, HORIZONTAL_ALIGNMENT_LEFT, -1, fsz).x + 64.0
+	draw_set_transform_matrix(Transform2D(0.0, Vector2.ONE, deg_to_rad(-8.0), Vector2(x, y)))
+	var band := Rect2(Vector2(-w * 0.5, -30), Vector2(w, 46))
+	draw_rect(band, Color(SOLID, 0.92 * a))
+	draw_rect(Rect2(band.position, Vector2(6, band.size.y)), Color(_banner_col, a))
+	draw_rect(Rect2(Vector2(band.end.x - 6, band.position.y), Vector2(6, band.size.y)), Color(_banner_col, a))
+	draw_string(font_bold, Vector2(-w * 0.5, 2), banner, HORIZONTAL_ALIGNMENT_CENTER, w, fsz, Color(_banner_col if _banner_col != TEXT else TEXT, a))
+	draw_set_transform_matrix(Transform2D.IDENTITY)
+
+
+var confetti: Array = []
+
+
+func _spawn_confetti() -> void:
+	if _reduced():
+		return
+	var vs := get_viewport_rect().size
+	var wc: Color = m.players[m.winners[0]].color
+	for i in 120:
+		var c: Color = wc if randf() < 0.6 else th["spark"]
+		confetti.append({"p": Vector2(randf() * vs.x, -20.0 - randf() * vs.y * 0.6), "v": Vector2(randf_range(-60, 60), randf_range(80, 220)),
+			"rot": randf() * TAU, "spin": randf_range(-6, 6), "c": c, "s": randf_range(5, 10)})
+
+
+func _draw_confetti() -> void:
+	if confetti.is_empty():
+		return
+	var dt := get_process_delta_time()
+	var age := time - win_t
+	var alive: Array = []
+	for c in confetti:
+		c["v"].y += 160.0 * dt
+		c["v"].x += sin(time * 3.0 + c["rot"]) * 20.0 * dt
+		c["p"] += c["v"] * dt
+		c["rot"] += c["spin"] * dt
+		var a := clampf((3.0 - age) / 0.6, 0.0, 1.0)
+		if a <= 0.0:
+			continue
+		draw_set_transform(c["p"], c["rot"], Vector2(1.0, 0.55 + 0.45 * absf(sin(c["rot"] * 2.0))))
+		draw_rect(Rect2(Vector2(-c["s"] * 0.5, -c["s"] * 0.3), Vector2(c["s"], c["s"] * 0.6)), Color(c["c"], a))
+		alive.append(c)
+	draw_set_transform_matrix(Transform2D.IDENTITY)
+	confetti = alive
+
+
+# ── 맵 선택 · 설정 ───────────────────────────────────────
+
+## 3칸 선택 막대: 각 칸에 작은 경기장 썸네일(지름 40px)과 이름. locked: 손님 화면 (방장이 고른 맵).
+func _map_row(locked: bool) -> Control:
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 10)
+	var hr := HBoxContainer.new()
+	var ml := _nw(_label("맵", 14, LABEL, 1))
+	ml.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	hr.add_child(ml)
+	if locked:
+		hr.add_child(_nw(_label("방장이 고른 맵", 13, SUB)))
+	v.add_child(hr)
+	var seg := PanelContainer.new()
+	var segsb := _sb(Color(FG, 0.05), Color(FG, 0.1), 10)
+	segsb.set_content_margin_all(4)
+	seg.add_theme_stylebox_override("panel", segsb)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 6)
+	seg.add_child(row)
+	for id in Themes.ORDER:
+		var on: bool = id == map_id
+		var mid: String = id
+		var b := _button("", func():
+			if locked or mid == map_id:
+				return
+			snd.play("ui_toggle")
+			_apply_map(mid)
+			if online == "host":
+				_host_broadcast_lobby())
+		b.disabled = locked and not on
+		b.custom_minimum_size = Vector2(0, 56)
+		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		var st := _sb(BRASS if on else Color(0, 0, 0, 0), Color(0, 0, 0, 0), 7)
+		st.set_border_width_all(0)
+		b.add_theme_stylebox_override("normal", st)
+		b.add_theme_stylebox_override("disabled", st)
+		var sth := _sb(BRASS.lightened(0.1) if on else Color(FG, 0.08), Color(0, 0, 0, 0), 7)
+		sth.set_border_width_all(0)
+		b.add_theme_stylebox_override("hover", sth)
+		b.add_theme_stylebox_override("pressed", sth)
+		var inner := HBoxContainer.new()
+		inner.add_theme_constant_override("separation", 8)
+		inner.alignment = BoxContainer.ALIGNMENT_CENTER
+		inner.set_anchors_preset(Control.PRESET_FULL_RECT)
+		inner.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var thumb := Control.new()
+		thumb.custom_minimum_size = Vector2(44, 44)
+		thumb.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var tdata: Dictionary = Themes.get_theme(mid)
+		thumb.draw.connect(func():
+			var c := thumb.size * 0.5
+			thumb.draw_circle(c, 21.0, tdata["bg"])
+			Arena.board(thumb, c, 15.0, 3.4, false, tdata))
+		inner.add_child(thumb)
+		var nl := _nw(_label(Themes.THEMES[mid]["name"], 14, INK if on else TEXT, 1))
+		nl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		inner.add_child(nl)
+		b.add_child(inner)
+		row.add_child(b)
+	v.add_child(seg)
+	return v
+
+
+func _toggle_row(text: String, desc: String, key: String) -> Control:
+	var h := HBoxContainer.new()
+	var tv := VBoxContainer.new()
+	tv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	tv.add_child(_label(text, 16, TEXT, 1))
+	if desc != "":
+		tv.add_child(_label(desc, 12, SUB))
+	h.add_child(tv)
+	var cb := CheckButton.new()
+	cb.button_pressed = bool(view_opts[key])
+	cb.focus_mode = Control.FOCUS_NONE
+	cb.toggled.connect(func(on: bool):
+		snd.play("ui_toggle")
+		view_opts[key] = on
+		_save_view()
+		if key == "reduce_motion":
+			shake = 0.0
+			hitstop = 0.0)
+	h.add_child(cb)
+	return h
+
+
+func _volume_row(text: String, kind: String) -> Control:
+	var h := HBoxContainer.new()
+	h.add_theme_constant_override("separation", 12)
+	var l := _nw(_label(text, 15, TEXT))
+	l.custom_minimum_size = Vector2(110, 0)
+	h.add_child(l)
+	var sl := HSlider.new()
+	sl.min_value = 0.0
+	sl.max_value = 1.0
+	sl.step = 0.05
+	sl.value = float(snd.vol[kind])
+	sl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	sl.custom_minimum_size = Vector2(0, 28)
+	sl.focus_mode = Control.FOCUS_NONE
+	sl.value_changed.connect(func(v: float): snd.set_volume(kind, v))
+	sl.drag_ended.connect(func(_c: bool):
+		if kind == "ui":
+			snd.play("ui_click")
+		elif kind == "sfx":
+			snd.play("puck_hit_light"))
+	h.add_child(sl)
+	return h
+
+
+## 메뉴(≡) 안 설정. 경기 중에도 맵을 바꿀 수 있고, 경기는 멈추지 않는다.
+func _show_settings(from_setup: bool) -> void:
+	var root := _new_overlay(true)
+	root.set_meta("settings", true)
+	var box := _centered_panel(root, 480, Color(SOLID, 0.96))
+	box.add_child(_label("설정", 24, TEXT, 2))
+	box.add_child(_map_row(online == "guest"))
+	box.add_child(HSeparator.new())
+	box.add_child(_toggle_row("화면 흔들림", "세게 부딪히면 화면이 흔들려요", "shake"))
+	box.add_child(_toggle_row("히트스톱", "충돌 순간 아주 잠깐 멈춰요", "hitstop"))
+	box.add_child(_toggle_row("움직임 줄이기", "흔들림·멈춤·눌림을 끄고 배너를 바로 처리해요", "reduce_motion"))
+	box.add_child(HSeparator.new())
+	box.add_child(_label("소리", 14, LABEL, 1))
+	box.add_child(_volume_row("효과음", "sfx"))
+	box.add_child(_volume_row("배경음악", "music"))
+	box.add_child(_volume_row("화면 소리", "ui"))
+	var btns := HBoxContainer.new()
+	btns.add_theme_constant_override("separation", 8)
+	if not from_setup:
+		var home := _button("처음으로", func():
+			_clear_overlay()
+			_show_setup())
+		home.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		home.custom_minimum_size = Vector2(0, 44)
+		btns.add_child(home)
+	var close := _primary(_button("닫기" if from_setup else "계속하기", func():
+		_clear_overlay()
+		if from_setup:
+			_show_setup()
+		else:
+			turn_key = ""))
+	close.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	close.custom_minimum_size = Vector2(0, 44)
+	btns.add_child(close)
+	box.add_child(btns)

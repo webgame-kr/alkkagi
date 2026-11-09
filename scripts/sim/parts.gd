@@ -3,6 +3,11 @@ extends RefCounted
 ## 발사한 알의 부품은 부품마다 한 샷에 한 번만 작동한다 (shot.used).
 ## 수치는 parts_data.gd 에서 읽는다.
 
+const TIME_K := 2.5
+const CELL_PX := 44.0
+const LAUNCH_V := 15.0 * CELL_PX * TIME_K           # 1650 px/s
+const FRICTION := 2.4 * CELL_PX * TIME_K * TIME_K   # 고정 감속 660 px/s²
+const DRAG := 0.55 * TIME_K                         # 속도 비례 감속 1.375 /s
 const D = preload("res://scripts/sim/parts_data.gd")
 
 const R := 22.0               # world.gd STONE_R 과 같은 값
@@ -372,7 +377,7 @@ static func path_midpoint(path: Array) -> Vector2:
 
 static func aim_preview(w, s, dir: Vector2, power: float) -> Array:
 	var out: Array = []
-	out.append({"k": "move", "a": s.pos, "b": s.pos + dir * (50.0 + 330.0 * power)})
+	out.append({"k": "move", "a": s.pos, "b": s.pos + dir * (1.2 + 3.2 * power) * CELL_PX, "power": power})
 	var weapon: String = s.parts["weapon"]
 	var decal: bool = s.parts["aux"] == "decal"
 	var dirs: Array = []
@@ -407,12 +412,12 @@ static func aim_preview(w, s, dir: Vector2, power: float) -> Array:
 		var od := D.num("umbrella_gun", "open_dist")
 		out.append({"k": "umbrella", "a": p2, "b": p2 + dir * od, "r": D.num("umbrella_gun", "radius")})
 	if s.parts["prop"] == "clockwork" and power <= D.num("clockwork", "max_power"):
-		out.append({"k": "clock", "a": s.pos + dir * travel_after(power * 1120.0, D.num("clockwork", "delay"))})
+		out.append({"k": "clock", "a": s.pos + dir * travel_after(launch_speed(power), D.num("clockwork", "delay"))})
 	if D.set_complete(s.parts, "trex"):
 		out.append({"k": "mecha", "a": s.pos, "dir": dir, "edge": s.pos + dir * w.ray_to_edge(s.pos, dir)})
 	if s.parts["prop"] == "flash_step":
 		# 순보 깔창: 직선으로 갈 때 처음 정면에 닿을 알 뒤의 착지점
-		var reach := travel_after(power * 1120.0, 6.0)
+		var reach := travel_after(launch_speed(power), 6.0)
 		var t2 = first_on_ray(w, s.pos, dir, reach, s.id)
 		if t2 != null and absf((t2.pos - s.pos).cross(dir)) < R * 0.9:
 			var spot: Vector2 = t2.pos + dir * (R * 2.0 + 2.0)
@@ -439,6 +444,12 @@ static func travel_after(v0: float, t: float) -> float:
 	var k := 0.0
 	while k < t and v > 0.0:
 		x += v * dt
-		v = maxf(0.0, v - 950.0 * dt - v * 0.25 * dt)
+		v = maxf(0.0, v - FRICTION * dt - v * DRAG * dt)
 		k += dt
 	return x
+
+
+## 힘 비율 p(0~1) → 발사 속도. 디자인 사양: 15칸/초 × (0.2 + 0.8 × p^0.85).
+## 시간만 2.5배 빠르게 돌려(속도 ×2.5, 감속 ×2.5²·×2.5) 이동 거리는 사양 그대로, 부품이 미는 거리는 예전과 같게 맞췄다.
+static func launch_speed(p: float) -> float:
+	return LAUNCH_V * (0.2 + 0.8 * pow(clampf(p, 0.0, 1.0), 0.85))

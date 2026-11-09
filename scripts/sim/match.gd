@@ -4,7 +4,7 @@ extends RefCounted
 const World = preload("res://scripts/sim/world.gd")
 const PartsData = preload("res://scripts/sim/parts_data.gd")
 
-const COLORS := [Color("E0533D"), Color("3D6FD1"), Color("E3B23C"), Color("3FA27A"),
+const COLORS := [Color("E0533D"), Color("3D6FD1"), Color("E9B935"), Color("38A672"),
 	Color("8A68D1"), Color("E5823A"), Color("52B6CC"), Color("D45C99")]
 const NAMES := ["빨강", "파랑", "노랑", "초록", "보라", "주황", "하늘", "분홍"]
 ## 판 크기는 퍽 지름(1칸)으로 잡는다. 2인 한 변 16칸, 3~4인 지름 18칸, 5~8인 지름 24칸.

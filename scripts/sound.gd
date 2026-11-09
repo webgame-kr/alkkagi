@@ -23,6 +23,7 @@ const FAMILY_SOUND := {"mech": "fx_mech_spring", "trex": "fx_trex_bite", "magic"
 
 var enabled := true
 var music_on := true
+var vol := {"sfx": 1.0, "music": 1.0, "ui": 1.0}   # 효과음 · 배경음악 · 화면 소리
 var _streams := {}
 var _pool: Array = []
 var _next := 0
@@ -37,12 +38,14 @@ func _ready() -> void:
 	if cfg.load(_cfg_path) == OK:
 		enabled = cfg.get_value("sound", "enabled", true)
 		music_on = cfg.get_value("sound", "music", true)
+		for k in vol:
+			vol[k] = float(cfg.get_value("sound", "vol_" + k, 1.0))
 	for i in POOL:
 		var p := AudioStreamPlayer.new()
 		add_child(p)
 		_pool.append(p)
 	_music = AudioStreamPlayer.new()
-	_music.volume_db = -16.0
+	_music.volume_db = -16.0 + linear_to_db(maxf(vol["music"], 0.001))
 	add_child(_music)
 	var bgm = _load("bgm_table_loop")
 	if bgm is AudioStreamOggVorbis:
@@ -71,6 +74,10 @@ func _load(name: String) -> AudioStream:
 func play(name: String, db := 0.0, pitch := 1.0) -> void:
 	if not enabled or name == "":
 		return
+	var v: float = vol["ui"] if name.begins_with("ui_") else vol["sfx"]
+	if v <= 0.01:
+		return
+	db += linear_to_db(v)
 	var now := Time.get_ticks_msec()
 	if now - int(_last.get(name, -1000)) < 50:
 		return
@@ -110,9 +117,10 @@ func slide(speed: float) -> void:
 	if not _slide.playing:
 		_slide.volume_db = -40.0
 		_slide.play()
-	var target := lerpf(-30.0, -8.0, clampf(speed / 900.0, 0.0, 1.0))
+	var k := clampf(speed / 1650.0, 0.0, 1.0)
+	var target := lerpf(-30.0, -8.0, k) + linear_to_db(maxf(vol["sfx"], 0.001))
 	_slide.volume_db = move_toward(_slide.volume_db, target, 3.0)
-	_slide.pitch_scale = lerpf(0.85, 1.15, clampf(speed / 900.0, 0.0, 1.0))
+	_slide.pitch_scale = lerpf(0.85, 1.15, k)
 
 
 func set_enabled(v: bool) -> void:
@@ -127,6 +135,20 @@ func set_enabled(v: bool) -> void:
 
 func _save() -> void:
 	var cfg := ConfigFile.new()
+	cfg.load(_cfg_path)
 	cfg.set_value("sound", "enabled", enabled)
 	cfg.set_value("sound", "music", music_on)
+	for k in vol:
+		cfg.set_value("sound", "vol_" + k, vol[k])
 	cfg.save(_cfg_path)
+
+
+func set_volume(kind: String, v: float) -> void:
+	vol[kind] = clampf(v, 0.0, 1.0)
+	if kind == "music":
+		_music.volume_db = -16.0 + linear_to_db(maxf(vol["music"], 0.001))
+		if vol["music"] <= 0.01:
+			_music.stop()
+		else:
+			start_music()
+	_save()
