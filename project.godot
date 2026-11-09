@@ -20,7 +20,7 @@ window/handheld/orientation=6
 
 [gui]
 
-theme/custom_font="res://fonts/NotoSansKR.ttf"
+theme/custom_font="res://fonts/IBMPlexSansKR-Regular.ttf"
 theme/default_font_antialiasing=1
 
 [input_devices]

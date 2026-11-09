@@ -7,13 +7,13 @@ const Parts = preload("res://scripts/sim/parts.gd")
 const PartsDataRef = preload("res://scripts/sim/parts_data.gd")
 
 const STONE_R := 22.0
-const MAX_SPEED := 1050.0
+const MAX_SPEED := 1120.0
 const FRICTION := 950.0       # 고정 감속 px/s²
 const DRAG := 0.35            # 속도에 비례하는 감속 1/s
 const RESTITUTION := 0.6
 const STOP_SPEED := 6.0
 const DT := 1.0 / 120.0
-const EDGE_ZONE := 64.0       # 낙하산이 작동하는 판 끝 구역 폭
+const EDGE_ZONE := 44.0       # 판 끝 경고 띠(1칸). 낙하산이 여기서 작동한다
 const BULLET_SPEED := 1500.0
 const BULLET_R := 5.0
 const RUBBER_R := 10.0

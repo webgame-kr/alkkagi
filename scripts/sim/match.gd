@@ -4,9 +4,11 @@ extends RefCounted
 const World = preload("res://scripts/sim/world.gd")
 const PartsData = preload("res://scripts/sim/parts_data.gd")
 
-const COLORS := [Color("e5484d"), Color("3e8ef7"), Color("f5b301"), Color("30a46c"),
-	Color("8e4ec6"), Color("f76b15"), Color("12a594"), Color("d6409f")]
-const NAMES := ["빨강", "파랑", "노랑", "초록", "보라", "주황", "청록", "분홍"]
+const COLORS := [Color("E0533D"), Color("3D6FD1"), Color("E3B23C"), Color("3FA27A"),
+	Color("8A68D1"), Color("E5823A"), Color("52B6CC"), Color("D45C99")]
+const NAMES := ["빨강", "파랑", "노랑", "초록", "보라", "주황", "하늘", "분홍"]
+## 판 크기는 퍽 지름(1칸)으로 잡는다. 2인 한 변 16칸, 3~4인 지름 18칸, 5~8인 지름 24칸.
+const CELL := World.STONE_R * 2.0
 const OFFER_COUNT := 3
 const AIM_LIMIT := 8.0
 
@@ -40,17 +42,17 @@ func setup(n_players: int, cpu_flags: Array, seed_value: int, timed: bool) -> vo
 	world = World.new()
 	if n == 2:
 		world.shape = "square"
-		world.size = 300.0
+		world.size = CELL * 8.0
 		max_rounds = 12
 		draft_rounds = [2, 3, 4]
 	elif n <= 4:
 		world.shape = "circle"
-		world.size = 340.0
+		world.size = CELL * 9.0
 		max_rounds = 8
 		draft_rounds = [2, 3, 4]
 	else:
 		world.shape = "circle"
-		world.size = 420.0
+		world.size = CELL * 12.0
 		max_rounds = 6
 		draft_rounds = [1, 2, 3]
 	aim_limit = AIM_LIMIT if timed else 0.0
@@ -63,22 +65,21 @@ func setup(n_players: int, cpu_flags: Array, seed_value: int, timed: bool) -> vo
 	_begin_round()
 
 
-## 시작 구역: 판 가장자리를 따라 같은 간격, 가장자리에서 충분히 안쪽.
+## 시작 구역: 판 가장자리를 따라 같은 간격.
+## 2인은 자기 쪽 변에서 4칸 안쪽에 한 줄로 3개(2.5칸 간격),
+## 원형은 가장자리에서 4칸과 5.5칸, 중심을 향해 앞뒤로 2개.
 func _place_stones() -> void:
 	if world.shape == "square":
 		for p in 2:
-			var y := (world.size - 120.0) * (1.0 if p == 0 else -1.0)
+			var y := (world.size - CELL * 4.0) * (1.0 if p == 0 else -1.0)
 			for k in 3:
-				world.add_stone(p, Vector2((k - 1) * 105.0, y), -PI / 2.0 if p == 0 else PI / 2.0)
+				world.add_stone(p, Vector2((k - 1) * CELL * 2.5, y), -PI / 2.0 if p == 0 else PI / 2.0)
 		return
-	var r0 := world.size * 0.54
 	for p in n:
 		var ang := PI / 2.0 + TAU * p / n
 		var radial := Vector2.from_angle(ang)
-		var tang := radial.orthogonal()
-		for k in 2:
-			var off := (k - 0.5) * 60.0
-			world.add_stone(p, radial * r0 + tang * off, ang + PI)
+		for depth in [4.0, 5.5]:
+			world.add_stone(p, radial * (world.size - CELL * depth), ang + PI)
 
 
 func stones_left(pid: int) -> int:

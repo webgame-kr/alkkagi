@@ -73,4 +73,4 @@ godot --path . -- --auto 4 --allcpu --shots <폴더>   # CPU끼리 3배속, 1.5�
 - 온라인용 동시 선택·공개 (로컬은 시작 순서대로 고른다)
 - 효과음
 
-폰트: Noto Sans KR (SIL Open Font License, `fonts/OFL.txt`).
+폰트: IBM Plex Sans KR (SIL Open Font License, `fonts/OFL.txt`). 비주얼은 디자인 시안 「개조 알까기 디자인 시안」(펠트 테이블, 금속 퍽, 퍽 지름 = 1칸)을 따른다.
