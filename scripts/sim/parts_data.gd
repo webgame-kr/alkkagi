@@ -227,8 +227,9 @@ const WORKSHOPS := {
 		"parts": ["trex_head", "trex_arm", "trex_leg", "sucker", "brake", "mine"], "rep": ["trex_head", "sucker", "mine"], "set": "trex"},
 	"magic": {"name": "수상한 마법 상점", "tag": "닿지 않는 알을 밀고 한 발 뒤를 준비하는 곳", "desc": "직접 닿지 않는 알을 밀고, 한 발 뒤에 일어날 일을 준비한다.",
 		"parts": ["moon_staff", "star_cloak", "moon_boots", "shadow_scale", "night_charm", "anchor"], "rep": ["moon_staff", "night_charm", "anchor"], "set": "moon"},
-	"toon": {"name": "만화 소품 창고", "tag": "판 끝을 달리고 상대 뒤로 넘어가는 곳", "desc": "상대 뒤로 넘어가거나 판 끝을 타며, 직선 조준으로는 잡기 힘든 알을 노린다.",
-		"parts": ["drift_tire", "flash_step", "log_sub", "trap_card", "rubber_fist", "charge_palm"], "rep": ["flash_step", "drift_tire", "log_sub"], "set": ""},
+	"toon": {"name": "만화 소품 창고", "tag": "판 끝을 달리고 상대 뒤로 넘어가는 곳", "desc": "최후의 주인공을 모으거나, 상대 뒤로 넘어가고 판 끝을 타며 직선 조준으로는 잡기 힘든 알을 노린다.",
+		"parts": ["hero_band", "torn_cape", "awaken_shoes", "drift_tire", "flash_step", "log_sub", "trap_card", "rubber_fist", "charge_palm"],
+		"rep": ["hero_band", "flash_step", "rubber_fist"], "set": "hero"},
 	"all": {"name": "잡동사니 창고", "tag": "모든 부품이 섞여 나오는 곳", "desc": "모든 부품 66종이 섞여 나온다.", "parts": [], "rep": ["pea", "moon_staff", "rubber_fist"], "set": ""},
 }
 const WORKSHOP_ORDER := ["junk", "magic", "toon", "all"]

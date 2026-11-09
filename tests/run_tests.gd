@@ -1193,7 +1193,8 @@ func test_all_parts_have_art() -> void:
 func test_workshop_pools() -> void:
 	for ws in ["junk", "magic", "toon"]:
 		var pool := PartsData.workshop_pool(ws)
-		check(pool.size() == 16, "%s: 16 parts" % ws)
+		var want: int = 10 + PartsData.WORKSHOPS[ws]["parts"].size()
+		check(pool.size() == want, "%s: %d parts" % [ws, want])
 		var m := Match.new()
 		m.setup(4, [], 7, false, {"workshop": ws})
 		check(m.workshop == ws, "workshop set")

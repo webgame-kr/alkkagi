@@ -3526,7 +3526,8 @@ func _workshop_row() -> Control:
 	lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	head.add_child(lbl)
 	var cur: String = settings.get("workshop", "junk")
-	head.add_child(_nw(_label("공용 10종 + 전용 6종" if cur != "all" else "모든 부품 66종", 13, SUB)))
+	var excl: int = PartsData.WORKSHOPS.get(cur, PartsData.WORKSHOPS["junk"])["parts"].size() if cur != "random" else 6
+	head.add_child(_nw(_label(("공용 10종 + 전용 %d종" % excl) if cur != "all" else "모든 부품 66종", 13, SUB)))
 	v.add_child(head)
 	var narrow_w := get_viewport_rect().size.x < 600.0
 	var row: BoxContainer = VBoxContainer.new() if narrow_w else HBoxContainer.new()
