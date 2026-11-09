@@ -786,14 +786,17 @@ func _draw_lobby_preview(vs: Vector2) -> void:
 	if square:
 		for i in 2:
 			var y := c.y + (1.0 if i == 0 else -1.0) * (half - 4.0 * u)
-			for j in 3:
-				pucks.append([i, Vector2(c.x + (j - 1) * 2.5 * u, y)])
+			for j in 4:
+				pucks.append([i, Vector2(c.x + (j - 1.5) * 2.5 * u, y)])
 	else:
 		var R := half / u
 		for i in n:
 			var a := deg_to_rad(90.0 + 360.0 * i / n)
-			for rr in [R - 4.0, R - 5.5]:
-				pucks.append([i, c + Vector2(cos(a), sin(a)) * rr * u])
+			var rad := Vector2(cos(a), sin(a))
+			var tg := rad.orthogonal()
+			pucks.append([i, c + rad * (R - 4.0) * u + tg * Match.SIDE_GAP * u])
+			pucks.append([i, c + rad * (R - 4.0) * u - tg * Match.SIDE_GAP * u])
+			pucks.append([i, c + rad * (R - 5.5) * u])
 	for pk in pucks:
 		var i: int = pk[0]
 		if not settings["cpu"][i]:
@@ -801,7 +804,7 @@ func _draw_lobby_preview(vs: Vector2) -> void:
 			draw_arc(pk[1], r + 5.5, 0, TAU, 24, BRASS, 2.0, true)
 		Art.draw_icon(self, pk[1], 2 * r, Match.COLORS[i], i)
 	# 판 정보
-	var info := [["판", "정사각 16칸" if square else "원형 지름 %d칸" % int(units)], ["퍽", "%d개씩" % (3 if square else 2)],
+	var info := [["판", "정사각 16칸" if square else "원형 지름 %d칸" % int(units)], ["퍽", "%d개씩" % (4 if square else 3)],
 		["최대", "%d바퀴" % (12 if square else (8 if n <= 4 else 6))], ["개조", "1, 2, 3바퀴" if n >= 5 else "2, 3, 4바퀴"]]
 	var x0 := c.x - 230.0
 	var y0 := c.y + 230.0 + 40.0

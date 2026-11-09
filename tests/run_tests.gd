@@ -341,7 +341,7 @@ func test_layout_all_counts() -> void:
 	for n in range(2, 9):
 		var m := Match.new()
 		m.setup(n, [], 7, false)
-		var per := 3 if n == 2 else 2
+		var per := 4 if n == 2 else 3
 		check(m.world.stones.size() == n * per, "%d players: stone count" % n)
 		for s in m.world.stones:
 			check(m.world.edge_distance(s.pos) > 80.0, "%d players: stones well inside" % n)

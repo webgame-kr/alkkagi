@@ -67,20 +67,30 @@ func setup(n_players: int, cpu_flags: Array, seed_value: int, timed: bool) -> vo
 
 
 ## 시작 구역: 판 가장자리를 따라 같은 간격.
-## 2인은 자기 쪽 변에서 4칸 안쪽에 한 줄로 3개(2.5칸 간격),
-## 원형은 가장자리에서 4칸과 5.5칸, 중심을 향해 앞뒤로 2개.
+## 2인은 자기 쪽 변에서 4칸 안쪽에 한 줄로 4개(2.5칸 간격),
+## 원형은 가장자리에서 4칸에 좌우로 두 개, 5.5칸에 하나 (중심을 향한 삼각형).
+const SIDE_GAP := 1.25        # 원형 앞줄 두 퍽의 좌우 간격 (칸, 중심선에서)
+
+
+func stones_per_player() -> int:
+	return 4 if n == 2 else 3
+
+
 func _place_stones() -> void:
 	if world.shape == "square":
 		for p in 2:
 			var y := (world.size - CELL * 4.0) * (1.0 if p == 0 else -1.0)
-			for k in 3:
-				world.add_stone(p, Vector2((k - 1) * CELL * 2.5, y), -PI / 2.0 if p == 0 else PI / 2.0)
+			for k in 4:
+				world.add_stone(p, Vector2((k - 1.5) * CELL * 2.5, y), -PI / 2.0 if p == 0 else PI / 2.0)
 		return
 	for p in n:
 		var ang := PI / 2.0 + TAU * p / n
 		var radial := Vector2.from_angle(ang)
-		for depth in [4.0, 5.5]:
-			world.add_stone(p, radial * (world.size - CELL * depth), ang + PI)
+		var tang := radial.orthogonal()
+		var front := radial * (world.size - CELL * 4.0)
+		world.add_stone(p, front + tang * CELL * SIDE_GAP, ang + PI)
+		world.add_stone(p, front - tang * CELL * SIDE_GAP, ang + PI)
+		world.add_stone(p, radial * (world.size - CELL * 5.5), ang + PI)
 
 
 func stones_left(pid: int) -> int:
