@@ -68,6 +68,13 @@ var banner_t := 0.0
 var log_lines: Array = []
 var time := 0.0
 
+# 확장: 구름 출발, 충전, 유품, 만화 연출
+var drag_cloud := false       # 구름 표식에서 당기는 중
+var drag_hold := 0.0          # 누르고 있던 시간 (모으고 쏘는 손바닥 충전)
+var relic_mode := false       # 유품 리본 부품을 달 퍽 고르는 중
+var slowmo := 0.0             # 만화 연출: 잠깐 느리게
+var slowmo_shot := -1
+
 # 개조 선택
 var draft_part := ""
 var draft_stone := -1
@@ -181,6 +188,18 @@ func _debug_args() -> void:
 		# 사람(빨강)이 먼저 고르도록 순서를 맞춘다
 		m.draft_queue.erase(0)
 		m.draft_queue.push_front(0)
+	if args.has("--sets"):
+		var all: Array = m.world.stones
+		all[0].parts = {"weapon": "moon_staff", "aux": "star_cloak", "prop": "moon_boots"}
+		all[1].parts = {"weapon": "hero_band", "aux": "torn_cape", "prop": "awaken_shoes"}
+		all[2].parts = {"weapon": "rubber_fist", "aux": "at_field", "prop": "drift_tire"}
+		all[3].parts = {"weapon": "ice_fan", "aux": "mushroom", "prop": "anchor"}
+		all[4].parts = {"weapon": "charge_palm", "aux": "log_sub", "prop": "glass_wings"}
+		all[5].parts = {"weapon": "echo_bell", "aux": "trap_card", "prop": "flash_step"}
+		all[6].parts = {"weapon": "alchemy_glove", "aux": "stopwatch", "prop": "rebound_shoes"}
+		all[7].parts = {"weapon": "night_charm", "aux": "wind_knot", "prop": "second_step"}
+		m.world.events.append({"t": "manga", "part": "log_sub", "pos": all[4].pos, "owner": all[4].owner, "stone": all[4].id})
+		_consume_events()
 	if args.has("--trex"):
 		var mine: Array = m.world.alive_stones_of(0)
 		mine[0].parts = {"weapon": "trex_head", "aux": "trex_arm", "prop": "trex_leg"}
@@ -297,7 +316,11 @@ func _update_play(delta: float) -> void:
 		_on_phase_changed()
 	match m.phase:
 		"moving":
-			accum += minf(delta, 0.05)
+			var spd := 1.0
+			if slowmo > 0.0:
+				slowmo -= delta
+				spd = 0.3
+			accum += minf(delta, 0.05) * spd
 			while accum >= World.DT and m.phase == "moving":
 				accum -= World.DT
 				m.world.step()
@@ -316,6 +339,8 @@ func _update_play(delta: float) -> void:
 					_apply_equip(pid, c["part"], c["stone"], c["side"])
 		"aim":
 			var pid := m.current_player()
+			if drag_stone >= 0:
+				drag_hold += delta
 			if m.players[pid].cpu:
 				_update_cpu(delta, pid)
 			elif m.aim_limit > 0.0:
@@ -336,12 +361,17 @@ func _update_cpu(delta: float, pid: int) -> void:
 		if cpu_aim["t"] <= 0.0:
 			var c: Dictionary = cpu_aim
 			cpu_aim = {}
-			m.shoot(c["stone"], c["dir"], c["power"])
+			m.shoot(c["stone"], c["dir"], c["power"], {"charged": true})
 		return
 	if bot == null:
 		bot_wait -= delta
 		if bot_wait > 0.0:
 			return
+		for t in m.relic_targets(pid):
+			var part: String = m.players[pid].relic
+			if m.equip_relic(pid, t.id):
+				_log("%s 유품 %s 달았어요" % [_j(m.players[pid].name, "이", "가"), _j(PartsData.part_name(part), "을", "를")], m.players[pid].color)
+			break
 		bot = Bot.new()
 		bot.begin(m, pid, randi())
 		return
@@ -370,6 +400,9 @@ func _on_phase_changed() -> void:
 			bot_wait = 0.45
 			var p: Dictionary = m.players[m.current_player()]
 			_banner("%s 차례" % p.name, p.color)
+			relic_mode = false
+			if not p.cpu and not m.relic_targets(p.id).is_empty():
+				_show_relic_hint(p.id)
 		"draft":
 			var pid := m.current_drafter()
 			draft_part = ""
@@ -467,6 +500,28 @@ func _consume_events() -> void:
 				fx.append({"k": "ring", "pos": e["pos"], "t": 0.0, "life": 0.4, "r": 22.0, "c": owner_col})
 			"umbrella":
 				fx.append({"k": "fan", "pos": e["pos"], "dir": e["dir"], "t": 0.0, "life": 0.5, "r": e["radius"], "c": Color("E1E6EB")})
+			"manga":
+				var sid: int = e.get("stone", -1)
+				var info: Dictionary = PartsData.get_part(e["part"])
+				fx.append({"k": "manga", "stone": sid, "pos": e["pos"], "t": 0.0, "life": 0.7,
+					"text": info.get("sfx", ""), "c": Color(info.get("sfx_color", "#F2A23A"))})
+				if m.world.shot_no != slowmo_shot and not _all_cpu():
+					slowmo_shot = m.world.shot_no
+					slowmo = 0.15
+			"mark":
+				fx.append({"k": "ring", "pos": e["pos"], "t": 0.0, "life": 0.5, "r": 28.0, "c": Color("B7C8FF")})
+			"cone":
+				fx.append({"k": "fan", "pos": e["pos"], "dir": e["dir"], "t": 0.0, "life": 0.45, "r": e["radius"], "c": Color("FF8A4A")})
+			"beam":
+				fx.append({"k": "beam", "a": e["a"], "b": e["b"], "t": 0.0, "life": 0.5, "c": Color("7FD8FF")})
+			"hexbreak":
+				fx.append({"k": "hex", "pos": e["pos"], "t": 0.0, "life": 0.5, "c": Color("F28A2E")})
+			"magic_circle":
+				fx.append({"k": "circle", "pos": e["pos"], "t": 0.0, "life": 0.7, "c": Color("B7C8FF")})
+			"thread", "line_fx":
+				fx.append({"k": "line", "a": e["a"], "b": e["b"], "t": 0.0, "life": 0.6, "c": Color("E9DCC4") if e["t"] == "thread" else Color("9A86D8")})
+			"splat":
+				fx.append({"k": "ring", "pos": e["pos"], "t": 0.0, "life": 0.4, "r": 24.0, "c": Color("2A2F45")})
 			"ripple":
 				for k in 3:
 					fx.append({"k": "ring", "pos": e["pos"], "t": -0.08 * k, "life": 0.5, "r": e["radius"] * 0.8, "c": Color(BRASS, 0.9)})
@@ -498,17 +553,29 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	if m.phase != "aim" or m.players[m.current_player()].cpu:
 		return
+	if relic_mode:
+		if event.pressed:
+			var rs := _stone_at(wp2, m.current_player())
+			if rs >= 0:
+				_equip_relic(rs)
+		return
 	if event.pressed:
 		var sid2 := _stone_at(wp2, m.current_player())
+		drag_cloud = false
+		if sid2 < 0:
+			sid2 = _cloud_at(wp2, m.current_player())
+			drag_cloud = sid2 >= 0
 		if sid2 >= 0:
 			drag_stone = sid2
 			drag_screen = event.position
+			drag_hold = 0.0
 	elif drag_stone >= 0:
 		var aim := _aim_of(drag_stone, event.position)
 		var sid3 := drag_stone
 		drag_stone = -1
 		if not aim.is_empty():
-			m.shoot(sid3, aim["dir"], aim["power"])
+			m.shoot(sid3, aim["dir"], aim["power"], {"charged": _charged(sid3), "from_cloud": drag_cloud})
+		drag_cloud = false
 
 
 func _stone_at(wp: Vector2, owner: int) -> int:
@@ -524,10 +591,48 @@ func _stone_at(wp: Vector2, owner: int) -> int:
 	return best
 
 
+## 구름 우편함: 비어 있는 내 구름 표식을 누르면 그 알을 거기서 쏜다.
+func _cloud_at(wp: Vector2, owner: int) -> int:
+	for d in m.world.devices:
+		if d.kind == "cloud" and d.owner == owner and d.pos.distance_to(wp) < World.STONE_R * 1.4:
+			var st = m.world.get_stone(d.stone_id)
+			if st != null and st.alive and _free_spot(d.pos, st.id):
+				return st.id
+	return -1
+
+
+func _free_spot(p: Vector2, ignore_id: int) -> bool:
+	for o in m.world.stones:
+		if o.alive and o.id != ignore_id and o.pos.distance_to(p) < World.STONE_R * 2.0:
+			return false
+	return true
+
+
+## 지금 조준 중인 알의 출발점 (구름에서 당기면 구름 자리).
+func _origin_of(stone_id: int) -> Vector2:
+	var s = m.world.get_stone(stone_id)
+	if drag_cloud and drag_stone == stone_id:
+		var c = m.world.cloud_of(stone_id)
+		if c != null:
+			return c.pos
+	return s.pos
+
+
+func _charged(stone_id: int) -> bool:
+	var s = m.world.get_stone(stone_id)
+	return s != null and s.parts["weapon"] == "charge_palm" and drag_hold >= PartsData.num("charge_palm", "charge")
+
+
+func _all_cpu() -> bool:
+	for p in m.players:
+		if not p.cpu:
+			return false
+	return true
+
+
 ## 손 위치로 조준을 계산한다. 알 가까이 되돌아오면 취소(빈 사전).
 func _aim_of(stone_id: int, screen_pos: Vector2) -> Dictionary:
-	var s = m.world.get_stone(stone_id)
-	var sp := w2s(s.pos)
+	var sp := w2s(_origin_of(stone_id))
 	var pull := sp - screen_pos
 	var dist := pull.length()
 	if dist < World.STONE_R * CANCEL_R * view_scale:
@@ -548,6 +653,10 @@ func _on_card_picked(pid: int, part: String) -> void:
 
 
 func _pick_stone_for_part(pid: int, sid: int) -> void:
+	if draft_part == "bookmark":
+		draft_stone = sid
+		_show_bookmark_choice(pid)
+		return
 	if PartsData.SIDE_PARTS.has(draft_part):
 		draft_stone = sid
 		_show_side_choice(pid)
@@ -555,11 +664,13 @@ func _pick_stone_for_part(pid: int, sid: int) -> void:
 		_apply_equip(pid, draft_part, sid, 1)
 
 
-func _apply_equip(pid: int, part: String, sid: int, side: int) -> void:
+func _apply_equip(pid: int, part: String, sid: int, side: int, reserve := "") -> void:
 	var s = m.world.get_stone(sid)
 	var slot := PartsData.slot_of(part)
 	var old: String = s.parts[slot]
-	if m.equip(pid, part, sid, side):
+	if m.equip(pid, part, sid, side, reserve):
+		if part == "bookmark" and m.players[pid].reserved != "":
+			_log("%s 다음 선택에 %s 예약했어요" % [_j(m.players[pid].name, "이", "가"), _j(PartsData.part_name(m.players[pid].reserved), "을", "를")], m.players[pid].color)
 		var nm := PartsData.part_name(part)
 		var txt := nm
 		if PartsData.SIDE_PARTS.has(part):
@@ -757,13 +868,25 @@ func _round_rect(r: Rect2, col: Color, radius: int, border := Color(0, 0, 0, 0))
 func _draw_stone(s) -> void:
 	var col: Color = m.players[s.owner].color
 	var facing: float = s.facing
+	var at: Vector2 = s.pos
 	if drag_stone == s.id:
 		var aim := _aim_of(s.id, drag_screen)
 		if not aim.is_empty():
 			facing = aim["dir"].angle()
+		at = _origin_of(s.id)
 	elif not cpu_aim.is_empty() and cpu_aim["stone"] == s.id:
 		facing = cpu_aim["dir"].angle()
-	var p := w2s(s.pos)
+	var p := w2s(at)
+	var manga = null
+	for f in fx:
+		if f["k"] == "manga" and f["stone"] == s.id:
+			manga = f
+	if manga != null:
+		_draw_manga_back(p, manga)
+	if drag_cloud and drag_stone == s.id:
+		draw_set_transform(w2s(s.pos), s.facing, Vector2.ONE * view_scale)
+		Art.draw(self, s.parts, s.magnet_side, col, 0.3, s.owner)
+		draw_set_transform_matrix(Transform2D.IDENTITY)
 	# 지금 차례인 퍽 표시
 	if m.phase == "aim" and s.owner == m.current_player() and drag_stone < 0:
 		var pulse := 0.5 + 0.5 * sin(time * 4.0)
@@ -771,8 +894,65 @@ func _draw_stone(s) -> void:
 		if m.aim_limit > 0.0 and not m.players[s.owner].cpu:
 			var frac := clampf(aim_left / m.aim_limit, 0.0, 1.0)
 			draw_arc(p, (World.STONE_R + 13) * view_scale, -PI / 2, -PI / 2 + TAU * frac, 40, Color(POWER, 0.85), 3.0, true)
+	# 충전 (모으고 쏘는 손바닥)
+	if drag_stone == s.id and s.parts["weapon"] == "charge_palm":
+		var cf := clampf(drag_hold / PartsData.num("charge_palm", "charge"), 0.0, 1.0)
+		draw_arc(p, (World.STONE_R + 10) * view_scale, -PI / 2, -PI / 2 + TAU * cf, 32, Color("7FD8FF") if cf < 1.0 else Color.WHITE, 3.0, true)
+		if cf >= 1.0:
+			draw_circle(p, (World.STONE_R + 14) * view_scale, Color("7FD8FF", 0.15 + 0.1 * sin(time * 12.0)))
+	if manga != null:
+		Art.mono = true
 	draw_set_transform(p, facing, Vector2.ONE * view_scale)
 	Art.draw(self, s.parts, s.magnet_side, col, 1.0, s.owner)
+	draw_set_transform_matrix(Transform2D.IDENTITY)
+	Art.mono = false
+	# 상태 표시: 봉인, 저주, 표식, 시간 정지
+	var badges: Array = []
+	if s.status.has("sealed"):
+		badges.append(["봉인", Color("9A86D8")])
+	if s.status.has("cursed"):
+		badges.append(["저주", Color("8A68D1")])
+	if m.world.shot != null and m.world.shot.ex.get("marks", {}).has(s.id):
+		draw_arc(p, (World.STONE_R + 4) * view_scale, 0, TAU, 24, Color("B7C8FF"), 2.0, true)
+	if m.world.shot != null and m.world.shot.ex.get("frozen", {}).has(s.id):
+		draw_arc(p, (World.STONE_R + 3) * view_scale, 0, TAU, 24, Color(1, 1, 1, 0.8), 3.0, true)
+	for i in badges.size():
+		_small_label(p + Vector2(0, -(World.STONE_R + 12) * view_scale - 14 * i), badges[i][0], badges[i][1])
+	if manga != null:
+		_draw_manga_front(p, manga)
+
+
+## 만화 발동 연출: 뒤에서 충격 모양이 터지고 집중선이 퍼진다.
+func _draw_manga_back(p: Vector2, f: Dictionary) -> void:
+	var u: float = f["t"] / f["life"]
+	var r := World.STONE_R * view_scale
+	var a := 1.0 if u < 0.7 else (1.0 - u) / 0.3
+	var rng := RandomNumberGenerator.new()
+	rng.seed = int(f["pos"].x * 13 + f["pos"].y * 7)
+	for i in 28:
+		var ang := TAU * i / 28.0 + rng.randf() * 0.1
+		var r0 := r * (2.4 + rng.randf() * 0.6)
+		var r1 := r * (4.2 + rng.randf() * 1.4)
+		draw_line(p + Vector2.from_angle(ang) * r0, p + Vector2.from_angle(ang) * r1, Color(1, 1, 1, 0.55 * a), 0.8 + rng.randf() * 1.2, true)
+	var star := PackedVector2Array()
+	for i in 32:
+		var ang2 := TAU * i / 32.0
+		var rr := r * (2.2 if i % 2 == 0 else 1.75) * (0.85 + 0.15 * minf(1.0, u * 6.0))
+		star.append(p + Vector2.from_angle(ang2) * rr)
+	draw_colored_polygon(star, Color("F5F3EE", a))
+	star.append(star[0])
+	draw_polyline(star, Color(0.07, 0.07, 0.07, a), 2.0, true)
+
+
+func _draw_manga_front(p: Vector2, f: Dictionary) -> void:
+	var u: float = f["t"] / f["life"]
+	var a := 1.0 if u < 0.7 else (1.0 - u) / 0.3
+	if f["text"] == "":
+		return
+	var pos := p + Vector2(-World.STONE_R * 3.2 * view_scale, -World.STONE_R * 2.2 * view_scale)
+	draw_set_transform(pos, deg_to_rad(-9.0), Vector2.ONE)
+	draw_string_outline(font_bold, Vector2.ZERO, f["text"], HORIZONTAL_ALIGNMENT_LEFT, -1, 30, 8, Color(0.07, 0.07, 0.07, a))
+	draw_string(font_bold, Vector2.ZERO, f["text"], HORIZONTAL_ALIGNMENT_LEFT, -1, 30, Color(f["c"], a))
 	draw_set_transform_matrix(Transform2D.IDENTITY)
 
 
@@ -812,6 +992,76 @@ func _draw_devices() -> void:
 				draw_arc(p, r, 0, TAU, 28, INK, 2.0, true)
 				draw_arc(p + Vector2(-r * 0.2, -r * 0.2), r * 0.55, PI * 1.05, PI * 1.45, 8, Color(1, 1, 1, 0.8), 2.0, true)
 				draw_arc(p, r + 3, 0, TAU, 28, Color(col, 0.7), 1.5, true)
+			"circle":
+				var cr2 := (World.STONE_R + PartsData.num("star_cloak", "radius")) * k * 0.7
+				draw_circle(p, cr2, Color("3B3F7A", 0.45))
+				draw_arc(p, cr2, 0, TAU, 32, Color("B7C8FF", 0.9), 2.0, true)
+				draw_arc(p, cr2 * 0.65, 0, TAU, 24, Color("B7C8FF", 0.5), 1.2, true)
+				for i in 5:
+					draw_circle(p + Vector2.from_angle(TAU * i / 5.0 + time * 0.6) * cr2 * 0.82, 2.0, Color.WHITE)
+				_small_label(p + Vector2(0, cr2 + 14), _left_text(d), SUB_FELT)
+			"net":
+				var along: Vector2 = d.dir.orthogonal()
+				var a0 := w2s(d.pos - along * d.length)
+				var b0 := w2s(d.pos + along * d.length)
+				draw_line(a0, b0, Color(BRASS, 0.9), 3.0, true)
+				var steps2 := int(d.length * 2.0 / 12.0)
+				for i in steps2:
+					var c2 := a0.lerp(b0, (i + 0.5) / steps2)
+					draw_line(c2 - d.dir * 5 * k, c2 + d.dir * 3 * k, Color("F2F4F1", 0.9), 1.5, true)
+				_small_label(w2s(d.pos - d.dir * 18.0), "안전망", HINT_GOLD)
+			"ice":
+				var pts2 := PackedVector2Array([p])
+				var half := deg_to_rad(PartsData.num("ice_fan", "spread_deg") * 0.5)
+				for i in 13:
+					pts2.append(p + Vector2.from_angle(d.dir.angle() - half + 2.0 * half * i / 12.0) * d.length * k)
+				draw_colored_polygon(pts2, Color("BFE3EA", 0.22))
+				pts2.append(p)
+				draw_polyline(pts2, Color("BFE3EA", 0.6), 1.5, true)
+			"card":
+				draw_set_transform(p, 0.2, Vector2.ONE * k)
+				draw_rect(Rect2(-11, -15, 22, 30), Color("5B2A6E"))
+				draw_rect(Rect2(-11, -15, 22, 30), Color("E3C27E"), false, 2.0)
+				draw_rect(Rect2(-6, -9, 12, 18), Color("C04A9A", 0.7), false, 1.5)
+				draw_set_transform_matrix(Transform2D.IDENTITY)
+				_small_label(p + Vector2(0, 26 * k), _left_text(d) if d.expires_round > 0 else "", SUB_FELT)
+			"mushroom":
+				draw_circle(p + Vector2(0, 3 * k), 9 * k, Color("EDE3CF"))
+				draw_arc(p - Vector2(0, 2 * k), 12 * k, PI, TAU, 16, Color("C9452F"), 9.0 * k, true)
+				draw_circle(p + Vector2(-5, -6) * k, 2.0 * k, Color.WHITE)
+				draw_circle(p + Vector2(5, -7) * k, 1.6 * k, Color.WHITE)
+			"wind":
+				var wd: Vector2 = d.dir
+				for i in 3:
+					var o := wd.orthogonal() * (i - 1) * 9.0 * k
+					draw_line(p + o - wd * 16 * k, p + o + wd * 12 * k, Color("DDE8F0", 0.7), 2.0, true)
+				draw_colored_polygon(PackedVector2Array([p + wd * 20 * k, p + wd * 10 * k + wd.orthogonal() * 7 * k, p + wd * 10 * k - wd.orthogonal() * 7 * k]), Color("DDE8F0", 0.85))
+				_small_label(p + Vector2(0, 26 * k), _left_text(d), SUB_FELT)
+			"well":
+				var wr := PartsData.num("moon_well", "radius") * k
+				draw_circle(p, wr, Color("262A55", 0.55))
+				draw_arc(p, wr, 0, TAU, 32, Color("B7C8FF", 0.7), 2.0, true)
+				draw_arc(p + Vector2(4, -3) * k, wr * 0.35, PI * 0.6, PI * 1.6, 10, Color("F2F4F1", 0.85), 2.0, true)
+				_small_label(p + Vector2(0, wr + 14), _left_text(d), SUB_FELT)
+			"wall":
+				var al: Vector2 = d.dir.orthogonal()
+				var wa := w2s(d.pos - al * d.length)
+				var wb := w2s(d.pos + al * d.length)
+				draw_line(wa, wb, INK, 13.0 * k, true)
+				draw_line(wa, wb, Color("8A8F96"), 10.0 * k, true)
+				for i in 4:
+					var c3 := wa.lerp(wb, (i + 0.5) / 4.0)
+					draw_line(c3 - d.dir * 4 * k, c3 + d.dir * 4 * k, Color("5E636B"), 1.5, true)
+			"log":
+				var la: Vector2 = d.dir.orthogonal()
+				draw_line(p - la * 18 * k, p + la * 18 * k, Color("6B4A2B"), 16.0 * k, true)
+				draw_circle(p + la * 18 * k, 8 * k, Color("C9A26F"))
+				draw_arc(p + la * 18 * k, 4 * k, 0, TAU, 12, Color("6B4A2B"), 1.5, true)
+			"cloud":
+				var cc: Color = Color(col, 0.9)
+				for o in [Vector2(-8, 2), Vector2(0, -4), Vector2(8, 2), Vector2(0, 4)]:
+					draw_circle(p + o * k, 9 * k, Color("F2F4F1", 0.75))
+				draw_arc(p, 16 * k, 0, TAU, 24, cc, 1.5, true)
 			"slick":
 				var a2 := p
 				var b2 := w2s(d.pos + d.dir * d.length)
@@ -868,6 +1118,20 @@ func _draw_projs() -> void:
 			draw_circle(sp, 3.5 * view_scale, TEXT if p.source != "decal" else Color(col.lightened(0.5)))
 			if p.source == "reflect":
 				draw_arc(sp, 9 * view_scale, 0, TAU, 12, Color("E1E6EB"), 1.5)
+		elif p.kind == "orb":
+			draw_circle(sp, 10 * view_scale, Color("B7C8FF", 0.3))
+			draw_circle(sp, 5 * view_scale, Color("E8EEFF"))
+		elif p.kind == "fist":
+			var owner_s = m.world.get_stone(p.ignore_id)
+			if owner_s != null:
+				var os := w2s(owner_s.pos)
+				draw_line(os, sp, INK, 7.0 * view_scale, true)
+				draw_line(os, sp, Color("D9A77E"), 4.0 * view_scale, true)
+			draw_circle(sp, 9 * view_scale, Color("D9A77E"))
+			draw_arc(sp, 9 * view_scale, 0, TAU, 16, INK, 2.0, true)
+		elif p.kind == "ink" or p.kind == "ink2":
+			draw_circle(sp, p.radius * view_scale, Color("1E2233"))
+			draw_circle(sp - p.vel.normalized() * 6 * view_scale, p.radius * 0.6 * view_scale, Color("1E2233", 0.6))
 		elif p.kind == "sucker":
 			var dv: Vector2 = p.vel.normalized()
 			draw_line(sp - dv * 18 * view_scale, sp, Color(col, 0.6), 2.0, true)
@@ -898,6 +1162,26 @@ func _draw_fx() -> void:
 				draw_arc(w2s(f["pos"]), f["r"] * view_scale * (0.3 + u * 0.7), 0, TAU, 40, Color(c, 1.0 - u), 4.0, true)
 			"line":
 				draw_line(w2s(f["a"]), w2s(f["b"]), Color(c, 0.9 * (1.0 - u)), 3.0, true)
+			"manga":
+				if f["stone"] < 0:
+					var mp := w2s(f["pos"])
+					_draw_manga_back(mp, f)
+					_draw_manga_front(mp, f)
+			"beam":
+				draw_line(w2s(f["a"]), w2s(f["b"]), Color(c, 0.35 * (1.0 - u)), 18.0 * view_scale, true)
+				draw_line(w2s(f["a"]), w2s(f["b"]), Color(1, 1, 1, 1.0 - u), 4.0 * view_scale, true)
+			"hex":
+				var hp := w2s(f["pos"])
+				for i in 6:
+					var ang := TAU * i / 6.0
+					var c0 := hp + Vector2.from_angle(ang) * (14.0 + 30.0 * u) * view_scale
+					draw_line(c0, c0 + Vector2.from_angle(ang + 2.0) * 10.0 * view_scale, Color(c, 1.0 - u), 2.5, true)
+			"circle":
+				var cp := w2s(f["pos"])
+				var cr := 34.0 * view_scale * (0.6 + 0.6 * u)
+				draw_arc(cp, cr, 0, TAU, 32, Color(c, 1.0 - u), 2.5, true)
+				for i in 5:
+					draw_circle(cp + Vector2.from_angle(TAU * i / 5.0 + u * 2.0) * cr, 2.5, Color(1, 1, 1, 1.0 - u))
 			"fan":
 				var base: float = f["dir"].angle()
 				var rr: float = f["r"] * view_scale * (0.4 + 0.6 * u)
@@ -936,7 +1220,7 @@ func _draw_aim_over() -> void:
 	var s = info["stone"]
 	var col: Color = m.players[s.owner].color
 	var line_col := col.lightened(0.25)
-	var sp := w2s(s.pos)
+	var sp := w2s(info.get("origin", s.pos))
 	for item in info["preview"]:
 		match item["k"]:
 			"bullet":
@@ -963,7 +1247,18 @@ func _draw_aim_over() -> void:
 				_dashed_ring(cp, World.STONE_R * view_scale, Color(BRASS, 0.95))
 				_text_outline(cp + Vector2(0, -(World.STONE_R + 8) * view_scale), "딸깍", 13, BRASS, true)
 			"mecha":
-				_text_outline(sp + Vector2(0, (World.STONE_R + 30) * view_scale + 12), "옆을 스치면 물고 던지기", 14, POWER, true)
+				_draw_mecha_aim(s, item)
+			"turn":
+				var ta := w2s(item["a"])
+				draw_dashed_line(sp, ta, Color(Art.STEEL, 0.6), 2.0, 6.0)
+				draw_line(ta, w2s(item["b"]), Color(BRASS, 0.9), 2.5, true)
+				_dashed_ring(ta, 6.0, BRASS)
+				_text_outline(ta + Vector2(0, -12), "꺾임", 13, BRASS, true)
+			"orb":
+				draw_dashed_line(w2s(item["a"]), w2s(item["b"]), Color("B7C8FF", 0.75), 2.0, 5.0)
+			"fist":
+				draw_dashed_line(w2s(item["a"]), w2s(item["b"]), Color("D9A77E", 0.85), 3.0, 8.0)
+				draw_circle(w2s(item["b"]), 6, Color("D9A77E", 0.85))
 	if info.has("finger"):
 		var f: Vector2 = info["finger"]
 		_dashed_ring(sp, World.STONE_R * CANCEL_R * view_scale, Color(1, 1, 1, 0.3))
@@ -987,6 +1282,65 @@ func _draw_aim_over() -> void:
 			draw_polyline(head, INK, 2.0, true)
 
 
+## 메카 티라노 조준: 팔이 닿는 측면(주인 색 부채꼴)과 던질 방향(황동 점선).
+## 끌어올 자리가 막힐 것 같으면 부채꼴을 회색 빗금으로.
+func _draw_mecha_aim(s, item: Dictionary) -> void:
+	var dir: Vector2 = item["dir"]
+	var c := w2s(s.pos)
+	var r := 96.0 * view_scale
+	var base := dir.angle() + PI / 2.0
+	var spread := deg_to_rad(35.0)
+	var blocked := _mecha_blocked(s, dir)
+	var col: Color = m.players[s.owner].color
+	var pts := PackedVector2Array([c])
+	for i in 13:
+		pts.append(c + Vector2.from_angle(base - spread + 2.0 * spread * i / 12.0) * r)
+	draw_colored_polygon(pts, Color(Art.NEUTRAL, 0.18) if blocked else Color(col, 0.16))
+	pts.append(c)
+	for i in pts.size() - 1:
+		if i % 2 == 0:
+			draw_line(pts[i], pts[i + 1], Color(Art.NEUTRAL, 0.8) if blocked else col.lightened(0.25), 1.5, true)
+	if blocked:
+		for i in 6:
+			var t := (i + 1) / 7.0
+			var q := c + Vector2.from_angle(base) * r * t
+			var o := Vector2.from_angle(base + PI / 2.0) * r * 0.25 * t
+			draw_line(q - o, q + o + Vector2.from_angle(base) * 8, Color(Art.NEUTRAL, 0.7), 1.2, true)
+	var e := w2s(item["edge"])
+	var start := c + dir * (World.STONE_R + 20) * view_scale
+	draw_dashed_line(start, e, BRASS, 2.5, 9.0)
+	draw_colored_polygon(PackedVector2Array([e + dir * 4, e - dir * 12 + dir.orthogonal() * 7, e - dir * 12 - dir.orthogonal() * 7]), BRASS)
+	_text_outline(c + Vector2(0, (World.STONE_R + 34) * view_scale + 14), "자리가 막혀 일반 충돌" if blocked else "옆을 스치면 물고 던지기", 14, Color(Art.NEUTRAL) if blocked else POWER, true)
+
+
+## 직선으로 갈 때 처음 옆면으로 닿을 상대 앞자리가 막혀 있는지 (대략).
+func _mecha_blocked(s, dir: Vector2) -> bool:
+	var R := World.STONE_R
+	var best_along := INF
+	var target = null
+	for t in m.world.stones:
+		if not t.alive or t.id == s.id or t.owner == s.owner:
+			continue
+		var off: Vector2 = t.pos - s.pos
+		var along := off.dot(dir)
+		var perp := absf(off.cross(dir))
+		if along > 0.0 and perp < 2.0 * R and perp > 2.0 * R * 0.6 and along < best_along:
+			best_along = along
+			target = t
+	if target == null:
+		return false
+	var off2: Vector2 = target.pos - s.pos
+	var perp2 := absf(off2.cross(dir))
+	var hit_at: Vector2 = s.pos + dir * (off2.dot(dir) - sqrt(maxf(0.0, 4.0 * R * R - perp2 * perp2)))
+	var spot := hit_at + dir * (2.0 * R + 1.0)
+	if not m.world.is_inside(spot):
+		return true
+	for o in m.world.stones:
+		if o.alive and o.id != s.id and o.id != target.id and o.pos.distance_to(spot) < 2.0 * R:
+			return true
+	return false
+
+
 func _dashed_ring(c: Vector2, r: float, col: Color) -> void:
 	var segs := maxi(12, int(TAU * r / 9.0))
 	for i in segs:
@@ -1002,8 +1356,11 @@ func _current_aim() -> Dictionary:
 		var aim := _aim_of(drag_stone, drag_screen)
 		if aim.is_empty():
 			return {"stone": s, "power": 0.0, "finger": drag_screen, "preview": [], "cancel": true}
-		return {"stone": s, "power": aim["power"], "finger": drag_screen,
-			"preview": Parts.aim_preview(m.world, s, aim["dir"], aim["power"])}
+		var saved: Vector2 = s.pos
+		s.pos = _origin_of(drag_stone)
+		var pv := Parts.aim_preview(m.world, s, aim["dir"], aim["power"])
+		s.pos = saved
+		return {"stone": s, "power": aim["power"], "finger": drag_screen, "preview": pv, "origin": _origin_of(drag_stone)}
 	if not cpu_aim.is_empty():
 		var s2 = m.world.get_stone(cpu_aim["stone"])
 		return {"stone": s2, "power": cpu_aim["power"],
@@ -1648,18 +2005,26 @@ func _show_catalog(from_setup: bool) -> void:
 			grid.add_child(cell)
 		list.add_child(grid)
 	# 세트
-	var st: Dictionary = PartsData.SETS["trex"]
-	list.add_child(_label(st["name"], 20, TEXT, 1))
-	var srow := HBoxContainer.new()
-	srow.add_theme_constant_override("separation", 14)
-	srow.add_child(_puck_pic({"weapon": "trex_head", "aux": "trex_arm", "prop": "trex_leg"}, Match.COLORS[0], 0, Vector2(130, 150), 1.3))
-	var sv := VBoxContainer.new()
-	sv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	sv.add_child(_label("티라노 머리·팔·다리를 한 퍽에 모두 달면 메카 티라노로 변신하고 「%s」가 열린다." % st["move"], 15, TEXT))
-	sv.add_child(_label("상대 옆을 스치듯 쏴서 팔이 먼저 닿으면 한 번: ① 팔이 끌어오고 ② 머리가 물어 조준 방향으로 던지고 ③ 다리가 버텨 반동을 줄인다. 정면으로 먼저 받으면 머리의 기본 물기만 나간다.", 13, SUB))
-	sv.add_child(_label("내 살아 있는 퍽에 티라노 부품이 있으면, 다음 개조 후보 세 자리 중 한 자리는 아직 없는 티라노 부품이다.", 13, BRASS))
-	srow.add_child(sv)
-	list.add_child(srow)
+	var how := {"trex": "상대 옆을 스치듯 쏴서 팔이 먼저 닿으면 한 번: 팔이 끌어오고, 머리가 물어 조준 방향으로 던지고, 다리가 버텨 반동을 줄인다. 끌어올 자리가 막혀 있으면 일반 충돌, 정면으로 먼저 받으면 머리의 기본 물기.",
+		"moon": "지팡이의 빛 구슬로 표식을 남긴 상대와 첫 충돌하면, 그 자리의 마법진이 상대를 접선 방향으로 튕기고 내 알은 장화로 앞으로 도약한다.",
+		"hero": "세 부품을 단 알이 내 마지막 알이면, 첫 상대 알이 떨어지는 순간 망토가 내 알을 멈추고 운동화가 조준 반대 방향으로 짧게 튕겨낸다. 머리띠의 충격파는 약한 샷에서 그대로 쓴다."}
+	for set_id in PartsData.SETS:
+		var st: Dictionary = PartsData.SETS[set_id]
+		list.add_child(_label("%s · %s" % [st["name"], st["move"]], 20, TEXT, 1))
+		var srow := HBoxContainer.new()
+		srow.add_theme_constant_override("separation", 14)
+		var sp: Array = st["parts"]
+		srow.add_child(_puck_pic({"weapon": sp[0], "aux": sp[1], "prop": sp[2]}, Match.COLORS[0], 0, Vector2(130, 150), 1.3))
+		var sv := VBoxContainer.new()
+		sv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		var names: Array = []
+		for pid2 in sp:
+			names.append(PartsData.part_name(pid2))
+		sv.add_child(_label("%s를 한 퍽에 모두 달면 변신하고 「%s」가 열린다." % ["·".join(names), st["move"]], 15, TEXT))
+		sv.add_child(_label(how.get(set_id, ""), 13, SUB))
+		srow.add_child(sv)
+		list.add_child(srow)
+	list.add_child(_label("미완성 세트 부품을 단 살아 있는 퍽이 있으면 다음 개조 후보 한 자리는 그 퍽에 빠진 세트 부품이다. 여러 퍽이 모으고 있으면 많이 모은 퍽, 같으면 지난번에 장착한 퍽이 우선.", 13, BRASS))
 
 
 func _part_card(pid: int, part: String) -> Button:
@@ -1805,10 +2170,47 @@ func _show_stone_hint(pid: int) -> void:
 	v.add_child(_button("다시 고르기", func(): _show_draft_cards(pid)))
 
 
+func _show_bookmark_choice(pid: int) -> void:
+	var v := _hint_panel(pid)
+	v.add_child(_label("운명의 책갈피: 다음 선택에 예약할 후보를 고르세요", 17, TEXT, 1))
+	var h := HBoxContainer.new()
+	h.add_theme_constant_override("separation", 8)
+	var sid := draft_stone
+	for other in m.offers[pid]:
+		if other == "bookmark":
+			continue
+		var o: String = other
+		h.add_child(_button(PartsData.part_name(o), func(): _apply_equip(pid, "bookmark", sid, 1, o)))
+	h.add_child(_button("다시 고르기", func(): _show_draft_cards(pid)))
+	v.add_child(h)
+
+
+func _show_relic_hint(pid: int) -> void:
+	relic_mode = true
+	var v := _hint_panel(pid)
+	var part: String = m.players[pid].relic
+	v.add_child(_label("유품 리본: %s 달 퍽을 누르세요 (빈 %s 슬롯)" % [_j(PartsData.part_name(part), "을", "를"), PartsData.SLOT_LABEL[PartsData.slot_of(part)]], 16, TEXT, 1))
+	v.add_child(_button("이번엔 안 달기", func():
+		relic_mode = false
+		_clear_overlay()))
+
+
+func _equip_relic(sid: int) -> void:
+	var pid := m.current_player()
+	var part: String = m.players[pid].relic
+	if m.equip_relic(pid, sid):
+		relic_mode = false
+		_clear_overlay()
+		var st = m.world.get_stone(sid)
+		_log("%s 유품 %s 달았어요" % [_j(m.players[pid].name, "이", "가"), _j(PartsData.part_name(part), "을", "를")], m.players[pid].color)
+		fx.append({"k": "ring", "pos": st.pos, "t": 0.0, "life": 0.6, "r": 40.0, "c": POWER})
+
+
 func _show_side_choice(pid: int) -> void:
 	var v := _hint_panel(pid)
 	var q := {"magnet": "자석팔을 어느 쪽에 달까요? (쏘는 방향 기준)",
 		"shield": "딱지 방패가 탄환을 어느 쪽으로 튕길까요? (쏘는 방향 기준)",
+		"side_scroll": "옆구리 주문서가 어느 쪽으로 꺾을까요? (쏘는 방향 기준)",
 		"crab": "게걸음 바퀴가 어느 쪽으로 튈까요? (쏘는 방향 기준)"}
 	v.add_child(_label(q.get(draft_part, "어느 쪽에 달까요?"), 17, TEXT, 1))
 	var h := HBoxContainer.new()

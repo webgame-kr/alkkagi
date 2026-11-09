@@ -27,6 +27,14 @@ func _initialize() -> void:
 		"test_tambourine_ripple", "test_track_groove_bends", "test_trex_leg_reduces_recoil",
 		"test_crab_hops_sideways", "test_clockwork_boost", "test_brake_stops",
 		"test_mecha_throw", "test_mecha_frontal_is_plain_bite", "test_trex_draft_rule", "test_set_label",
+		"test_mecha_blocked_is_normal_hit", "test_scissors_seal_next_launch", "test_bookmark_reserve",
+		"test_edge_sewer_net", "test_drift_tire", "test_flash_step", "test_log_sub", "test_trap_card",
+		"test_shadow_scale", "test_night_charm_curse", "test_anchor_returns", "test_moon_orbit_magic",
+		"test_hero_last_cut", "test_relic_ribbon", "test_set_recommend_priority", "test_rubber_fist",
+		"test_ink_split", "test_echo_bell", "test_stopwatch_freeze", "test_glass_wings", "test_side_scroll",
+		"test_cloud_mailbox", "test_ice_and_wall", "test_star_cloak_circle", "test_moon_well",
+		"test_mushroom_and_wind", "test_second_step", "test_rebound_and_string", "test_at_field_and_beam",
+		"test_hero_band_and_shoes", "test_all_parts_have_art",
 	]
 	for t in tests:
 		var before := failures
@@ -715,3 +723,445 @@ func test_set_label() -> void:
 	parts["prop"] = "trex_leg"
 	check(PartsData.set_label(parts).begins_with("메카 티라노 완성"), "complete label")
 	check(PartsData.set_label({"weapon": "", "aux": "", "prop": ""}) == "", "no label without T-rex parts")
+
+
+# ── 확장 부품 ────────────────────────────────────────────
+
+func test_mecha_blocked_is_normal_hit() -> void:
+	var w := make_world()
+	var a := w.add_stone(0, Vector2(-200, 0), 0)
+	w.add_stone(1, Vector2(-110, 38), 0)
+	w.add_stone(2, Vector2(-110 + 6, 0), 0)  # 앞자리를 막는 알
+	_trex(a)
+	shoot(w, a.id, Vector2.RIGHT, 0.55)
+	check(count_events(w, "part", "mecha") == 0, "blocked pull: no bite-and-throw")
+
+
+func test_scissors_seal_next_launch() -> void:
+	var w := make_world()
+	var a := w.add_stone(0, Vector2(-200, 0), 0)
+	var b := w.add_stone(1, Vector2(-100, 0), 0)
+	a.parts["weapon"] = "shadow_scissors"
+	b.parts["weapon"] = "pea"
+	shoot(w, a.id, Vector2.RIGHT, 0.4)
+	check(b.status.get("sealed", "") == "weapon", "weapon slot sealed")
+	w.events.clear()
+	w.launch(b.id, Vector2.UP, 0.1)
+	check(w.projs.is_empty(), "sealed pea does not fire")
+	w.run_until_settled()
+	w.end_shot()
+	check(b.parts["weapon"] == "pea" and not b.status.has("sealed"), "seal lasts one launch")
+
+
+func test_bookmark_reserve() -> void:
+	var m := Match.new()
+	m.setup(4, [], 21, false)
+	m.phase = "draft"
+	m.draft_queue = [0]
+	m.offers[0] = ["bookmark", "rocket", "pea"]
+	var s = m.world.alive_stones_of(0)[0]
+	check(m.equip(0, "bookmark", s.id, 1, "pea"), "equip bookmark")
+	check(m.players[0].reserved == "pea", "pea reserved")
+	var offer := m.roll_offer(0)
+	check(offer.has("pea") and offer.size() == 3, "reserved part offered next time")
+	check(m.players[0].reserved == "", "reservation used up")
+
+
+func test_edge_sewer_net() -> void:
+	var w := make_world()
+	var a := w.add_stone(0, Vector2(150, 0), 0)
+	var b := w.add_stone(1, Vector2(250, 0), 0)
+	a.parts["prop"] = "edge_sewer"
+	shoot(w, a.id, Vector2.RIGHT, 1.0)
+	check(count_events(w, "part", "edge_sewer") >= 2, "net placed and caught a stone")
+	check(b.alive, "target bounced back in by the net")
+
+
+func test_drift_tire() -> void:
+	var w := make_world()
+	var a := w.add_stone(0, Vector2(0, 250), 0)
+	a.parts["prop"] = "drift_tire"
+	shoot(w, a.id, Vector2(1, 0.25).normalized(), 1.0)
+	check(count_events(w, "part", "drift_tire") == 1, "drifted along the edge")
+	check(count_events(w, "manga") >= 1, "anime part triggers the manga effect")
+	var w2 := make_world()
+	var b := w2.add_stone(0, Vector2(0, 0), 0)
+	b.parts["prop"] = "drift_tire"
+	shoot(w2, b.id, Vector2.RIGHT, 1.0)
+	check(not b.alive, "head-on: still falls")
+
+
+func test_flash_step() -> void:
+	var w := make_world()
+	var a := w.add_stone(0, Vector2(-200, 0), 0)
+	var b := w.add_stone(1, Vector2(-80, 0), 0)
+	a.parts["prop"] = "flash_step"
+	shoot(w, a.id, Vector2.RIGHT, 0.6)
+	check(count_events(w, "part", "flash_step") == 1, "teleported")
+	check(a.pos.x > b.pos.x, "ended up beyond the first stone")
+	check(b.pos.distance_to(Vector2(-80, 0)) < 1.0, "first stone untouched")
+
+
+func test_log_sub() -> void:
+	var w := make_world()
+	var a := w.add_stone(0, Vector2(-200, 0), 0)
+	var b := w.add_stone(1, Vector2(-80, 0), 0)
+	b.parts["aux"] = "log_sub"
+	shoot(w, a.id, Vector2.RIGHT, 0.6)
+	check(count_events(w, "part", "log_sub") == 1, "log substitution")
+	check(absf(b.pos.y) > 30.0, "defender slipped sideways")
+	check(a.pos.x < -120.0, "attacker bounced off the log")
+
+
+func test_trap_card() -> void:
+	var w := make_world()
+	var a := w.add_stone(0, Vector2(-200, 0), 0)
+	a.parts["aux"] = "trap_card"
+	shoot(w, a.id, Vector2.RIGHT, 0.3)
+	var card = null
+	for d in w.devices:
+		if d.kind == "card":
+			card = d
+	check(card != null, "card placed")
+	if card == null:
+		return
+	a.pos += Vector2(0, -150)
+	var c := w.add_stone(1, card.pos + Vector2(150, 0), 0)
+	shoot(w, c.id, Vector2.LEFT, 0.6)
+	check(count_events(w, "part", "trap_card") >= 1 and c.pos.x > card.pos.x, "stepping stone bounced back")
+
+
+func test_shadow_scale() -> void:
+	var w := make_world()
+	var a := w.add_stone(0, Vector2(-200, 0), 0)
+	var b := w.add_stone(1, Vector2(-100, 0), 0)
+	var u := w.add_stone(2, Vector2(-100, 90), 0)
+	a.parts["aux"] = "shadow_scale"
+	shoot(w, a.id, Vector2.RIGHT, 0.6)
+	check(u.pos.distance_to(Vector2(-100, 90)) > 15.0, "share of the hit went to the neighbour")
+
+
+func test_night_charm_curse() -> void:
+	var w := make_world()
+	var a := w.add_stone(0, Vector2(-200, 0), 0)
+	var b := w.add_stone(1, Vector2(-100, 0), 0)
+	a.parts["weapon"] = "night_charm"
+	shoot(w, a.id, Vector2.RIGHT, 0.4)
+	check(b.status.get("cursed", -1) == 0, "cursed")
+	var behind := w.add_stone(2, b.pos + Vector2(-80, 0), 0)
+	var before := behind.pos
+	shoot(w, b.id, Vector2.RIGHT, 0.2)
+	check(behind.pos.distance_to(before) > 20.0, "shadow pushed the stone behind on the next launch")
+	check(not b.status.has("cursed"), "curse used up")
+
+
+func test_anchor_returns() -> void:
+	var w := make_world()
+	var a := w.add_stone(0, Vector2(-200, 0), 0)
+	w.add_stone(1, Vector2(-100, 0), 0)
+	a.parts["prop"] = "anchor"
+	shoot(w, a.id, Vector2.RIGHT, 0.6)
+	check(a.pos.distance_to(Vector2(-200, 0)) < 1.0, "returned to the start")
+
+
+func _moon(s) -> void:
+	s.parts = {"weapon": "moon_staff", "aux": "star_cloak", "prop": "moon_boots"}
+
+
+func test_moon_orbit_magic() -> void:
+	var w := make_world()
+	var a := w.add_stone(0, Vector2(-200, 0), 0)
+	var b := w.add_stone(1, Vector2(-60, 0), 0)
+	_moon(a)
+	shoot(w, a.id, Vector2.RIGHT, 0.6)
+	check(count_events(w, "mark") >= 1, "orb marked the target")
+	check(count_events(w, "part", "moon_set") == 1, "orbit magic fired")
+	check(absf(b.pos.y) > 40.0, "target flung along the tangent")
+
+
+func _hero(s) -> void:
+	s.parts = {"weapon": "hero_band", "aux": "torn_cape", "prop": "awaken_shoes"}
+
+
+func test_hero_last_cut() -> void:
+	var w := make_world()
+	var a := w.add_stone(0, Vector2(100, 0), 0)
+	var b := w.add_stone(1, Vector2(250, 0), 0)
+	_hero(a)
+	shoot(w, a.id, Vector2.RIGHT, 0.9)
+	check(not b.alive, "target knocked out")
+	check(count_events(w, "part", "hero_set") == 1, "last cut fired")
+	check(a.alive and a.pos.x < 250.0, "hero stopped and stepped back")
+
+
+func test_relic_ribbon() -> void:
+	var m := Match.new()
+	m.setup(2, [], 31, false)
+	var mine: Array = m.world.alive_stones_of(0)
+	mine[0].parts = {"weapon": "pea", "aux": "relic_ribbon", "prop": ""}
+	mine[0].alive = false
+	m.world.relics.append({"owner": 0, "part": "pea"})
+	while m.current_player() != 0 and m.phase != "over":
+		m.skip_turn()
+	m.skip_turn()
+	while m.current_player() != 0 and m.phase != "over":
+		if m.phase == "draft":
+			m.draft_queue.clear()
+			m.phase = "aim"
+			m._mark_relic_turn()
+			continue
+		m.skip_turn()
+	check(m.players[0].relic == "pea", "relic kept for my next turn")
+	var targets := m.relic_targets(0)
+	check(not targets.is_empty(), "stones with an empty weapon slot")
+	check(m.equip_relic(0, targets[0].id) and targets[0].parts["weapon"] == "pea", "relic equipped")
+
+
+func test_set_recommend_priority() -> void:
+	var m := Match.new()
+	m.setup(4, [], 41, false)
+	var mine: Array = m.world.alive_stones_of(0)
+	mine[0].parts = {"weapon": "moon_staff", "aux": "", "prop": ""}
+	mine[1].parts = {"weapon": "hero_band", "aux": "torn_cape", "prop": ""}
+	for i in 20:
+		var offer := m.roll_offer(0)
+		check(offer.has("awaken_shoes"), "the stone with more set parts wins")
+	mine[1].parts = {"weapon": "hero_band", "aux": "", "prop": ""}
+	m.players[0].focus = mine[0].id
+	for i in 20:
+		var o2 := m.roll_offer(0)
+		check(o2.has("star_cloak") or o2.has("moon_boots"), "tie: last equipped stone wins")
+
+
+func test_rubber_fist() -> void:
+	var w := make_world()
+	var a := w.add_stone(0, Vector2(-250, 0), 0)
+	var b := w.add_stone(1, Vector2(-50, 0), 0)
+	a.parts["weapon"] = "rubber_fist"
+	shoot(w, a.id, Vector2.RIGHT, 0.05)
+	check(b.pos.x > -50.0 + 40.0, "fist pushed the first stone")
+
+
+func test_ink_split() -> void:
+	var w := make_world()
+	var a := w.add_stone(0, Vector2(-250, 0), 0)
+	w.add_stone(1, Vector2(0, 0), 0)
+	var side := w.add_stone(2, Vector2(0, 110), 0)
+	a.parts["weapon"] = "ink_drop"
+	shoot(w, a.id, Vector2.RIGHT, 0.05)
+	check(side.pos.y > 130.0, "split ink pushed the side stone")
+
+
+func test_echo_bell() -> void:
+	var w := make_world()
+	var a := w.add_stone(0, Vector2(-200, 0), 0)
+	w.add_stone(1, Vector2(-100, 0), 0)
+	var c := w.add_stone(2, Vector2(-120, 90), 0)
+	a.parts["weapon"] = "echo_bell"
+	shoot(w, a.id, Vector2.RIGHT, 0.4)
+	check(count_events(w, "ripple") == 1 and c.pos.y > 100.0, "delayed shockwave pushed outward")
+
+
+func test_stopwatch_freeze() -> void:
+	var w := make_world()
+	var a := w.add_stone(0, Vector2(-200, 0), 0)
+	w.add_stone(1, Vector2(-100, 0), 0)
+	var c := w.add_stone(2, Vector2(-100, 120), 0)
+	a.parts["aux"] = "stopwatch"
+	w.launch(a.id, Vector2.RIGHT, 0.5)
+	c.vel = Vector2(0, -300)
+	var frozen := false
+	for i in 80:
+		w.step()
+		if w.shot.ex.get("frozen", {}).has(c.id):
+			frozen = true
+			break
+	check(frozen, "moving stone nearby frozen")
+	w.run_until_settled()
+	check(c.pos.y < 100.0, "resumed its motion afterwards")
+
+
+func test_glass_wings() -> void:
+	var w := make_world()
+	var a := w.add_stone(0, Vector2(0, 250), 0)
+	a.parts["prop"] = "glass_wings"
+	shoot(w, a.id, Vector2(1, 0.2).normalized(), 1.0)
+	check(count_events(w, "part", "glass_wings") >= 1 and a.alive, "shallow: reflected inside")
+	var w2 := make_world()
+	var b := w2.add_stone(0, Vector2(0, 0), 0)
+	b.parts["prop"] = "glass_wings"
+	shoot(w2, b.id, Vector2.RIGHT, 1.0)
+	check(not b.alive, "head-on: wings break")
+
+
+func test_side_scroll() -> void:
+	var w := make_world()
+	var a := w.add_stone(0, Vector2(-250, 0), 0)
+	a.parts["prop"] = "side_scroll"
+	a.prop_side = 1
+	shoot(w, a.id, Vector2.RIGHT, 0.7)
+	check(count_events(w, "part", "side_scroll") == 1 and a.pos.y > 40.0, "turned 90° to the right (+y)")
+
+
+func test_cloud_mailbox() -> void:
+	var m := Match.new()
+	m.setup(2, [], 51, false)
+	var w = m.world
+	var s = w.alive_stones_of(m.current_player())[0]
+	s.parts["prop"] = "cloud_mailbox"
+	m.shoot(s.id, Vector2(0, -1) if s.owner == 0 else Vector2(0, 1), 0.3)
+	w.run_until_settled()
+	m.finish_shot()
+	var cloud = w.cloud_of(s.id)
+	check(cloud != null, "cloud left where it stopped")
+	if cloud == null:
+		return
+	s.pos += Vector2(90, 0)
+	check(w.move_to_cloud(s.id) and s.pos == cloud.pos, "can start again from the cloud")
+
+
+func test_ice_and_wall() -> void:
+	var w := make_world()
+	var a := w.add_stone(0, Vector2(-200, 0), 0)
+	w.add_stone(1, Vector2(-100, 0), 0)
+	a.parts["weapon"] = "ice_fan"
+	shoot(w, a.id, Vector2.RIGHT, 0.4)
+	var ice := false
+	for d in w.devices:
+		ice = ice or d.kind == "ice"
+	check(ice, "ice fan placed for the next shot")
+	var w2 := make_world()
+	var b := w2.add_stone(0, Vector2(-200, 0), 0)
+	w2.add_stone(1, Vector2(-120, 0), 0)
+	b.parts["weapon"] = "alchemy_glove"
+	shoot(w2, b.id, Vector2.RIGHT, 0.9)
+	check(count_events(w2, "part", "alchemy_glove") == 1, "stone wall raised")
+	var walls := 0
+	for d in w2.devices:
+		walls += 1 if d.kind == "wall" else 0
+	check(walls == 0, "wall gone after the shot")
+
+
+func test_star_cloak_circle() -> void:
+	var w := make_world()
+	var a := w.add_stone(0, Vector2(-200, 0), 0)
+	w.add_stone(1, Vector2(-100, 0), 0)
+	a.parts["aux"] = "star_cloak"
+	shoot(w, a.id, Vector2.RIGHT, 0.4)
+	var circ = null
+	for d in w.devices:
+		if d.kind == "circle":
+			circ = d
+	check(circ != null, "magic circle left")
+	if circ == null:
+		return
+	var c := w.add_stone(2, circ.pos + Vector2(0, 150), 0)
+	shoot(w, c.id, Vector2.UP, 0.5)
+	check(count_events(w, "magic_circle") >= 1, "a stone stepping in is flung")
+
+
+func test_moon_well() -> void:
+	var w := make_world()
+	var d = w.place_device("well", 0, 9, Vector2(0, 0), Vector2.RIGHT, 5)
+	var c := w.add_stone(1, Vector2(-150, 0), 0)
+	w.launch(c.id, Vector2.RIGHT, 0.6)
+	w.run_until_settled()
+	check(count_events(w, "part", "moon_well") >= 2, "slowed on entry, pushed on exit")
+
+
+func test_mushroom_and_wind() -> void:
+	var w := make_world()
+	var a := w.add_stone(0, Vector2(-200, 0), 0)
+	w.add_stone(1, Vector2(-100, 0), 0)
+	a.parts["aux"] = "mushroom"
+	shoot(w, a.id, Vector2.RIGHT, 0.4)
+	var n := 0
+	for d in w.devices:
+		n += 1 if d.kind == "mushroom" else 0
+	check(n == 2, "two mushrooms planted")
+	var w2 := make_world()
+	var b := w2.add_stone(0, Vector2(-200, 0), 0)
+	b.parts["aux"] = "wind_knot"
+	shoot(w2, b.id, Vector2.RIGHT, 0.4)
+	var wind := false
+	for d in w2.devices:
+		wind = wind or d.kind == "wind"
+	check(wind, "wind left where it stopped")
+
+
+func test_second_step() -> void:
+	var w := make_world()
+	var a := w.add_stone(0, Vector2(-200, 0), 0)
+	a.parts["prop"] = "second_step"
+	shoot(w, a.id, Vector2.RIGHT, 0.6)
+	var p := make_world()
+	var b := p.add_stone(0, Vector2(-200, 0), 0)
+	shoot(p, b.id, Vector2.RIGHT, 0.6)
+	check(count_events(w, "part", "second_step") == 1 and a.pos.x < b.pos.x - 40.0, "retraced part of the path")
+
+
+func test_rebound_and_string() -> void:
+	var w := make_world()
+	var a := w.add_stone(0, Vector2(-200, 0), 0)
+	w.add_stone(1, Vector2(-100, 0), 0)
+	w.add_stone(2, Vector2(0, 0), 0)
+	a.parts["prop"] = "rebound_shoes"
+	shoot(w, a.id, Vector2.RIGHT, 0.7)
+	check(count_events(w, "part", "rebound_shoes") == 1, "rebound dash")
+	var w2 := make_world()
+	var b := w2.add_stone(0, Vector2(-200, 0), 0)
+	w2.add_stone(1, Vector2(-100, 0), 0)
+	w2.add_stone(2, Vector2(-100, 100), 0)
+	b.parts["weapon"] = "string_doll"
+	shoot(w2, b.id, Vector2.RIGHT, 0.9)
+	check(count_events(w2, "thread") >= 1, "string tied")
+
+
+func test_at_field_and_beam() -> void:
+	var w := make_world()
+	var a := w.add_stone(0, Vector2(-200, 0), 0)
+	var b := w.add_stone(1, Vector2(-100, 0), 0)
+	a.parts["aux"] = "at_field"
+	shoot(w, a.id, Vector2.RIGHT, 0.5)
+	check(count_events(w, "hexbreak") == 1, "barrier hit and broke")
+	var w2 := make_world()
+	var c := w2.add_stone(0, Vector2(-250, 0), 0)
+	var t := w2.add_stone(1, Vector2(150, 0), 0)
+	c.parts["weapon"] = "charge_palm"
+	w2.launch(c.id, Vector2.RIGHT, 0.2, {"charged": true})
+	w2.run_until_settled()
+	check(count_events(w2, "beam") == 1 and t.pos.x > 180.0, "charged palm fires a beam")
+	var w3 := make_world()
+	var d := w3.add_stone(0, Vector2(-250, 0), 0)
+	d.parts["weapon"] = "charge_palm"
+	shoot(w3, d.id, Vector2.RIGHT, 0.2)
+	check(count_events(w3, "beam") == 0, "uncharged: no beam")
+
+
+func test_hero_band_and_shoes() -> void:
+	var w := make_world()
+	var a := w.add_stone(0, Vector2(-200, 0), 0)
+	var b := w.add_stone(1, Vector2(-80, 0), 0)
+	a.parts["weapon"] = "hero_band"
+	w.launch(a.id, Vector2.RIGHT, 0.3)
+	check(b.vel.x > 100.0, "last-stone weak shot: shockwave first")
+	w.run_until_settled()
+	var w2 := make_world()
+	var c := w2.add_stone(0, Vector2(-200, 0), 0)
+	w2.add_stone(0, Vector2(-200, 200), 0)
+	var e := w2.add_stone(1, Vector2(-80, 0), 0)
+	c.parts["weapon"] = "hero_band"
+	w2.launch(c.id, Vector2.RIGHT, 0.3)
+	check(e.vel == Vector2.ZERO, "not my last stone: no shockwave")
+	w2.run_until_settled()
+
+
+func test_all_parts_have_art() -> void:
+	var Art = load("res://scripts/stone_art.gd")
+	var AD = load("res://scripts/art_data.gd")
+	var hand := ["pea", "shotgun", "hook", "claw", "nose", "stamp", "copier", "magnet", "bumper", "flipper", "decal",
+		"umbrella", "spring", "carousel", "bubble", "mine", "rocket", "retro", "reel", "chute", "trex_head", "sucker",
+		"umbrella_gun", "roller", "trex_arm", "shield", "tambourine", "track", "trex_leg", "crab", "clockwork", "brake"]
+	for id in PartsData.ids():
+		check(hand.has(id) or AD.SHAPES.has(id), "art for " + id)
+	check(PartsData.ids().size() == 66, "66 parts: %d" % PartsData.ids().size())

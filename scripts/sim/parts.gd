@@ -117,10 +117,14 @@ static func first_on_ray(w, pos: Vector2, dir: Vector2, range_len: float, skip_i
 # ── 충돌 ─────────────────────────────────────────────────
 ## s: 발사한 알, t: 부딪힌 알, n: s → t 방향, v_before: 충돌 전 s의 속도.
 
-static func on_contact(w, s, t, n: Vector2, v_before: Vector2) -> void:
+const Ex = preload("res://scripts/sim/expansion.gd")
+
+
+static func on_contact(w, s, t, n: Vector2, v_before: Vector2, t_before := Vector2.ZERO) -> void:
 	var ctx = w.shot
 	var first: bool = not ctx.contacted
 	ctx.contacted = true
+	Ex.retrace_hit(w, s)
 	var cosv := 0.0
 	if v_before.length() > 1.0:
 		cosv = v_before.normalized().dot(n)
@@ -131,9 +135,11 @@ static func on_contact(w, s, t, n: Vector2, v_before: Vector2) -> void:
 	var contact: Vector2 = s.pos + n * R
 
 	# 메카 티라노 「물고 던지기」: 세 부품이 한 알에 모였고, 옆면으로 상대에 먼저 닿았을 때 한 번.
-	if D.set_complete(s.parts) and side_hit and opp and not ctx.used.has("trex_head") and not ctx.used.has("trex_arm"):
+	if D.set_complete(s.parts, "trex") and side_hit and opp and not ctx.used.has("trex_head") and not ctx.used.has("trex_arm"):
 		if _mecha_throw(w, s, t, n, v_before):
 			return
+	if Ex.on_contact(w, s, t, n, v_before, t_before, first, frontal, side_hit):
+		return
 
 	match s.parts["weapon"]:
 		"claw":
@@ -264,7 +270,11 @@ static func _pull_front(w, s, t, v_before: Vector2) -> bool:
 ## 메카 티라노: 팔로 끌어오고 → 머리가 물어 조준 방향으로 던지고 → 다리가 버틴다.
 static func _mecha_throw(w, s, t, n: Vector2, v_before: Vector2) -> bool:
 	var ctx = w.shot
-	_pull_front(w, s, t, v_before)
+	# 끌어올 자리가 막혀 있으면 일반 충돌로 처리한다 (기술은 쓰지 않는다).
+	if not _pull_front(w, s, t, v_before):
+		ctx.used["mecha_blocked"] = true
+		w.emit({"t": "part", "part": "trex_arm", "pos": t.pos, "owner": s.owner, "text": "자리가 막힘"})
+		return false
 	var st: Dictionary = D.SETS["trex"]
 	t.vel = ctx.dir * (maxf(v_before.length(), 300.0) * 0.9 + st["throw_power"])
 	s.vel *= D.num("trex_leg", "keep")
@@ -398,8 +408,17 @@ static func aim_preview(w, s, dir: Vector2, power: float) -> Array:
 		out.append({"k": "umbrella", "a": p2, "b": p2 + dir * od, "r": D.num("umbrella_gun", "radius")})
 	if s.parts["prop"] == "clockwork" and power <= D.num("clockwork", "max_power"):
 		out.append({"k": "clock", "a": s.pos + dir * travel_after(power * 1120.0, D.num("clockwork", "delay"))})
-	if D.set_complete(s.parts):
-		out.append({"k": "mecha", "a": s.pos, "dir": dir})
+	if D.set_complete(s.parts, "trex"):
+		out.append({"k": "mecha", "a": s.pos, "dir": dir, "edge": s.pos + dir * w.ray_to_edge(s.pos, dir)})
+	if s.parts["prop"] == "side_scroll":
+		var turn_at: Vector2 = s.pos + dir * D.num("side_scroll", "dist")
+		out.append({"k": "turn", "a": turn_at, "b": turn_at + dir.rotated(PI / 2.0 * s.prop_side) * 60.0})
+	if s.parts["weapon"] == "moon_staff":
+		var p3: Vector2 = s.pos + dir * (R + 7.0)
+		out.append({"k": "orb", "a": p3, "b": p3 + dir * w.ray_to_edge(p3, dir)})
+	if s.parts["weapon"] == "rubber_fist":
+		var p4: Vector2 = s.pos + dir * (R + 7.0)
+		out.append({"k": "fist", "a": p4, "b": p4 + dir * minf(D.num("rubber_fist", "reach"), w.ray_to_edge(p4, dir))})
 	if weapon == "stamp":
 		out.append({"k": "note", "a": s.pos, "text": "도장 작동" if power <= D.num("stamp", "max_power") else "도장 X (힘 45% 이하)"})
 	return out

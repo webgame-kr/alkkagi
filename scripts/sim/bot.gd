@@ -72,7 +72,7 @@ func evaluate(c: Dictionary) -> float:
 	var before := {}
 	for p in m.players:
 		before[p.id] = w.alive_stones_of(p.id).size()
-	w.launch(c["stone"], c["dir"], c["power"])
+	w.launch(c["stone"], c["dir"], c["power"], {"charged": true})
 	w.run_until_settled(8.0)
 	w.end_shot()
 	var score := 0.0

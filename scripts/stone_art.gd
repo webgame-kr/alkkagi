@@ -18,6 +18,11 @@ const NEUTRAL := Color("8A929C")
 const TICK := Color("F2F4F1")
 
 const C0 := Vector2(60, 62)     # 도면의 퍽 중심
+const ArtData = preload("res://scripts/art_data.gd")
+
+## 만화 연출 중인 알: 모든 색을 먹선 흑백으로 그린다.
+static var mono := false
+static var _poly_ok := {}
 
 
 ## 판 위의 퍽. symbol: 0~7 플레이어 각인. tick: 정면 눈금.
@@ -28,6 +33,12 @@ static func draw(ci: CanvasItem, parts: Dictionary, magnet_side: int, col: Color
 	var p: String = parts.get("prop", "")
 	if w == "trex_head" and x == "trex_arm" and p == "trex_leg":
 		draw_mecha(ci, col, a, symbol)
+		return
+	if w == "moon_staff" and x == "star_cloak" and p == "moon_boots":
+		draw_set_form(ci, "set_moon", col, a, symbol)
+		return
+	if w == "hero_band" and x == "torn_cape" and p == "awaken_shoes":
+		draw_set_form(ci, "set_hero", col, a, symbol)
 		return
 	var mirror := (x == "magnet" or x == "shield") and magnet_side < 0
 	if p != "":
@@ -56,6 +67,9 @@ static func _pts(arr: Array, mirror := false) -> PackedVector2Array:
 
 
 static func _al(c: Color, a: float) -> Color:
+	if mono:
+		var g := clampf((c.r * 0.3 + c.g * 0.59 + c.b * 0.11) * 1.35 - 0.12, 0.0, 1.0)
+		return Color(g, g, g, c.a * a)
 	return Color(c.r, c.g, c.b, c.a * a)
 
 
@@ -197,6 +211,9 @@ static func draw_slot_icon(ci: CanvasItem, center: Vector2, size: float, slot: S
 # ── 무기 (앞) ────────────────────────────────────────────
 
 static func _weapon(ci: CanvasItem, w: String, a: float) -> void:
+	if ArtData.SHAPES.has(w):
+		draw_data(ci, w, a, false)
+		return
 	match w:
 		"pea":
 			rect(ci, 53.5, 14, 13, 28, STEEL, a)
@@ -280,6 +297,9 @@ static func _weapon(ci: CanvasItem, w: String, a: float) -> void:
 # ── 보조 (옆) ────────────────────────────────────────────
 
 static func _aux(ci: CanvasItem, x: String, a: float, m: bool) -> void:
+	if ArtData.SHAPES.has(x):
+		draw_data(ci, x, a, m)
+		return
 	match x:
 		"magnet":
 			rect(ci, 82, 58, 14, 8, STEEL_D, a, m)
@@ -358,6 +378,9 @@ static func _aux(ci: CanvasItem, x: String, a: float, m: bool) -> void:
 # ── 추진 (뒤) ────────────────────────────────────────────
 
 static func _prop(ci: CanvasItem, p: String, a: float) -> void:
+	if ArtData.SHAPES.has(p):
+		draw_data(ci, p, a, false)
+		return
 	match p:
 		"rocket":
 			poly(ci, [Vector2(53, 92), Vector2(44, 104), Vector2(53, 104)], STEEL_D, a)
@@ -515,3 +538,47 @@ static func _ellipse(c: Vector2, rx: float, ry: float) -> PackedVector2Array:
 		var t := TAU * i / 24.0
 		out.append(T(c + Vector2(cos(t) * rx, sin(t) * ry)))
 	return out
+
+
+# ── 도형 데이터 (art_data.gd) ────────────────────────────
+
+static func _shape_color(tok: String, col: Color) -> Color:
+	if tok == "P":
+		return col
+	if tok == "PL":
+		return col.lightened(0.18)
+	return Color(tok)
+
+
+static func draw_data(ci: CanvasItem, id: String, a: float, mirror: bool, col := Color.WHITE) -> void:
+	var shapes: Array = ArtData.SHAPES[id]
+	for i in shapes.size():
+		var sh: Array = shapes[i]
+		var flat: Array = sh[5]
+		var pts := PackedVector2Array()
+		for k in range(0, flat.size(), 2):
+			pts.append(T(Vector2(flat[k], flat[k + 1]), mirror))
+		var c := _al(_shape_color(sh[1], col), a * sh[2])
+		if sh[0] == "f":
+			var key := "%s:%d" % [id, i]
+			if not _poly_ok.has(key):
+				_poly_ok[key] = not Geometry2D.triangulate_polygon(pts).is_empty()
+			if _poly_ok[key]:
+				ci.draw_colored_polygon(pts, c)
+			else:
+				# 자기 교차 도형: 볼록 껍질로 대신 칠한다
+				var hull := Geometry2D.convex_hull(pts)
+				if hull.size() >= 3:
+					ci.draw_colored_polygon(hull, c)
+		else:
+			if sh[4]:
+				pts.append(pts[0])
+			ci.draw_polyline(pts, c, maxf(0.6, sh[3] * K), true)
+
+
+## 달그림자 마도사·최후의 주인공 변신 외형 (퍽까지 한 몸으로 그린다).
+static func draw_set_form(ci: CanvasItem, id: String, col: Color, a: float, symbol: int) -> void:
+	draw_data(ci, id, a, false, col)
+	if symbol >= 0 and ArtData.SYMBOLS.has(id):
+		var sy: Array = ArtData.SYMBOLS[id]
+		draw_symbol(ci, symbol, col.lightened(0.18), a, T(Vector2(sy[0], sy[1])), sy[2] * K, true)

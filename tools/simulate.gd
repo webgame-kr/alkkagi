@@ -43,7 +43,10 @@ func _initialize() -> void:
 			while not bot.think_step(8):
 				pass
 			var r := bot.result()
-			m.shoot(r["stone"], r["dir"], r["power"])
+			for t in m.relic_targets(shooter):
+				m.equip_relic(shooter, t.id)
+				break
+			m.shoot(r["stone"], r["dir"], r["power"], {"charged": true})
 			m.world.record_events = true
 			m.world.run_until_settled()
 			for e in m.world.events:

@@ -5,6 +5,7 @@ extends RefCounted
 
 const Parts = preload("res://scripts/sim/parts.gd")
 const PartsDataRef = preload("res://scripts/sim/parts_data.gd")
+const Ex = preload("res://scripts/sim/expansion.gd")
 
 const STONE_R := 22.0
 const MAX_SPEED := 1120.0
@@ -29,7 +30,8 @@ class Stone:
 	var facing := 0.0
 	var parts := {"weapon": "", "aux": "", "prop": ""}
 	var magnet_side := 1      # 보조 좌우(자석팔·딱지 방패): 1 = 진행 방향 오른쪽, -1 = 왼쪽
-	var prop_side := 1        # 추진 좌우(게걸음 바퀴)
+	var prop_side := 1        # 추진 좌우(게걸음 바퀴, 옆구리 주문서)
+	var status := {}          # 다음 발사까지 남는 상태: sealed(봉인된 슬롯), cursed(저주 건 플레이어)
 
 	func copy() -> Stone:
 		var s := Stone.new()
@@ -42,6 +44,7 @@ class Stone:
 		s.parts = parts.duplicate()
 		s.magnet_side = magnet_side
 		s.prop_side = prop_side
+		s.status = status.duplicate()
 		return s
 
 
@@ -79,7 +82,8 @@ class Proj:
 class Device:
 	var id := 0
 	var kind := ""            # mirror | mine | bubble | turret | slick | groove
-	var length := 0.0         # 띠·홈의 길이 (pos 에서 dir 방향으로)
+	var length := 0.0         # 띠·홈의 길이 (pos 에서 dir 방향으로), 장치별 보조 값
+	var expires_shot := -1    # 이 샷이 끝나면 사라짐 (shot_no 기준). -1 = 없음
 	var owner := 0
 	var stone_id := -1        # 이 장치를 만든 알 (부품당 하나 유지용)
 	var pos := Vector2.ZERO
@@ -100,6 +104,7 @@ class Device:
 		d.armed = armed
 		d.inside = inside.duplicate()
 		d.length = length
+		d.expires_shot = expires_shot
 		return d
 
 
@@ -124,6 +129,7 @@ class ShotCtx:
 	var shield_used := {}     # 딱지 방패를 쓴 알 id
 	var clock_timer := -1.0   # 딸깍 태엽 가속까지 남은 시간
 	var brake_armed := false  # 도장 브레이크: 기준 속도를 넘었었는지
+	var ex := {}              # 확장 부품의 이번 샷 상태 (expansion.gd)
 
 	func copy() -> ShotCtx:
 		var c := ShotCtx.new()
@@ -147,6 +153,7 @@ class ShotCtx:
 		c.shield_used = shield_used.duplicate()
 		c.clock_timer = clock_timer
 		c.brake_armed = brake_armed
+		c.ex = ex.duplicate(true)
 		return c
 
 
@@ -161,6 +168,8 @@ var shot: ShotCtx = null
 var record_events := true
 var events: Array = []        # 화면 연출용 사건 목록. 화면이 읽고 비운다.
 var knockouts: Array = []     # 이번 샷에 떨어진 알 {stone, owner}
+var shot_no := 0              # 지금까지 쏜 횟수 (샷 단위로 사라지는 장치용)
+var relics: Array = []        # 유품 리본으로 회수한 부품 {owner, part}. 경기 관리가 가져간다.
 
 
 func clone():
@@ -175,6 +184,7 @@ func clone():
 		w.devices.append(d.copy())
 	w.next_device_id = next_device_id
 	w.round_no = round_no
+	w.shot_no = shot_no
 	w.shot = shot.copy() if shot != null else null
 	w.record_events = false
 	return w
@@ -334,7 +344,7 @@ func expire_devices() -> void:
 
 # ── 샷 ───────────────────────────────────────────────────
 
-func launch(stone_id: int, dir: Vector2, power: float) -> void:
+func launch(stone_id: int, dir: Vector2, power: float, opts := {}) -> void:
 	var s := get_stone(stone_id)
 	if s == null or not s.alive:
 		return
@@ -347,6 +357,7 @@ func launch(stone_id: int, dir: Vector2, power: float) -> void:
 	shot.dir = dir
 	shot.power = power
 	shot.path = [s.pos]
+	shot_no += 1
 	knockouts.clear()
 	s.vel = dir * MAX_SPEED * power
 	s.facing = dir.angle()
@@ -363,6 +374,8 @@ func launch(stone_id: int, dir: Vector2, power: float) -> void:
 						on = _on_strip(d, o.pos, STONE_R * 0.6)
 					if o.alive and on:
 						d.inside[o.id] = true
+	Ex.arm_devices(self)
+	Ex.on_launch_pre(self, s, opts)
 	# 이 플레이어의 포탑이 함께 쏜다 (포탑 탄은 다른 부품을 다시 발동시키지 않는다).
 	for d in devices.duplicate():
 		if d.kind == "turret" and d.owner == s.owner:
@@ -370,6 +383,29 @@ func launch(stone_id: int, dir: Vector2, power: float) -> void:
 			emit({"t": "part", "part": "copier", "pos": d.pos, "owner": d.owner, "text": "포탑 발사"})
 			devices.erase(d)
 	Parts.on_launch(self, s)
+	Ex.on_launch(self, s)
+
+
+## 구름 우편함: 표식 자리가 비어 있으면 그 알을 그리로 옮긴다 (발사 직전).
+func move_to_cloud(stone_id: int) -> bool:
+	var s := get_stone(stone_id)
+	if s == null:
+		return false
+	for d in devices:
+		if d.kind == "cloud" and d.stone_id == stone_id:
+			for o in stones:
+				if o.alive and o.id != s.id and o.pos.distance_to(d.pos) < STONE_R * 2.0:
+					return false
+			s.pos = d.pos
+			return true
+	return false
+
+
+func cloud_of(stone_id: int):
+	for d in devices:
+		if d.kind == "cloud" and d.stone_id == stone_id:
+			return d
+	return null
 
 
 
@@ -380,6 +416,7 @@ func end_shot() -> void:
 	var s := shooter()
 	if s != null and s.alive:
 		Parts.on_stop(self, s)
+	Ex.on_end(self, s)
 	shot = null
 
 
@@ -387,6 +424,8 @@ func is_settled() -> bool:
 	if not projs.is_empty():
 		return false
 	if shot != null and (shot.grip_timer > 0.0 or shot.reel_timer > 0.0 or shot.clock_timer > 0.0):
+		return false
+	if Ex.busy(self):
 		return false
 	for s in stones:
 		if s.alive and s.vel != Vector2.ZERO:
@@ -412,6 +451,10 @@ func force_stop() -> void:
 		shot.grip_timer = 0.0
 		shot.reel_timer = 0.0
 		shot.clock_timer = -1.0
+		shot.ex.erase("beam_timer")
+		shot.ex.erase("echo")
+		shot.ex.erase("freeze_t")
+		shot.ex["retracing"] = false
 
 
 func step() -> void:
@@ -423,12 +466,14 @@ func step() -> void:
 			return
 	_update_reel(dt)
 	_update_shot_timers(dt)
+	Ex.timers(self, dt)
+	Ex.before_move(self, dt)
 	for s in stones:
-		if not s.alive:
+		if not s.alive or Ex.is_frozen(self, s):
 			continue
 		var sp: float = s.vel.length()
 		if sp > 0.0:
-			var fr := FRICTION * _friction_scale(s.pos)
+			var fr := FRICTION * _friction_scale(s.pos) * Ex.friction_scale(self, s.pos)
 			var ns := sp - fr * dt - sp * DRAG * dt
 			if ns < STOP_SPEED:
 				s.vel = Vector2.ZERO
@@ -440,7 +485,9 @@ func step() -> void:
 	_check_parachutes()
 	_update_projs(dt)
 	_check_devices()
+	Ex.check_devices(self)
 	_check_out()
+	Ex.after_step(self)
 	_record_path(dt)
 
 
@@ -548,13 +595,15 @@ func _collide_stones() -> void:
 				continue
 			if a.vel == Vector2.ZERO and b.vel == Vector2.ZERO:
 				continue
-			if _is_grip_pair(a, b):
+			if _is_grip_pair(a, b) or Ex.is_frozen(self, a) or Ex.is_frozen(self, b):
 				continue
 			var d := b.pos - a.pos
 			var dist := d.length()
 			if dist >= min_d:
 				continue
 			var nrm := d / dist if dist > 0.0001 else Vector2.RIGHT
+			if (a.vel - b.vel).dot(nrm) > 0.0 and Ex.pre_collision(self, a, b, nrm):
+				continue
 			var overlap := min_d - dist
 			a.pos -= nrm * overlap * 0.5
 			b.pos += nrm * overlap * 0.5
@@ -569,9 +618,10 @@ func _collide_stones() -> void:
 			emit({"t": "hit", "pos": a.pos + nrm * STONE_R, "strength": rel})
 			if shot != null:
 				if a.id == shot.stone_id:
-					Parts.on_contact(self, a, b, nrm, va)
+					Parts.on_contact(self, a, b, nrm, va, vb)
 				elif b.id == shot.stone_id:
-					Parts.on_contact(self, b, a, -nrm, vb)
+					Parts.on_contact(self, b, a, -nrm, vb, va)
+				Ex.post_collision(self, a, b, a.pos + nrm * STONE_R)
 
 
 func _check_parachutes() -> void:
@@ -606,6 +656,11 @@ func _update_projs(dt: float) -> void:
 			p.vel *= ns / sp
 		p.pos += p.vel * dt
 		p.travelled += p.vel.length() * dt
+		if Ex.handles(p.kind):
+			Ex.update_proj(self, p, dt)
+			if p.alive and (not _inside_margin(p.pos, 80.0) or p.age > 3.0):
+				p.alive = false
+			continue
 		if p.kind == "umbrella" and p.travelled >= PartsDataRef.num("umbrella_gun", "open_dist"):
 			_open_umbrella(p)
 			continue
@@ -787,11 +842,14 @@ func _explode(d: Device) -> void:
 
 func _check_out() -> void:
 	for s in stones:
+		if s.alive and not is_inside(s.pos) and Ex.save_from_edge(self, s):
+			continue
 		if s.alive and not is_inside(s.pos):
 			s.alive = false
 			s.vel = Vector2.ZERO
 			knockouts.append({"stone": s.id, "owner": s.owner})
 			emit({"t": "out", "pos": s.pos, "owner": s.owner})
+			Ex.on_out(self, s)
 			if shot != null and (shot.grip_id == s.id or shot.stone_id == s.id):
 				shot.grip_timer = 0.0
 			if shot != null and shot.stone_id == s.id:
