@@ -533,6 +533,9 @@ func _sp(k: String) -> float:
 
 
 func _update_play(delta: float) -> void:
+	# 개조가 끝나면 「골랐어요」 안내를 바로 닫는다 (온라인 동시 선택)
+	if overlay != null and m.phase != "draft" and overlay.has_meta("draft_wait"):
+		_clear_overlay()
 	if turn_hold > 0.0:
 		turn_hold -= delta
 		return
@@ -639,6 +642,9 @@ func _update_cpu(delta: float, pid: int) -> void:
 func _on_phase_changed() -> void:
 	match m.phase:
 		"aim":
+			# 개조가 끝났으니 「골랐어요」 안내는 닫는다 (온라인 동시 선택)
+			if overlay != null and overlay.has_meta("draft_wait"):
+				_clear_overlay()
 			if not round_picks.is_empty():
 				toast_picks = round_picks.duplicate()
 				toast_t = time
@@ -1017,6 +1023,7 @@ func _online_draft_ui() -> void:
 			waiting = true
 	if waiting and overlay == null:
 		var v := _hint_panel(my_seats[0])
+		overlay.set_meta("draft_wait", true)
 		v.add_child(_label("골랐어요. 모두 고르면 차례대로 공개돼요.", 16, TEXT, 1))
 
 

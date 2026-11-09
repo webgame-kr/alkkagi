@@ -64,6 +64,9 @@ var frames := 0
 var started := false
 
 
+var stale_hint := 0
+
+
 func _initialize() -> void:
 	var scene = load("res://scenes/main.tscn")
 	host = scene.instantiate()
@@ -112,6 +115,9 @@ func _drive(g) -> void:
 				var st = m.world.alive_stones_of(pid)[0]
 				g._apply_equip(pid, part, st.id, 1, "")
 	elif m.phase == "aim":
+		# 개조가 끝나 쏘는 차례가 되면 「골랐어요」 안내가 남아 있으면 안 된다
+		if g.overlay != null and _has_text(g.overlay, "골랐어요"):
+			stale_hint += 1
 		var pid2: int = m.current_player()
 		if g._is_mine(pid2) and not g.has_meta("acted_%d" % m.shots):
 			g.set_meta("acted_%d" % m.shots, true)
@@ -143,9 +149,21 @@ func _process(_delta: float) -> bool:
 				ok = false
 				print("  mismatch stone %d: %s %s vs %s %s" % [i, a.alive, a.pos, b.alive, b.pos])
 		ok = ok and str(host.m.winners) == str(guest.m.winners)
+		if stale_hint > 0:
+			print("  '골랐어요' 안내가 쏘는 차례에도 남아 있음: %d프레임" % stale_hint)
+			ok = false
 		print("NET %s rounds=%d shots=%d winners=%s/%s frames=%d" % ["OK" if ok else "DESYNC", host.m.round_no, host.m.shots, host.m.winners, guest.m.winners, frames])
 		quit(0 if ok else 1)
 	elif frames > 120000:
 		print("NET TIMEOUT host=%s/%s guest=%s/%s" % [host.state, host.m.phase if host.m else "-", guest.state, guest.m.phase if guest.m else "-"])
 		quit(1)
+	return false
+
+
+func _has_text(n: Node, t: String) -> bool:
+	if n is Label and (n as Label).text.begins_with(t):
+		return true
+	for c in n.get_children():
+		if _has_text(c, t):
+			return true
 	return false
