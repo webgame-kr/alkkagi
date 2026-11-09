@@ -1,0 +1,34 @@
+; Engine configuration file.
+
+config_version=5
+
+[application]
+
+config/name="개조 알까기"
+config/description="부품을 달아 개조한 알로 상대를 판 밖으로 밀어내는 2~8인 턴제 대전"
+run/main_scene="res://scenes/main.tscn"
+config/icon="res://icon.svg"
+config/features=PackedStringArray("4.7", "GL Compatibility")
+
+[display]
+
+window/size/viewport_width=1280
+window/size/viewport_height=800
+window/stretch/mode="canvas_items"
+window/stretch/aspect="expand"
+window/handheld/orientation=6
+
+[gui]
+
+theme/custom_font="res://fonts/NotoSansKR.ttf"
+theme/default_font_antialiasing=1
+
+[input_devices]
+
+pointing/emulate_mouse_from_touch=true
+
+[rendering]
+
+renderer/rendering_method="gl_compatibility"
+renderer/rendering_method.mobile="gl_compatibility"
+environment/defaults/default_clear_color=Color(0.086, 0.098, 0.118, 1)

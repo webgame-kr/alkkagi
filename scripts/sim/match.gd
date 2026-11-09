@@ -1,0 +1,229 @@
+extends RefCounted
+## 경기 관리: 차례, 바퀴, 탈락자, 부품 선택. 물리는 world.gd 에 맡긴다.
+
+const World = preload("res://scripts/sim/world.gd")
+const PartsData = preload("res://scripts/sim/parts_data.gd")
+
+const COLORS := [Color("e5484d"), Color("3e8ef7"), Color("f5b301"), Color("30a46c"),
+	Color("8e4ec6"), Color("f76b15"), Color("12a594"), Color("d6409f")]
+const NAMES := ["빨강", "파랑", "노랑", "초록", "보라", "주황", "청록", "분홍"]
+const OFFER_COUNT := 3
+const AIM_LIMIT := 8.0
+
+var n := 4
+var players: Array = []       # {id, name, color, cpu, out, out_round}
+var world: World
+var round_no := 1
+var max_rounds := 8
+var draft_rounds: Array = [2, 3, 4]
+var aim_limit := 0.0          # 0 = 제한 없음
+var start_seat := 0
+var order: Array = []         # 이번 바퀴의 차례 (플레이어 id)
+var turn_pos := 0
+var phase := "aim"            # draft | aim | moving | over
+var draft_queue: Array = []
+var offers := {}              # pid -> [part id ×3]
+var winners: Array = []
+var end_reason := ""          # last | limit | draw
+var out_order: Array = []     # 탈락한 순서 (플레이어 id)
+var shots := 0
+var rng := RandomNumberGenerator.new()
+
+
+func setup(n_players: int, cpu_flags: Array, seed_value: int, timed: bool) -> void:
+	n = clampi(n_players, 2, 8)
+	rng.seed = seed_value
+	players.clear()
+	for i in n:
+		players.append({"id": i, "name": NAMES[i], "color": COLORS[i],
+			"cpu": bool(cpu_flags[i]) if i < cpu_flags.size() else false, "out": false, "out_round": 0})
+	world = World.new()
+	if n == 2:
+		world.shape = "square"
+		world.size = 300.0
+		max_rounds = 12
+		draft_rounds = [2, 3, 4]
+	elif n <= 4:
+		world.shape = "circle"
+		world.size = 340.0
+		max_rounds = 8
+		draft_rounds = [2, 3, 4]
+	else:
+		world.shape = "circle"
+		world.size = 420.0
+		max_rounds = 6
+		draft_rounds = [1, 2, 3]
+	aim_limit = AIM_LIMIT if timed else 0.0
+	_place_stones()
+	start_seat = rng.randi_range(0, n - 1)
+	round_no = 1
+	winners.clear()
+	out_order.clear()
+	shots = 0
+	_begin_round()
+
+
+## 시작 구역: 판 가장자리를 따라 같은 간격, 가장자리에서 충분히 안쪽.
+func _place_stones() -> void:
+	if world.shape == "square":
+		for p in 2:
+			var y := (world.size - 120.0) * (1.0 if p == 0 else -1.0)
+			for k in 3:
+				world.add_stone(p, Vector2((k - 1) * 105.0, y), -PI / 2.0 if p == 0 else PI / 2.0)
+		return
+	var r0 := world.size * 0.54
+	for p in n:
+		var ang := PI / 2.0 + TAU * p / n
+		var radial := Vector2.from_angle(ang)
+		var tang := radial.orthogonal()
+		for k in 2:
+			var off := (k - 0.5) * 60.0
+			world.add_stone(p, radial * r0 + tang * off, ang + PI)
+
+
+func stones_left(pid: int) -> int:
+	return world.alive_stones_of(pid).size()
+
+
+func alive_players() -> Array:
+	var out: Array = []
+	for p in players:
+		if not p.out:
+			out.append(p.id)
+	return out
+
+
+func current_player() -> int:
+	if turn_pos < order.size():
+		return order[turn_pos]
+	return -1
+
+
+func current_drafter() -> int:
+	return draft_queue[0] if not draft_queue.is_empty() else -1
+
+
+func is_draft_round(r: int) -> bool:
+	return draft_rounds.has(r)
+
+
+# ── 바퀴 ─────────────────────────────────────────────────
+
+func _begin_round() -> void:
+	world.round_no = round_no
+	world.expire_devices()
+	order.clear()
+	for k in n:
+		var pid := (start_seat + k) % n
+		if not players[pid].out:
+			order.append(pid)
+	turn_pos = 0
+	if is_draft_round(round_no):
+		draft_queue = order.duplicate()
+		offers.clear()
+		for pid in draft_queue:
+			offers[pid] = _roll_offer()
+		phase = "draft"
+	else:
+		phase = "aim"
+
+
+func _roll_offer() -> Array:
+	var pool: Array = PartsData.ids()
+	var out: Array = []
+	while out.size() < OFFER_COUNT and not pool.is_empty():
+		var i := rng.randi_range(0, pool.size() - 1)
+		out.append(pool[i])
+		pool.remove_at(i)
+	return out
+
+
+## 고른 부품을 살아 있는 내 알에 단다. 같은 슬롯의 기존 부품은 교체된다.
+func equip(pid: int, part_id: String, stone_id: int, side := 1) -> bool:
+	if phase != "draft" or current_drafter() != pid:
+		return false
+	if not offers.get(pid, []).has(part_id):
+		return false
+	var s = world.get_stone(stone_id)
+	if s == null or not s.alive or s.owner != pid:
+		return false
+	s.parts[PartsData.slot_of(part_id)] = part_id
+	if part_id == "magnet":
+		s.magnet_side = 1 if side >= 0 else -1
+	draft_queue.pop_front()
+	if draft_queue.is_empty():
+		phase = "aim"
+	return true
+
+
+# ── 샷 ───────────────────────────────────────────────────
+
+func shoot(stone_id: int, dir: Vector2, power: float) -> bool:
+	if phase != "aim":
+		return false
+	var s = world.get_stone(stone_id)
+	if s == null or not s.alive or s.owner != current_player():
+		return false
+	world.launch(stone_id, dir, power)
+	phase = "moving"
+	shots += 1
+	return true
+
+
+## 모든 움직임이 끝난 뒤 부른다: 탈락 정리 → 승패 확인 → 다음 차례.
+func finish_shot() -> void:
+	world.end_shot()
+	_settle_turn()
+
+
+## 조준 시간이 끝나면 그 턴은 넘어간다.
+func skip_turn() -> void:
+	if phase != "aim":
+		return
+	_settle_turn()
+
+
+func _settle_turn() -> void:
+	for p in players:
+		if not p.out and stones_left(p.id) == 0:
+			p.out = true
+			p.out_round = round_no
+			out_order.append(p.id)
+	var alive := alive_players()
+	if alive.size() == 1:
+		_finish([alive[0]], "last")
+		return
+	if alive.is_empty():
+		_finish([], "draw")
+		return
+	turn_pos += 1
+	while turn_pos < order.size() and players[order[turn_pos]].out:
+		turn_pos += 1
+	if turn_pos < order.size():
+		phase = "aim"
+		return
+	# 바퀴 끝
+	round_no += 1
+	if round_no > max_rounds:
+		_finish_by_count()
+		return
+	start_seat = (start_seat + 1) % n
+	_begin_round()
+
+
+func _finish_by_count() -> void:
+	var best := 0
+	for pid in alive_players():
+		best = maxi(best, stones_left(pid))
+	var w: Array = []
+	for pid in alive_players():
+		if stones_left(pid) == best:
+			w.append(pid)
+	round_no = max_rounds
+	_finish(w, "limit")
+
+
+func _finish(w: Array, reason: String) -> void:
+	winners = w
+	end_reason = reason
+	phase = "over"
