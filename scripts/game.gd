@@ -191,6 +191,11 @@ func _layout() -> void:
 		win.content_scale_size = want
 		if overlay != null and state == "setup":
 			_show_setup.call_deferred()
+	_place()
+
+
+## 판과 패널 위치. 화면 크기가 바뀐 직후엔 값이 늦게 반영될 수 있어 매 프레임 다시 계산한다.
+func _place() -> void:
 	var vs := get_viewport_rect().size
 	portrait = vs.y > vs.x * 1.1
 	var extent := CELL * 9.0
@@ -258,6 +263,7 @@ func _start_match() -> void:
 
 func _process(delta: float) -> void:
 	time += delta
+	_place()
 	banner_t = maxf(0.0, banner_t - delta)
 	for f in fx:
 		f["t"] += delta
