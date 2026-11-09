@@ -48,14 +48,15 @@ const CELL := World.STONE_R * 2.0
 var font: Font
 var font_semi: Font
 var font_bold: Font
+var font_display: Font        # 제목·배너용 굵은 제목체 (Black Han Sans)
 var m: Match
 var settings := {"n": 4, "cpu": [false, true, true, true, true, true, true, true], "timed": false, "speed": 1,
 	"friend": [false, false, false, false, false, false, false, false], "workshop": "junk", "mode": "survival"}
 ## 게임 속도: 퍽이 움직이는 빠르기(재생 배율), CPU가 뜸 들이는 시간, 차례 사이 쉬는 시간.
 const SPEEDS := [
-	{"name": "느리게", "play": 0.5, "think": 1.4, "aim_show": 1.6, "hold": 1.1},
-	{"name": "보통", "play": 0.7, "think": 0.9, "aim_show": 1.15, "hold": 0.75},
-	{"name": "빠르게", "play": 1.0, "think": 0.45, "aim_show": 0.65, "hold": 0.3},
+	{"name": "느리게", "play": 0.75, "think": 1.0, "aim_show": 1.1, "hold": 0.7},
+	{"name": "보통", "play": 1.0, "think": 0.55, "aim_show": 0.75, "hold": 0.4},
+	{"name": "빠르게", "play": 1.3, "think": 0.3, "aim_show": 0.45, "hold": 0.2},
 ]
 var turn_hold := 0.0          # 샷이 끝난 뒤 다음 차례까지 잠깐 쉬기
 var state := "setup"          # setup | play | result
@@ -135,6 +136,7 @@ func _ready() -> void:
 	font = load("res://fonts/IBMPlexSansKR-Regular.ttf")
 	font_semi = load("res://fonts/IBMPlexSansKR-SemiBold.ttf")
 	font_bold = load("res://fonts/IBMPlexSansKR-Bold.ttf")
+	font_display = load("res://fonts/BlackHanSans-Regular.ttf")
 	var cfg := ConfigFile.new()
 	if cfg.load("user://settings.cfg") == OK:
 		map_id = cfg.get_value("view", "map", "auto")
@@ -316,7 +318,13 @@ func _debug_args() -> void:
 func _layout() -> void:
 	# 세로 화면(휴대폰)에서는 기준 해상도를 줄여 글자와 버튼을 키운다.
 	var win := get_window()
-	var want := Vector2i(480, 480) if win.size.y > win.size.x * 1.1 else Vector2i(1280, 800)
+	var aspect := float(win.size.x) / maxf(1.0, float(win.size.y))
+	# 휴대폰 세로 480 · 패드 세로 680 · 휴대폰 가로 1100×600 · 그 밖(패드 가로, PC) 1280×800
+	var want := Vector2i(1280, 800)
+	if aspect < 1.0 / 1.1:
+		want = Vector2i(480, 480) if aspect < 0.62 else Vector2i(680, 680)
+	elif aspect > 1.8:
+		want = Vector2i(1100, 600)
 	if win.content_scale_size != want:
 		win.content_scale_size = want
 		if overlay != null and state == "setup":
@@ -443,12 +451,13 @@ func _process(delta: float) -> void:
 	if online != "":
 		_net_poll()
 	if state == "setup" and is_instance_valid(lobby_col):
-		var vs3 := get_viewport_rect().size
-		var h3 := lobby_col.get_combined_minimum_size().y
-		lobby_col.position.y = clampf((vs3.y - h3) * 0.5, 12.0, maxf(12.0, vs3.y - h3 - 12.0))
-		if is_instance_valid(lobby_col2):
-			var h4 := lobby_col2.get_combined_minimum_size().y
-			lobby_col2.position.y = clampf((vs3.y - h4) * 0.5, 12.0, maxf(12.0, vs3.y - h4 - 12.0))
+		# 화면 크기가 실제로 바뀌면 (휴대폰 회전, 웹 첫 프레임) 대기실을 다시 짠다
+		if get_viewport_rect().size.distance_to(lobby_built_size) > 2.0 and overlay != null and not overlay.has_meta("settings"):
+			if online == "guest":
+				_show_guest_lobby()
+			else:
+				_show_setup()
+		_place_lobby(get_viewport_rect().size)
 	banner_t = maxf(0.0, banner_t - delta)
 	_update_shutter(delta)
 	if _theme_fade > 0.0:
@@ -649,7 +658,7 @@ var _shot_n := 0
 
 
 func _log(s: String, col := SUB) -> void:
-	log_lines.append({"t": s, "c": col})
+	log_lines.append({"t": s, "c": col, "at": time})
 	if log_lines.size() > 40:
 		log_lines.pop_front()
 
@@ -670,7 +679,7 @@ var banner_sub := ""
 func _banner(s: String, c := TEXT, sub := "") -> void:
 	banner_sub = sub
 	banner = s
-	banner_t = 1.05 if not _reduced() else 0.8
+	banner_t = 0.85 if not _reduced() else 0.6
 	_banner_col = c
 
 
@@ -1873,8 +1882,13 @@ func _draw_turn_card(r: Rect2) -> void:
 	if pid >= 0:
 		Art.draw_icon(self, r.position + Vector2(18 + 24, 18 + 24), 48, m.players[pid].color, pid)
 		x += 62
-	_txt(Vector2(x, r.position.y + 42), title, 24, TEXT, font_bold, r.end.x - x - 12)
-	_txt(Vector2(x, r.position.y + 64), sub, 14, SUB, font, r.end.x - x - 12)
+	if title != _turn_title_seen:
+		_turn_title_seen = title
+		_turn_title_t = time
+	var tk := clampf((time - _turn_title_t) / 0.25, 0.0, 1.0)
+	var tx := (1.0 - (1.0 - pow(1.0 - tk, 3.0))) * 14.0 if not _reduced() else 0.0
+	_txt(Vector2(x + tx, r.position.y + 42), title, 24, Color(TEXT, tk), font_display, r.end.x - x - 12)
+	_txt(Vector2(x + tx, r.position.y + 64), sub, 14, Color(SUB, tk), font, r.end.x - x - 12)
 	# 바퀴 진행
 	var y := r.position.y + 96
 	_txt(Vector2(r.position.x + 18, y), "%d바퀴째" % m.round_no, 13, LABEL, font_semi)
@@ -1922,6 +1936,9 @@ func _draw_order(r: Rect2) -> void:
 			rows.append(p.id)
 	var row_h := 40.0
 	var fs := 15
+	if not portrait and hud.has("power"):
+		row_h = clampf((hud["power"].position.y - 12.0 - r.position.y - 48.0) / maxf(1.0, rows.size()), 22.0, 40.0)
+		fs = 15 if row_h >= 32.0 else 13
 	if portrait:
 		row_h = clampf((r.size.y - 36.0) / rows.size(), 17.0, 30.0)
 		fs = 13 if row_h < 24.0 else 14
@@ -1991,9 +2008,11 @@ func _draw_log() -> void:
 	var y := r.position.y + 54
 	for k in shown.size():
 		var e: Dictionary = shown[k]
-		draw_circle(Vector2(r.position.x + 22, y - 5), 4, e["c"])
+		var age: float = clampf((time - float(e.get("at", -9.0))) / 0.3, 0.0, 1.0)
+		var ex := 12.0 * (1.0 - (1.0 - pow(1.0 - age, 3.0))) if not _reduced() else 0.0
+		draw_circle(Vector2(r.position.x + 22 + ex, y - 5), 4, Color(e["c"], age))
 		for ln in lines[k]:
-			_txt(Vector2(r.position.x + 36, y), ln, 14, TEXT if k == 0 else SUB, font)
+			_txt(Vector2(r.position.x + 36 + ex, y), ln, 14, Color(TEXT if k == 0 else SUB, age), font)
 			y += lh
 
 
@@ -2134,6 +2153,8 @@ func _label(text: String, size := 17, col := TEXT, weight := 0) -> Label:
 	l.add_theme_color_override("font_color", col)
 	if weight == 1:
 		l.add_theme_font_override("font", font_semi)
+	elif weight == 3:
+		l.add_theme_font_override("font", font_display)
 	elif weight >= 2:
 		l.add_theme_font_override("font", font_bold)
 	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -2211,6 +2232,9 @@ func _new_overlay(dim: bool) -> Control:
 		root.add_child(bg)
 	ui.add_child(root)
 	overlay = root
+	if not _reduced() and state != "setup":
+		root.modulate.a = 0.0
+		create_tween().tween_property(root, "modulate:a", 1.0, 0.14)
 	return root
 
 
@@ -2239,7 +2263,7 @@ func _show_setup() -> void:
 	menu_btn.visible = false
 	parts_btn.visible = false
 	sound_btn.visible = false
-	var root := _new_overlay(false)
+	var root := _lobby_root()
 	var vs := get_viewport_rect().size
 	var narrow := vs.x < 900
 	var col := VBoxContainer.new()
@@ -2253,7 +2277,7 @@ func _show_setup() -> void:
 	# 제목
 	var head := VBoxContainer.new()
 	head.add_theme_constant_override("separation", 8)
-	head.add_child(_label("개조 알까기", 44, TEXT, 2))
+	head.add_child(_label("개조 알까기", 48, TEXT, 3))
 	head.add_child(_label("퍽을 튕겨 상대를 판 밖으로. 바퀴마다 부품을 골라 개조합니다.", 16, SUB))
 	col.add_child(head)
 	# 인원: 분절 버튼
@@ -2342,7 +2366,7 @@ func _show_setup() -> void:
 		var sb2 := _button(SPEEDS[i]["name"], func():
 			settings["speed"] = i
 			_show_setup())
-		sb2.custom_minimum_size = Vector2(76, 38)
+		sb2.custom_minimum_size = Vector2(64 if narrow else 76, 38)
 		var st2 := _sb(BRASS if on else Color(FG, 0.05), Color(FG, 0.1), 8)
 		sb2.add_theme_stylebox_override("normal", st2)
 		sb2.add_theme_stylebox_override("hover", _sb(BRASS.lightened(0.1) if on else Color(FG, 0.1), Color(FG, 0.14), 8))
@@ -2353,11 +2377,21 @@ func _show_setup() -> void:
 		_toggle_sound()
 		_show_setup())
 	snd_b.custom_minimum_size = Vector2(96, 38)
-	sp_row.add_child(snd_b)
 	var set_b := _button("설정", func(): _show_settings(true))
 	set_b.custom_minimum_size = Vector2(64, 38)
-	sp_row.add_child(set_b)
-	col.add_child(sp_row)
+	if narrow:
+		col.add_child(sp_row)
+		var r3 := HBoxContainer.new()
+		r3.add_theme_constant_override("separation", 10)
+		snd_b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		set_b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		r3.add_child(snd_b)
+		r3.add_child(set_b)
+		col.add_child(r3)
+	else:
+		sp_row.add_child(snd_b)
+		sp_row.add_child(set_b)
+		col.add_child(sp_row)
 	# 친구 초대
 	col.add_child(_invite_row())
 	# 오른쪽 열: 배치 미리보기 · 오늘의 공방 · 모드 · 공방 열기
@@ -2375,7 +2409,6 @@ func _show_setup() -> void:
 		lobby_col2 = col2
 	else:
 		lobby_preview = null
-		lobby_col2 = null
 	col2.add_child(_workshop_row())
 	col2.add_child(_mode_row())
 	# 시작
@@ -2582,7 +2615,7 @@ func _show_catalog(from_setup: bool) -> void:
 	list.add_child(_label("미완성 세트 부품을 단 살아 있는 퍽이 있으면 다음 개조 후보 한 자리는 그 퍽에 빠진 세트 부품이다. 여러 퍽이 모으고 있으면 많이 모은 퍽, 같으면 지난번에 장착한 퍽이 우선.", 13, BRASS))
 
 
-func _part_card(pid: int, part: String) -> Button:
+func _part_card(pid: int, part: String, compact := false) -> Button:
 	var d := PartsData.get_part(part)
 	var slot: String = d["slot"]
 	var b := Button.new()
@@ -2599,17 +2632,38 @@ func _part_card(pid: int, part: String) -> Button:
 	b.add_theme_stylebox_override("pressed", hb)
 	b.pressed.connect(func(): _on_card_picked(pid, part))
 	var v := VBoxContainer.new()
-	v.set_anchors_preset(Control.PRESET_FULL_RECT)
-	v.offset_left = 12
-	v.offset_right = -12
-	v.offset_top = 14
-	v.offset_bottom = -12
 	v.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	v.add_theme_constant_override("separation", 6)
-	b.add_child(v)
+	v.add_theme_constant_override("separation", 4 if compact else 6)
+	var pic_box: Container = v
+	if compact:
+		var hb2 := HBoxContainer.new()
+		hb2.set_anchors_preset(Control.PRESET_FULL_RECT)
+		hb2.offset_left = 8
+		hb2.offset_right = -10
+		hb2.offset_top = 8
+		hb2.offset_bottom = -8
+		hb2.add_theme_constant_override("separation", 8)
+		hb2.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var lp := VBoxContainer.new()
+		lp.custom_minimum_size = Vector2(92, 0)
+		lp.alignment = BoxContainer.ALIGNMENT_CENTER
+		lp.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		hb2.add_child(lp)
+		v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		v.alignment = BoxContainer.ALIGNMENT_CENTER
+		hb2.add_child(v)
+		b.add_child(hb2)
+		pic_box = lp
+	else:
+		v.set_anchors_preset(Control.PRESET_FULL_RECT)
+		v.offset_left = 12
+		v.offset_right = -12
+		v.offset_top = 14
+		v.offset_bottom = -12
+		b.add_child(v)
 	# 배지: 슬롯 · 세트 n/3
 	var badges := HBoxContainer.new()
-	badges.alignment = BoxContainer.ALIGNMENT_CENTER
+	badges.alignment = BoxContainer.ALIGNMENT_BEGIN if compact else BoxContainer.ALIGNMENT_CENTER
 	badges.add_theme_constant_override("separation", 4)
 	badges.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	badges.add_child(_badge(PartsData.SLOT_LABEL[slot], Color(FG, 0.12), TEXT))
@@ -2624,13 +2678,13 @@ func _part_card(pid: int, part: String) -> Button:
 	v.add_child(badges)
 	var demo := {"weapon": "", "aux": "", "prop": ""}
 	demo[slot] = part
-	v.add_child(_puck_pic(demo, m.players[pid].color, pid, Vector2(0, 104), 0.98))
-	var name_l := _label(d["name"], 17, TEXT, 2)
-	name_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	pic_box.add_child(_puck_pic(demo, m.players[pid].color, pid, Vector2(0, 92 if compact else 104), 0.86 if compact else 0.98))
+	var name_l := _label(d["name"], 16 if compact else 17, TEXT, 2)
+	name_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT if compact else HORIZONTAL_ALIGNMENT_CENTER
 	var one: String = d["when"] + " · " + str(d["desc"]).split(". ")[0].trim_suffix(".")
 	var desc_l := _label(one, 12, SUB)
-	desc_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	desc_l.custom_minimum_size = Vector2(0, 34)
+	desc_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT if compact else HORIZONTAL_ALIGNMENT_CENTER
+	desc_l.custom_minimum_size = Vector2(0, 0 if compact else 34)
 	for l in [name_l, desc_l]:
 		l.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		v.add_child(l)
@@ -2642,14 +2696,17 @@ func _part_card(pid: int, part: String) -> Button:
 		arrow.draw_set_transform(Vector2(arrow.size.x * 0.5 - 20.0, 0))
 		_draw_motion(arrow, akind)
 		arrow.draw_set_transform_matrix(Transform2D.IDENTITY))
-	v.add_child(arrow)
+	if compact:
+		arrow.queue_free()
+	else:
+		v.add_child(arrow)
 	# 빈 슬롯에 바로 장착 / 기존 부품과 교체
 	var fit := false
 	for st in m.world.alive_stones_of(pid):
 		if st.parts[slot] == "":
 			fit = true
 	var fl := _label("빈 슬롯에 바로 장착" if fit else "기존 부품과 교체", 11, ACCENT if fit else SUB, 2)
-	fl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	fl.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT if compact else HORIZONTAL_ALIGNMENT_CENTER
 	fl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	v.add_child(fl)
 	var need: String = d.get("needs", "")
@@ -2699,7 +2756,7 @@ func _show_draft_cards(pid: int) -> void:
 	v.custom_minimum_size = Vector2(width, 0)
 	v.position = Vector2((vs.x - width) * 0.5, 0)
 	root.add_child(v)
-	var title := _label("%d바퀴 개조" % m.round_no + ("" if my_seats.size() <= 1 else " · " + p.name), 32, Color.WHITE, 2)
+	var title := _label("%d바퀴 개조" % m.round_no + ("" if my_seats.size() <= 1 else " · " + p.name), 34, Color.WHITE, 3)
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	title.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.4))
 	title.add_theme_constant_override("shadow_offset_y", 2)
@@ -2719,10 +2776,10 @@ func _show_draft_cards(pid: int) -> void:
 	var k := 0
 	for part in m.offers[pid]:
 		var cell := Control.new()
-		cell.custom_minimum_size = Vector2(0, 236 if stack else 318)
+		cell.custom_minimum_size = Vector2(0, 132 if stack else 318)
 		cell.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		holder.add_child(cell)
-		var card := _part_card(pid, part)
+		var card := _part_card(pid, part, stack)
 		cell.add_child(card)
 		_deal_card(card, k)
 		card.mouse_entered.connect(func():
@@ -2747,9 +2804,9 @@ func _deal_card(card: Control, k: int) -> void:
 	card.scale = Vector2(0.2, 1.0)
 	card.pivot_offset = Vector2(110, 160)
 	var tw := create_tween().set_parallel(true)
-	tw.tween_property(card, "modulate:a", 1.0, 0.3).set_delay(k * 0.09)
-	tw.tween_property(card, "position:y", 0.0, 0.45).set_delay(k * 0.09).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
-	tw.tween_property(card, "scale:x", 1.0, 0.45).set_delay(k * 0.09).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	tw.tween_property(card, "modulate:a", 1.0, 0.18).set_delay(k * 0.06)
+	tw.tween_property(card, "position:y", 0.0, 0.32).set_delay(k * 0.06).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	tw.tween_property(card, "scale:x", 1.0, 0.32).set_delay(k * 0.06).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 
 
 func _hint_panel(pid: int) -> VBoxContainer:
@@ -2875,7 +2932,7 @@ func _show_result() -> void:
 	head.add_theme_constant_override("separation", 14)
 	if m.winners.size() == 1:
 		head.add_child(_icon_pic(m.players[m.winners[0]].color, m.winners[0], 48))
-	var tl := _label(title, 44, col, 2)
+	var tl := _label(title, 48, col, 3)
 	tl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	tl.add_theme_color_override("font_outline_color", Color(th["outline"], 0.6))
 	tl.add_theme_constant_override("outline_size", 4)
@@ -3318,7 +3375,7 @@ func _show_guest_lobby() -> void:
 	menu_btn.visible = false
 	parts_btn.visible = false
 	sound_btn.visible = false
-	var root := _new_overlay(false)
+	var root := _lobby_root()
 	var vs := get_viewport_rect().size
 	var narrow := vs.x < 900
 	var col := VBoxContainer.new()
@@ -3375,13 +3432,14 @@ func _workshop_row() -> Control:
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", 10)
 	var head := HBoxContainer.new()
-	var lbl := _nw(_label("오늘의 공방", 20, TEXT, 2))
+	var lbl := _nw(_label("오늘의 공방", 22, TEXT, 3))
 	lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	head.add_child(lbl)
 	var cur: String = settings.get("workshop", "junk")
 	head.add_child(_nw(_label("공용 10종 + 전용 6종" if cur != "all" else "모든 부품 66종", 13, SUB)))
 	v.add_child(head)
-	var row := HBoxContainer.new()
+	var narrow_w := get_viewport_rect().size.x < 600.0
+	var row: BoxContainer = VBoxContainer.new() if narrow_w else HBoxContainer.new()
 	row.add_theme_constant_override("separation", 8)
 	for key in ["junk", "magic", "toon"]:
 		row.add_child(_workshop_card(key, cur == key))
@@ -3424,6 +3482,7 @@ func _workshop_card(key: String, on: bool) -> Control:
 	var b := _button("", func(): _pick_workshop(key))
 	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	b.custom_minimum_size = Vector2(0, 214)
+	b.clip_contents = true
 	var nb := _sb(Color(FG, 0.05), ACCENT if on else Color(FG, 0.14), 12)
 	nb.set_border_width_all(3 if on else 2)
 	if on:
@@ -3471,7 +3530,7 @@ func _workshop_card(key: String, on: bool) -> Control:
 			ssb.shadow_offset = Vector2(3, 3)
 			scol = Color("111111")
 	sign.add_theme_stylebox_override("panel", ssb)
-	var sl := _nw(_label(info["name"], 16, scol, 2))
+	var sl := _nw(_label(info["name"], 18, scol, 3))
 	sl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	sl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	sign.add_child(sl)
@@ -3514,7 +3573,7 @@ var shutter_t := -1.0
 
 func _show_workshop_intro() -> void:
 	_clear_overlay()
-	turn_hold = 2.3
+	turn_hold = 1.6
 	shutter_t = 0.0
 	if shutter == null:
 		shutter = Control.new()
@@ -3530,7 +3589,7 @@ func _update_shutter(delta: float) -> void:
 	if shutter_t < 0.0 or shutter == null:
 		return
 	shutter_t += delta
-	if shutter_t > 2.3:
+	if shutter_t > 1.6:
 		shutter_t = -1.0
 		shutter.visible = false
 	shutter.queue_redraw()
@@ -3539,9 +3598,9 @@ func _update_shutter(delta: float) -> void:
 func _draw_shutter() -> void:
 	var vs := shutter.size
 	var k := 0.0
-	if shutter_t > 1.3:
-		var e := clampf((shutter_t - 1.3) / 0.9, 0.0, 1.0)
-		k = e * e * (3.0 - 2.0 * e)
+	if shutter_t > 0.95:
+		var e := clampf((shutter_t - 0.95) / 0.6, 0.0, 1.0)
+		k = e * e * e * (e * (6.0 * e - 15.0) + 10.0)
 	var oy := -vs.y * 1.02 * k
 	# 셔터 날: 18px 회색, 4px 홈, 18px 밝은 회색
 	var y := 0.0
@@ -3559,7 +3618,7 @@ func _draw_shutter() -> void:
 		names.append(PartsData.part_name(pid))
 	var big := 48
 	var nm: String = info["name"]
-	var bw := maxf(font_bold.get_string_size(nm, HORIZONTAL_ALIGNMENT_LEFT, -1, big).x, font.get_string_size(" · ".join(names), HORIZONTAL_ALIGNMENT_LEFT, -1, 15).x) + 68.0
+	var bw := maxf(font_display.get_string_size(nm, HORIZONTAL_ALIGNMENT_LEFT, -1, big).x, font.get_string_size(" · ".join(names), HORIZONTAL_ALIGNMENT_LEFT, -1, 15).x) + 68.0
 	var box := Rect2(vs.x * 0.5 - bw * 0.5, vs.y * 0.5 - 66 + oy, bw, 132)
 	shutter.draw_rect(Rect2(box.position + Vector2(0, 10), box.size), Color(0, 0, 0, 0.25))
 	var sb := StyleBoxFlat.new()
@@ -3570,7 +3629,7 @@ func _draw_shutter() -> void:
 	sb.draw(shutter.get_canvas_item(), box)
 	var sub := "오늘의 공방" + ("  ·  개조 더비" if m.mode == "derby" else "")
 	shutter.draw_string(font_bold, Vector2(box.position.x, box.position.y + 32), sub, HORIZONTAL_ALIGNMENT_CENTER, box.size.x, 14, Color("FFC23D"))
-	shutter.draw_string(font_bold, Vector2(box.position.x, box.position.y + 86), nm, HORIZONTAL_ALIGNMENT_CENTER, box.size.x, big, Color("F2F4F1"))
+	shutter.draw_string(font_display, Vector2(box.position.x, box.position.y + 86), nm, HORIZONTAL_ALIGNMENT_CENTER, box.size.x, big, Color("F2F4F1"))
 	shutter.draw_string(font, Vector2(box.position.x, box.position.y + 114), " · ".join(names), HORIZONTAL_ALIGNMENT_CENTER, box.size.x, 15, Color("C9CED6"))
 
 
@@ -3938,7 +3997,7 @@ func _decay_motion(delta: float) -> void:
 
 ## 「○○ 차례」: 왼쪽에서 들어와 가운데 머물다 오른쪽으로 빠진다 (1.05초, -8도 기울임).
 func _draw_banner(vs: Vector2) -> void:
-	var total := 1.05 if not _reduced() else 0.8
+	var total := 0.85 if not _reduced() else 0.6
 	var k := 1.0 - banner_t / total
 	var y := view_center.y - 40.0 if not portrait else 160.0
 	var x := view_center.x
@@ -3953,12 +4012,14 @@ func _draw_banner(vs: Vector2) -> void:
 	else:
 		a = clampf(banner_t / 0.3, 0.0, 1.0)
 	var fsz := 56 if banner_sub != "" or banner.length() <= 8 else 40
-	var w := font_bold.get_string_size(banner, HORIZONTAL_ALIGNMENT_LEFT, -1, fsz).x + 64.0
+	if portrait:
+		fsz = int(fsz * 0.7)
+	var w := font_display.get_string_size(banner, HORIZONTAL_ALIGNMENT_LEFT, -1, fsz).x + 64.0
 	draw_set_transform_matrix(Transform2D(0.0, Vector2.ONE, deg_to_rad(-8.0), Vector2(x, y)))
 	# 큰 글자 + 그림자 (디자인: 굵은 제목체, 아래로 3px 그림자)
-	draw_string(font_bold, Vector2(-w * 0.5, 3 + 3), banner, HORIZONTAL_ALIGNMENT_CENTER, w, fsz, Color(0, 0, 0, 0.35 * a))
-	draw_string_outline(font_bold, Vector2(-w * 0.5, 3), banner, HORIZONTAL_ALIGNMENT_CENTER, w, fsz, 6, Color(th["outline"], 0.8 * a))
-	draw_string(font_bold, Vector2(-w * 0.5, 3), banner, HORIZONTAL_ALIGNMENT_CENTER, w, fsz, Color(_banner_col, a))
+	draw_string(font_display, Vector2(-w * 0.5, 3 + 3), banner, HORIZONTAL_ALIGNMENT_CENTER, w, fsz, Color(0, 0, 0, 0.35 * a))
+	draw_string_outline(font_display, Vector2(-w * 0.5, 3), banner, HORIZONTAL_ALIGNMENT_CENTER, w, fsz, 6, Color(th["outline"], 0.8 * a))
+	draw_string(font_display, Vector2(-w * 0.5, 3), banner, HORIZONTAL_ALIGNMENT_CENTER, w, fsz, Color(_banner_col, a))
 	if banner_sub != "":
 		var sw := w + 200.0
 		draw_string(font_bold, Vector2(-sw * 0.5, 3 + 34 + 2), banner_sub, HORIZONTAL_ALIGNMENT_CENTER, sw, 16, Color(0, 0, 0, 0.4 * a))
@@ -4018,8 +4079,16 @@ func _map_row(locked: bool) -> Control:
 	var segsb := _sb(Color(FG, 0.05), Color(FG, 0.1), 10)
 	segsb.set_content_margin_all(4)
 	seg.add_theme_stylebox_override("panel", segsb)
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 6)
+	var narrow_m := get_viewport_rect().size.x < 600.0
+	var row: Container = HBoxContainer.new()
+	if narrow_m:
+		var gr := GridContainer.new()
+		gr.columns = 2
+		gr.add_theme_constant_override("h_separation", 6)
+		gr.add_theme_constant_override("v_separation", 6)
+		row = gr
+	else:
+		row.add_theme_constant_override("separation", 6)
 	seg.add_child(row)
 	for id in Themes.ORDER:
 		var on: bool = id == map_id
@@ -4229,3 +4298,46 @@ func _draw_toast(vs: Vector2) -> void:
 		draw_circle(Vector2(x + 5, y - 4), 5, Color(m.players[it[0]].color, a))
 		draw_string(font_semi, Vector2(x + 14, y), it[1], HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(TEXT, a))
 		x += it[2] + 12.0
+
+
+## 대기실 바탕: 화면보다 길면 위아래로 밀어 볼 수 있게 스크롤 안에 둔다 (휴대폰·패드).
+var lobby_inner: Control = null
+
+
+var lobby_built_size := Vector2.ZERO
+
+
+func _lobby_root() -> Control:
+	lobby_built_size = get_viewport_rect().size
+	var over := _new_overlay(false)
+	var sc := ScrollContainer.new()
+	sc.set_anchors_preset(Control.PRESET_FULL_RECT)
+	sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	sc.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	sc.scroll_deadzone = 8
+	sc.mouse_filter = Control.MOUSE_FILTER_PASS
+	over.add_child(sc)
+	var inner := Control.new()
+	inner.mouse_filter = Control.MOUSE_FILTER_PASS
+	inner.custom_minimum_size = get_viewport_rect().size
+	sc.add_child(inner)
+	lobby_inner = inner
+	lobby_col2 = null
+	return inner
+
+
+## 대기실 열 세로 위치: 화면에 들어가면 가운데, 넘치면 위에서부터 (스크롤).
+func _place_lobby(vs: Vector2) -> void:
+	var h := 0.0
+	for lc in [lobby_col, lobby_col2]:
+		if is_instance_valid(lc):
+			h = maxf(h, lc.get_combined_minimum_size().y)
+	var y := (vs.y - h) * 0.5 if h + 24.0 < vs.y else 12.0
+	for lc in [lobby_col, lobby_col2]:
+		if is_instance_valid(lc):
+			lc.position.y = maxf(12.0, y if vs.x >= 900 else 12.0)
+	if is_instance_valid(lobby_inner):
+		lobby_inner.custom_minimum_size = Vector2(vs.x, maxf(vs.y, h + 36.0))
+
+var _turn_title_seen := ""
+var _turn_title_t := -9.0
