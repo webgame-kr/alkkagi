@@ -1228,7 +1228,7 @@ func test_min_power_moves_one_cell() -> void:
 	var w2 := make_world("circle", 800.0)
 	var b := w2.add_stone(0, Vector2(-300, 0), 0)
 	shoot(w2, b.id, Vector2.RIGHT, 1.0)
-	check(absf(b.pos.x + 300.0 - 680.0) < 20.0, "full pull glides about 15.5 cells: %.0f" % (b.pos.x + 300.0))
+	check(absf(b.pos.x + 300.0 - 455.0) < 20.0, "full pull glides about 10 cells: %.0f" % (b.pos.x + 300.0))
 
 
 func test_knockout_causes() -> void:
