@@ -195,6 +195,30 @@ func _ready() -> void:
 	ui.add_child(ff_btn)
 	_update_sound_btn()
 	get_viewport().size_changed.connect(_layout)
+	arena_node = Node2D.new()
+	arena_node.show_behind_parent = true
+	arena_node.draw.connect(func():
+		arena_node.draw_texture_rect(arena_vp.get_texture(), Rect2(-Vector2.ONE * 8.0, get_viewport_rect().size + Vector2.ONE * 16.0), false))
+	add_child(arena_node)
+	puck_vp = SubViewport.new()
+	puck_vp.transparent_bg = true
+	puck_vp.disable_3d = true
+	puck_vp.size = Vector2i(PUCK_TILE * 8, PUCK_TILE)
+	puck_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
+	add_child(puck_vp)
+	puck_drawer = Node2D.new()
+	puck_drawer.draw.connect(func():
+		for i in 8:
+			Art.draw_puck_top(puck_drawer, Vector2(PUCK_TILE * (i + 0.5), PUCK_TILE * 0.5), PUCK_U, Match.COLORS[i], i, 0.0, 1.0, 0.0, false))
+	puck_vp.add_child(puck_drawer)
+	arena_vp = SubViewport.new()
+	arena_vp.transparent_bg = false
+	arena_vp.disable_3d = true
+	arena_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
+	add_child(arena_vp)
+	arena_drawer = Node2D.new()
+	arena_drawer.draw.connect(_draw_arena_cache)
+	arena_vp.add_child(arena_drawer)
 	_layout()
 	_show_setup()
 	_debug_args()
@@ -244,6 +268,7 @@ func _sb(bg: Color, border: Color, radius: int, margin := 10.0) -> StyleBoxFlat:
 ## 개발용: godot --path . -- --auto 4 [--draft] 로 바로 경기를 띄운다 (화면 점검·녹화용).
 func _debug_args() -> void:
 	var args := OS.get_cmdline_user_args()
+	_perf_on = args.has("--perf")
 	var wi := args.find("--ws")
 	if wi >= 0 and args.size() > wi + 1:
 		settings["workshop"] = args[wi + 1]
@@ -445,7 +470,34 @@ func _start_match(seed_value := -1) -> void:
 	_show_workshop_intro()
 
 
+var _perf_acc := 0.0
+var _perf_n := 0
+var _perf_draw := 0.0
+var _perf_proc := 0.0
+var _perf_on := false
+var _perf_sec := {}
+
+
 func _process(delta: float) -> void:
+	var _t0 := Time.get_ticks_usec()
+	_process_inner(delta)
+	if _perf_on:
+		_perf_proc += float(Time.get_ticks_usec() - _t0)
+		_perf_acc += delta
+		_perf_n += 1
+		if _perf_acc >= 2.0:
+			var secs := ""
+			for k in _perf_sec:
+				secs += " %s=%.2f" % [k, _perf_sec[k] / _perf_n / 1000.0]
+			_perf_sec.clear()
+			print("PERF %s fps=%.0f process=%.2fms draw=%.2fms%s state=%s" % [theme_id, _perf_n / _perf_acc, _perf_proc / _perf_n / 1000.0, _perf_draw / _perf_n / 1000.0, secs, state])
+			_perf_acc = 0.0
+			_perf_n = 0
+			_perf_proc = 0.0
+			_perf_draw = 0.0
+
+
+func _process_inner(delta: float) -> void:
 	time += delta
 	_place()
 	if online != "":
@@ -469,6 +521,7 @@ func _process(delta: float) -> void:
 	if state == "play" and m != null:
 		_update_play(delta)
 	_decay_motion(delta)
+	_update_arena_cache()
 	queue_redraw()
 
 
@@ -569,7 +622,7 @@ func _update_cpu(delta: float, pid: int) -> void:
 	# 프레임당 약 6ms 만큼만 생각한다 (화면이 멈추지 않게).
 	var t0 := Time.get_ticks_usec()
 	var finished := false
-	while not finished and Time.get_ticks_usec() - t0 < 6000:
+	while not finished and Time.get_ticks_usec() - t0 < 3000:
 		finished = bot.think_step(1)
 	bot_us += Time.get_ticks_usec() - t0
 	if finished:
@@ -1021,9 +1074,15 @@ func _do_equip(pid: int, part: String, sid: int, side: int, reserve := "") -> vo
 # ── 그리기 ───────────────────────────────────────────────
 
 func _draw() -> void:
+	var _t0 := Time.get_ticks_usec()
+	_draw_inner()
+	_perf_draw += float(Time.get_ticks_usec() - _t0)
+
+
+func _draw_inner() -> void:
 	var vs := get_viewport_rect().size
 	if m == null:
-		Arena.background(self, Rect2(Vector2.ZERO, vs), th, time)
+		# 배경은 arena_node 가 그려 둔다
 		# 로비 왼쪽 열 바탕: 어떤 맵에서도 글자가 읽히게 HUD 패널 색을 깐다
 		if state == "setup" and is_instance_valid(lobby_col):
 			for lc in [lobby_col, lobby_col2]:
@@ -1032,20 +1091,25 @@ func _draw() -> void:
 					lr.size.y = minf(lr.size.y, vs.y - lr.position.y + 40.0)
 					_round_rect(lr, PANEL_BG, 14, PANEL_LINE)
 		if state == "setup" and not portrait:
-			_draw_lobby_preview(vs)
+			pass
 		return
-	Arena.background(self, Rect2(Vector2.ZERO, vs), th, time)
 	_draw_board()
 	_draw_devices()
 	_draw_aim_under()
+	var _ts := Time.get_ticks_usec()
 	for s in m.world.stones:
 		if s.alive:
 			_draw_stone(s)
+	_perf_sec["stones"] = _perf_sec.get("stones", 0.0) + float(Time.get_ticks_usec() - _ts)
+	_ts = Time.get_ticks_usec()
 	_draw_projs()
 	_draw_fx()
 	_draw_aim_over()
 	_draw_draft_marks()
+	_perf_sec["fx"] = _perf_sec.get("fx", 0.0) + float(Time.get_ticks_usec() - _ts)
+	_ts = Time.get_ticks_usec()
 	_draw_hud(vs)
+	_perf_sec["hud"] = _perf_sec.get("hud", 0.0) + float(Time.get_ticks_usec() - _ts)
 	if banner_t > 0.0:
 		_draw_banner(vs)
 	_draw_confetti()
@@ -1065,18 +1129,17 @@ func _draw_page_felt(vs: Vector2) -> void:
 
 
 ## 로비 오른쪽: 고른 인원의 판 크기와 시작 배치. 사람 자리는 밝은 테두리.
-func _draw_lobby_preview(vs: Vector2) -> void:
+## 대기실 배치 미리보기: 자기 칸(lobby_preview)에 한 번만 그린다 (매 프레임 다시 그리지 않음).
+func _draw_lobby_preview(ci: Control) -> void:
 	var n: int = settings["n"]
-	if not is_instance_valid(lobby_preview):
-		return
-	var pr := lobby_preview.get_global_rect()
+	var pr := Rect2(Vector2.ZERO, ci.size)
 	var half := pr.size.y * 0.5 - 14.0
 	var c := Vector2(pr.position.x + half + 12.0, pr.get_center().y)
 	var square := n == 2
 	var units := 16.0 if square else (18.0 if n <= 4 else 24.0)
 	var u := 2.0 * half / units
 	var r := u * 0.5
-	Arena.board(self, c, half, u, square, th, time)
+	Arena.board(ci, c, half, u, square, th, time)
 	var pucks: Array = []
 	if square:
 		for i in 2:
@@ -1095,10 +1158,10 @@ func _draw_lobby_preview(vs: Vector2) -> void:
 	for pk in pucks:
 		var i: int = pk[0]
 		if not settings["cpu"][i]:
-			draw_arc(pk[1], r + 4, 0, TAU, 24, th["outline"], 3.0, true)
-			draw_arc(pk[1], r + 5.5, 0, TAU, 24, BRASS, 2.0, true)
-		Art.draw_puck_shadow(self, pk[1], r)
-		Art.draw_puck_top(self, pk[1], r, Match.COLORS[i], i, -PI / 2)
+			ci.draw_arc(pk[1], r + 4, 0, TAU, 24, th["outline"], 3.0, true)
+			ci.draw_arc(pk[1], r + 5.5, 0, TAU, 24, BRASS, 2.0, true)
+		Art.draw_puck_shadow(ci, pk[1], r)
+		Art.draw_puck_top(ci, pk[1], r, Match.COLORS[i], i, -PI / 2)
 	# 판 정보
 	var info := [["판", "정사각 16칸" if square else "원형 지름 %d칸" % int(units)], ["퍽", "%d개씩" % (4 if square else 3)],
 		["승리", "한 명 남을 때까지"], ["개조", "매 바퀴"]]
@@ -1107,15 +1170,17 @@ func _draw_lobby_preview(vs: Vector2) -> void:
 	for k in 4:
 		var x := x0 + (k % 2) * 140.0
 		var y := y0 + (k / 2) * 58.0
-		_txt(Vector2(x, y), info[k][0], 13, SUB, font)
-		_txt(Vector2(x, y + 24), info[k][1], 15, TEXT, font_semi, 136)
-	_txt(Vector2(x0, y0 + 130), "밝은 테두리가 사람 자리예요.", 13, SUB, font, 280)
-	_txt(Vector2(x0, y0 + 150), "인원을 바꾸면 판과 배치가 바뀌어요.", 13, SUB, font, 280)
+		ci.draw_string(font, Vector2(x, y), info[k][0], HORIZONTAL_ALIGNMENT_LEFT, -1, 13, SUB)
+		ci.draw_string(font_semi, Vector2(x, y + 24), _fit(info[k][1], font_semi, 15, 136), HORIZONTAL_ALIGNMENT_LEFT, -1, 15, TEXT)
+	ci.draw_string(font, Vector2(x0, y0 + 130), "밝은 테두리가 사람 자리예요.", HORIZONTAL_ALIGNMENT_LEFT, -1, 13, SUB)
+	ci.draw_string(font, Vector2(x0, y0 + 150), "인원을 바꾸면 판과 배치가 바뀌어요.", HORIZONTAL_ALIGNMENT_LEFT, -1, 13, SUB)
 
 
 func _draw_board() -> void:
 	var w := m.world
-	Arena.board(self, view_center + shake_off, w.size * view_scale, CELL * view_scale, w.shape != "circle", th, time)
+	if str(th.get("deco", "")) == "magic" and not _reduced():
+		Arena.magic_live(self, view_center + shake_off, w.size * view_scale, CELL * view_scale, time)
+	# 판 자체는 arena_node 가 그려 둔 것을 쓴다 (매 프레임 다시 그리지 않음)
 	# 위험 구역 깜빡임: 퍽이 가장자리 띠에서 움직이면 그 방향 호
 	for f in fx:
 		if f["k"] == "danger":
@@ -1782,13 +1847,9 @@ func _panel(r: Rect2) -> void:
 			draw_rect(r, Color("111111"), false, 2.0)
 		"junk":
 			_panel_sb.draw(get_canvas_item(), r)
-			var x := r.position.x + 6.0
-			var i := 0
-			while x < r.end.x - 6.0:
-				var w := minf(8.0, r.end.x - 6.0 - x)
-				draw_rect(Rect2(x, r.position.y, w, 4), Color("FFC23D") if i % 2 == 0 else Color("1A1A1A"))
-				x += 8.0
-				i += 1
+			var y0 := r.position.y + 2.0
+			draw_line(Vector2(r.position.x + 6.0, y0), Vector2(r.end.x - 6.0, y0), Color("1A1A1A"), 4.0)
+			draw_dashed_line(Vector2(r.position.x + 6.0, y0), Vector2(r.end.x - 6.0, y0), Color("FFC23D"), 4.0, 8.0, false)
 		"magic":
 			for k in 4:
 				_round_rect(r.grow(2.0 + k * 4.0), Color(183 / 255.0, 200 / 255.0, 1.0, 0.045), 14 + k * 4)
@@ -1806,13 +1867,24 @@ func _txt(pos: Vector2, t: String, size: int, col: Color, f: Font = null, width 
 	draw_string(ff, pos, t, align, width, size, col)
 
 
+var _text_cache := {}
+
+
+## 글자 맞춤·줄바꿈 결과는 같은 입력이면 같으니 기억해 둔다 (매 프레임 글자 폭을 재지 않게).
 func _fit(t: String, f: Font, size: int, maxw: float) -> String:
-	if f.get_string_size(t, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x <= maxw:
-		return t
-	var s := t
-	while s.length() > 1 and f.get_string_size(s + "…", HORIZONTAL_ALIGNMENT_LEFT, -1, size).x > maxw:
-		s = s.substr(0, s.length() - 1)
-	return s + "…"
+	var key := "f|%s|%d|%d|%d" % [t, f.get_instance_id(), size, int(maxw)]
+	if _text_cache.has(key):
+		return _text_cache[key]
+	var out := t
+	if f.get_string_size(t, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x > maxw:
+		var s := t
+		while s.length() > 1 and f.get_string_size(s + "…", HORIZONTAL_ALIGNMENT_LEFT, -1, size).x > maxw:
+			s = s.substr(0, s.length() - 1)
+		out = s + "…"
+	if _text_cache.size() > 4000:
+		_text_cache.clear()
+	_text_cache[key] = out
+	return out
 
 
 ## 패널에 보여줄 퍽: 조준 중 > 손을 올린 퍽 > CPU가 고른 퍽 > 지금 차례의 첫 퍽.
@@ -1880,7 +1952,7 @@ func _draw_turn_card(r: Rect2) -> void:
 		sb.draw(get_canvas_item(), r)
 	var x := r.position.x + 18
 	if pid >= 0:
-		Art.draw_icon(self, r.position + Vector2(18 + 24, 18 + 24), 48, m.players[pid].color, pid)
+		_hud_icon(r.position + Vector2(18 + 24, 18 + 24), 48, m.players[pid].color, pid)
 		x += 62
 	if title != _turn_title_seen:
 		_turn_title_seen = title
@@ -1956,7 +2028,7 @@ func _draw_order(r: Rect2) -> void:
 		if pid == cur and not p.out:
 			_round_rect(row, Color(FG, 0.07), 8)
 		var cy := y + row_h * 0.5 - 1
-		Art.draw_icon(self, Vector2(row.position.x + 8 + 12, cy), minf(24.0, row_h - 6), p.color, pid, a)
+		_hud_icon(Vector2(row.position.x + 8 + 12, cy), minf(24.0, row_h - 6), p.color, pid, a)
 		var nx := row.position.x + 44
 		_txt(Vector2(nx, cy + fs * 0.36), p.name, fs, Color(TEXT, a), font_bold if pid == cur else font, 70)
 		var name_w := (font_bold if pid == cur else font).get_string_size(p.name, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
@@ -2018,6 +2090,15 @@ func _draw_log() -> void:
 
 ## 폭에 맞춰 줄바꿈 (글자 단위).
 func _wrap(t: String, f: Font, size: int, maxw: float) -> Array:
+	var key := "w|%s|%d|%d|%d" % [t, f.get_instance_id(), size, int(maxw)]
+	if _text_cache.has(key):
+		return _text_cache[key]
+	var lines := _wrap_raw(t, f, size, maxw)
+	_text_cache[key] = lines
+	return lines
+
+
+func _wrap_raw(t: String, f: Font, size: int, maxw: float) -> Array:
 	var out: Array = []
 	var cur := ""
 	for ch in t:
@@ -2070,7 +2151,7 @@ func _draw_aimed(r: Rect2) -> void:
 	_txt(r.position + Vector2(18, 27), "조준 중인 퍽" if drag_stone >= 0 or (m.phase == "aim" and not m.players[m.current_player()].cpu and hover_stone < 0) else "이 퍽의 부품", 13, SUB, font_semi)
 	if s == null:
 		return
-	Art.draw_icon(self, Vector2(r.end.x - 28, r.position.y + 22), 22, m.players[s.owner].color, s.owner)
+	_hud_icon(Vector2(r.end.x - 28, r.position.y + 22), 22, m.players[s.owner].color, s.owner)
 	var y := r.position.y + 40 + step * 0.5
 	if portrait:
 		step = minf(34.0, (r.size.y - 50.0 - (26.0 if set_txt != "" else 0.0)) / 3.0)
@@ -2405,6 +2486,8 @@ func _show_setup() -> void:
 		lobby_preview = Control.new()
 		lobby_preview.custom_minimum_size = Vector2(width, 236)
 		lobby_preview.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var lp := lobby_preview
+		lp.draw.connect(func(): _draw_lobby_preview(lp))
 		col2.add_child(lobby_preview)
 		lobby_col2 = col2
 	else:
@@ -3900,7 +3983,14 @@ func _draw_puck_at(p: Vector2, sid: int, parts: Dictionary, mside: int, col: Col
 	Art.skip_body = false
 	draw_set_transform_matrix(base)
 	if not Art.is_set_form(parts):
-		Art.draw_puck_top(self, Vector2.ZERO, u, col, symbol, facing, alpha)
+		if not Art.mono and symbol >= 0 and symbol < 8 and puck_vp != null:
+			# 미리 구워 둔 퍽 몸통 + 정면 홈만 따로
+			var tile := float(PUCK_TILE)
+			var sz := tile * u / PUCK_U
+			draw_texture_rect_region(puck_vp.get_texture(), Rect2(-Vector2.ONE * sz * 0.5, Vector2.ONE * sz), Rect2(tile * symbol, 0, tile, tile), Color(1, 1, 1, alpha))
+			Art.draw_notch(self, Vector2.ZERO, u, facing, alpha)
+		else:
+			Art.draw_puck_top(self, Vector2.ZERO, u, col, symbol, facing, alpha)
 	draw_set_transform_matrix(Transform2D.IDENTITY)
 	# 부품 장착: 슬롯 바깥 1.6u 에서 미끄러져 들어온다 (0.38초, 살짝 넘쳤다 돌아옴)
 	if not _reduced():
@@ -4341,3 +4431,62 @@ func _place_lobby(vs: Vector2) -> void:
 
 var _turn_title_seen := ""
 var _turn_title_t := -9.0
+
+
+# ── 경기장 캐시 ──────────────────────────────────────────
+## 배경과 판은 거의 변하지 않으니 따로 그려 두고, 크기·테마·판이 바뀔 때만 다시 그린다.
+## 흔들림은 노드 위치만 옮긴다. 마법 상점의 별·점선만 초당 10번 다시 그린다.
+var arena_node: Node2D
+var arena_vp: SubViewport
+var puck_vp: SubViewport          # 플레이어 8명의 퍽 몸통을 한 줄로 구워 둔 그림
+var puck_drawer: Node2D
+var _puck_key := ""
+const PUCK_TILE := 128
+const PUCK_U := 50.0              # 구운 그림 속 퍽 반지름 (옆면 두께까지 칸 안에 들어가게)
+var arena_drawer: Node2D
+var _arena_key := ""
+var _arena_tick := 0.0
+
+
+func _update_arena_cache() -> void:
+	var vs := get_viewport_rect().size
+	var key := "%s|%s|%s|%.2f|%s" % [theme_id, vs, view_center, view_scale, (m.world.shape + str(m.world.size)) if m != null else "lobby"]
+	var animated := false
+	_arena_tick += get_process_delta_time()
+	if key != _arena_key or (animated and _arena_tick >= 0.1):
+		_arena_key = key
+		_arena_tick = 0.0
+		# 화면 실제 픽셀 크기로 구워 흐려지지 않게 한다
+		var k: float = clampf(get_viewport().get_final_transform().get_scale().x, 0.5, 3.0)
+		arena_vp.size = Vector2i(int((vs.x + 16.0) * k), int((vs.y + 16.0) * k))
+		arena_drawer.scale = Vector2.ONE * k
+		arena_drawer.position = Vector2.ONE * 8.0 * k
+		arena_drawer.queue_redraw()
+		arena_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
+		arena_node.queue_redraw()
+	arena_node.position = shake_off
+	if theme_id != _puck_key:
+		_puck_key = theme_id
+		puck_drawer.queue_redraw()
+		puck_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
+
+
+func _draw_arena_cache() -> void:
+	var vs := get_viewport_rect().size
+	Arena.background(arena_drawer, Rect2(-Vector2.ONE * 8.0, vs + Vector2.ONE * 16.0), th, time)
+	if m != null:
+		var w := m.world
+		Arena.board(arena_drawer, view_center, w.size * view_scale, CELL * view_scale, w.shape != "circle", th, time)
+
+
+## HUD 퍽 아이콘: 구워 둔 퍽 그림을 작게 붙인다.
+func _hud_icon(center: Vector2, size: float, col: Color, symbol: int, alpha := 1.0) -> void:
+	if puck_vp == null or symbol < 0 or symbol >= 8 or col != Match.COLORS[symbol]:
+		Art.draw_icon(self, center, size, col, symbol, alpha)
+		return
+	var u := size * 0.5 * 0.86
+	Art.draw_puck_shadow(self, center, u, alpha)
+	var tile := float(PUCK_TILE)
+	var sz := tile * u / PUCK_U
+	draw_texture_rect_region(puck_vp.get_texture(), Rect2(center + Vector2(0, -0.08 * u) - Vector2.ONE * sz * 0.5, Vector2.ONE * sz), Rect2(tile * symbol, 0, tile, tile), Color(1, 1, 1, alpha))
+	Art.draw_notch(self, center + Vector2(0, -0.08 * u), u, -PI / 2.0, alpha)

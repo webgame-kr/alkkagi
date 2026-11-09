@@ -42,13 +42,12 @@ static func background(ci: CanvasItem, rect: Rect2, th: Dictionary, t := 0.0) ->
 				ci.draw_line(Vector2(rect.position.x, gy), Vector2(rect.end.x, gy), Color(1, 1, 1, 0.05), 2.0)
 				gy += st
 		"magic":
-			# 반짝이는 별
+			# 별 (반짝임은 magic_live 가 위에 얹는다)
 			for i in 90:
 				var sx := fposmod(sin(i * 12.9898) * 43758.5453, 1.0)
 				var sy := fposmod(sin(i * 78.233) * 12345.678, 1.0)
 				var sr := 0.3 + fposmod(sin(i * 3.1) * 999.0, 1.0) * 1.4
-				var a := 0.35 + 0.35 * sin(t * 1.5 + i * 0.7)
-				ci.draw_circle(rect.position + Vector2(sx, sy) * rect.size, sr, Color(220 / 255.0, 225 / 255.0, 1.0, a))
+				ci.draw_circle(rect.position + Vector2(sx, sy) * rect.size, sr, Color(220 / 255.0, 225 / 255.0, 1.0, 0.35))
 		"manga":
 			# 가장자리로 갈수록 커지는 망점
 			var ctr := rect.get_center()
@@ -97,10 +96,7 @@ static func board(ci: CanvasItem, c: Vector2, R: float, u: float, square: bool, 
 			ci.draw_circle(bp, 0.13 * u, Color("9AA0A6"))
 			ci.draw_arc(bp, 0.13 * u, 0, TAU, 12, Color("111111"), 1.5, true)
 	elif deco == "magic":
-		var segs := 40
-		for i in segs:
-			var a0 := TAU * i / segs - t * 0.3 * u / maxf(1.0, R)
-			ci.draw_arc(c, R + 0.32 * u, a0, a0 + TAU / segs * 0.22, 3, Color(201 / 255.0, 213 / 255.0, 1.0, 0.7), 1.5, true)
+		pass  # 도는 점선은 magic_live 가 매 프레임 그린다
 	if deco == "manga":
 		pass
 	elif square:
@@ -159,14 +155,14 @@ static func board(ci: CanvasItem, c: Vector2, R: float, u: float, square: bool, 
 			star.append(c + Vector2(cos(a), sin(a)) * R * 0.55)
 		ci.draw_polyline(star, Color(201 / 255.0, 213 / 255.0, 1.0, 0.16), 1.5, true)
 	elif deco == "manga":
-		var stp := 0.35 * u
+		var stp := maxf(0.5 * u, 5.0)
 		var yy := -R
 		while yy < R:
 			var xx := -R
 			while xx < R:
 				var d := Vector2(xx, yy).length() / R if not square else maxf(absf(xx), absf(yy)) / R
 				if d > 0.72 and d < 1.0:
-					ci.draw_circle(c + Vector2(xx, yy), (d - 0.72) * stp * 1.4, Color(0, 0, 0, 0.09))
+					ci.draw_circle(c + Vector2(xx, yy), (d - 0.72) * stp * 1.4, Color(0, 0, 0, 0.09), true, -1.0, false)
 				xx += stp
 			yy += stp
 	# 7. 위험 띠 / 8. 위험 경계 점선
@@ -350,3 +346,12 @@ static func _hatch_ring(ci: CanvasItem, c: Vector2, R: float, u: float, a: Vecto
 		return
 	ci.draw_line(outer[0], inner[0], col, 1.5)
 	ci.draw_line(inner[1], outer[1], col, 1.5)
+
+
+## 마법 상점: 판 둘레를 천천히 도는 점선 (가볍게 매 프레임).
+static func magic_live(ci: CanvasItem, c: Vector2, R: float, u: float, t: float) -> void:
+	var segs := 40
+	var col := Color(201 / 255.0, 213 / 255.0, 1.0, 0.7)
+	for i in segs:
+		var a0 := TAU * i / segs - t * 0.3 * u / maxf(1.0, R)
+		ci.draw_arc(c, R + 0.32 * u, a0, a0 + TAU / segs * 0.22, 3, col, 1.5, true)

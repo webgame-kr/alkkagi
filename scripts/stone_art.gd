@@ -214,7 +214,7 @@ static func draw_puck_shadow(ci: CanvasItem, c: Vector2, u: float, a := 1.0, rot
 	ci.draw_colored_polygon(pts, Color(shadow, shadow.a * a))
 
 
-static func draw_puck_top(ci: CanvasItem, c: Vector2, u: float, col: Color, symbol: int, front: float, a := 1.0, rot := 0.0) -> void:
+static func draw_puck_top(ci: CanvasItem, c: Vector2, u: float, col: Color, symbol: int, front: float, a := 1.0, rot := 0.0, notch := true) -> void:
 	var oc := _al(outline, a)
 	var ow := 0.12 * u
 	var down := Vector2(0, 1).rotated(-rot)
@@ -226,7 +226,7 @@ static func draw_puck_top(ci: CanvasItem, c: Vector2, u: float, col: Color, symb
 	var hi := Color(minf(1.0, col.r * 1.22), minf(1.0, col.g * 1.22), minf(1.0, col.b * 1.22))
 	ci.draw_circle(c, u, _al(col, a))
 	var lp := c + Vector2(-0.35 * u, -0.45 * u).rotated(-rot)
-	var steps := 10
+	var steps := 5
 	for i in range(1, steps):
 		var t := float(i) / steps
 		ci.draw_circle(c.lerp(lp, t), u * (1.0 - t * 0.85), _al(col.lerp(hi, t), a))
@@ -237,9 +237,8 @@ static func draw_puck_top(ci: CanvasItem, c: Vector2, u: float, col: Color, symb
 	ci.draw_arc(c, 0.78 * u, PI - rot, 1.5 * PI - rot, 12, Color(1, 1, 1, 0.35 * a), 0.08 * u, true)
 	ci.draw_arc(c, 0.78 * u, 0.0 - rot, 0.5 * PI - rot, 12, Color(0, 0, 0, 0.18 * a), 0.08 * u, true)
 	# 정면 홈
-	var fd := Vector2.from_angle(front)
-	var fp := fd.orthogonal()
-	ci.draw_colored_polygon(PackedVector2Array([c + fd * u + fp * 0.2 * u, c + fd * u - fp * 0.2 * u, c + fd * 0.7 * u]), oc)
+	if notch:
+		draw_notch(ci, c, u, front, a)
 	# 광택
 	var gl := _ellipse_rot(c + Vector2(-0.35 * u, -0.5 * u).rotated(-rot), 0.42 * u, 0.18 * u, -0.5 - rot)
 	ci.draw_colored_polygon(gl, Color(1, 1, 1, 0.32 * a))
@@ -662,3 +661,9 @@ static func draw_set_form(ci: CanvasItem, id: String, col: Color, a: float, symb
 	if symbol >= 0 and ArtData.SYMBOLS.has(id):
 		var sy: Array = ArtData.SYMBOLS[id]
 		draw_symbol(ci, symbol, col.lightened(0.18), a, T(Vector2(sy[0], sy[1])), sy[2] * K, true)
+
+
+static func draw_notch(ci: CanvasItem, c: Vector2, u: float, front: float, a := 1.0) -> void:
+	var fd := Vector2.from_angle(front)
+	var fp := fd.orthogonal()
+	ci.draw_colored_polygon(PackedVector2Array([c + fd * u + fp * 0.2 * u, c + fd * u - fp * 0.2 * u, c + fd * 0.7 * u]), _al(outline, a))
