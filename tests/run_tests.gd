@@ -36,7 +36,7 @@ func _initialize() -> void:
 		"test_mushroom_and_wind", "test_second_step", "test_rebound_and_string", "test_at_field_and_beam",
 		"test_hero_band_and_shoes", "test_all_parts_have_art",
 		"test_workshop_pools", "test_offer_fits_empty_slots", "test_min_power_moves_one_cell",
-		"test_knockout_causes", "test_derby_mode", "test_gimmicks_junk",
+		"test_knockout_causes", "test_derby_mode", "test_gimmicks_junk", "test_start_placement",
 	]
 	for t in tests:
 		var before := failures
@@ -1356,3 +1356,31 @@ func test_gimmicks_junk() -> void:
 	var shooter := w4.add_stone(0, Vector2(-400, 300), 0)
 	shoot(w4, shooter.id, Vector2.DOWN, 0.2)
 	check(rider.pos.y < -60.0, "belt carried the resting puck: %.0f" % rider.pos.y)
+
+
+func test_start_placement() -> void:
+	for n in [2, 3, 4, 6, 8]:
+		var m := Match.new()
+		m.setup(n, [], 200 + n, false, {"workshop": "junk", "placement": true})
+		check(m.phase == "place", "%d: placement phase first" % n)
+		var r := RandomNumberGenerator.new()
+		r.seed = 5
+		for pid in n:
+			for kind in ["line", "tri", "spread", "random"]:
+				var pts: Array = m.preset(pid, kind, r)
+				check(m.placement_errors(pid, pts).is_empty(), "%d players, seat %d, %s preset is valid: %s" % [n, pid, kind, str(m.placement_errors(pid, pts))])
+			var cp: Array = m.cpu_placement(pid, r)
+			check(m.placement_errors(pid, cp).is_empty(), "%d: cpu placement valid for %d" % [n, pid])
+		# 남의 구역·겹침은 거절
+		var mine: Array = m.preset(0, "line", r)
+		var bad: Array = mine.duplicate()
+		bad[0] = m.preset(1, "line", r)[0]
+		check(not m.place(0, bad), "%d: cannot place in another zone" % n)
+		var bad2: Array = mine.duplicate()
+		bad2[1] = bad2[0]
+		check(not m.place(0, bad2), "%d: cannot stack" % n)
+		for pid in n:
+			check(m.place(pid, m.cpu_placement(pid, r)), "%d: place %d" % [n, pid])
+		check(m.phase == "aim" and m.round_no == 1, "%d: round 1 starts after everyone placed" % n)
+		var st = m.world.alive_stones_of(0)[0]
+		check(st.pos == m.placements[0][0] and m.homes[st.id] == st.pos, "%d: stones moved, homes updated" % n)

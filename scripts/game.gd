@@ -300,6 +300,9 @@ func _debug_args() -> void:
 		_show_settings(false)
 	if args.has("--catalog"):
 		_show_catalog(false)
+	if m.phase == "place" and (args.has("--draft") or args.has("--skipplace")):
+		for pid in m.n:
+			m.place(pid, m.preset(pid, "tri"))
 	if args.has("--draft"):
 		var guard := 0
 		while not m.is_draft_round(m.round_no) or m.phase != "draft":
@@ -442,7 +445,7 @@ func _start_match(seed_value := -1) -> void:
 	var ws: String = settings.get("workshop", "junk")
 	if ws == "random":
 		ws = ["junk", "magic", "toon"][seed_value % 3]
-	m.setup(settings["n"], settings["cpu"], seed_value, settings["timed"], {"workshop": ws, "mode": settings.get("mode", "survival")})
+	m.setup(settings["n"], settings["cpu"], seed_value, settings["timed"], {"workshop": ws, "mode": settings.get("mode", "survival"), "placement": true})
 	state = "play"
 	_refresh_theme()
 	turn_hold = 0.0
@@ -564,6 +567,8 @@ func _update_play(delta: float) -> void:
 		turn_key = key
 		_on_phase_changed()
 	match m.phase:
+		"place":
+			_update_place(delta)
 		"moving":
 			var spd := 1.0
 			if slowmo > 0.0:
@@ -665,6 +670,8 @@ func _update_cpu(delta: float, pid: int) -> void:
 
 func _on_phase_changed() -> void:
 	match m.phase:
+		"place":
+			_begin_placing()
 		"aim":
 			# 개조가 끝났으니 「골랐어요」 안내는 닫는다 (온라인 동시 선택)
 			if overlay != null and overlay.has_meta("draft_wait"):
@@ -885,6 +892,9 @@ func _consume_events() -> void:
 
 func _unhandled_input(event: InputEvent) -> void:
 	if state != "play" or m == null:
+		return
+	if m.phase == "place":
+		_place_input(event)
 		return
 	if event is InputEventMouseMotion:
 		var wp := s2w(event.position)
@@ -1145,8 +1155,10 @@ func _draw_inner() -> void:
 	_draw_devices()
 	_draw_aim_under()
 	var _ts := Time.get_ticks_usec()
+	if m.phase == "place":
+		_draw_placing()
 	for s in m.world.stones:
-		if s.alive:
+		if s.alive and m.phase != "place":
 			_draw_stone(s)
 	_perf_sec["stones"] = _perf_sec.get("stones", 0.0) + float(Time.get_ticks_usec() - _ts)
 	_ts = Time.get_ticks_usec()
@@ -2043,6 +2055,10 @@ func _draw_turn_card(r: Rect2) -> void:
 			else:
 				title = "내 차례"
 				sub = "알을 당겨 조준하세요" if m.phase == "aim" else "움직이는 중"
+		"place":
+			pid = placing_pid
+			title = "자리 잡기"
+			sub = "알을 끌어 내 구역에 놓으세요" if placing_pid >= 0 else "모두 놓을 때까지 기다려요"
 		"draft":
 			pid = m.current_drafter()
 			if drafting_pid >= 0:
@@ -2258,6 +2274,8 @@ func _draw_power(r: Rect2) -> void:
 
 ## 조준 중인 퍽 (또는 손을 올린 퍽)의 부품.
 func _draw_aimed(r: Rect2) -> void:
+	if m.phase == "place":
+		return
 	var s = _focus_stone()
 	var empty: bool = s == null or (s.parts["weapon"] == "" and s.parts["aux"] == "" and s.parts["prop"] == "")
 	var set_txt: String = PartsData.set_label(s.parts) if s != null else ""
@@ -3250,7 +3268,7 @@ func _act(a: Dictionary) -> void:
 		return
 	a = JSON.parse_string(JSON.stringify(a))  # 모든 기기가 똑같은 숫자를 쓰게 한 번 직렬화
 	if online == "guest":
-		if str(a.get("k", "")) != "equip":
+		if str(a.get("k", "")) != "equip" and str(a.get("k", "")) != "place":
 			waiting_req = true
 		net.send_to(host_peer, {"t": "req", "a": a})
 		return
@@ -3274,6 +3292,8 @@ func _can_apply(a: Dictionary) -> bool:
 	match str(a.get("k", "")):
 		"equip":
 			return m.phase == "draft" and m.current_drafter() == pid
+		"place":
+			return m.phase == "place" and not m.placements.has(pid)
 		_:
 			return m.phase == "aim" and m.current_player() == pid
 
@@ -3316,6 +3336,14 @@ func _apply_action(a: Dictionary) -> void:
 			_do_equip(pid, str(a["part"]), int(a["stone"]), int(a.get("side", 1)), str(a.get("reserve", "")))
 		"relic":
 			_do_equip_relic(pid, int(a["stone"]))
+		"place":
+			var pts: Array = []
+			for q in a["pos"]:
+				pts.append(Vector2(float(q[0]), float(q[1])))
+			if m.place(pid, pts):
+				place_sent.erase(pid)
+				if m.phase != "place":
+					_on_placed()
 		"skip":
 			_log("%s 시간 초과, 차례를 넘겨요" % m.players[pid].name, m.players[pid].color)
 			_banner("시간 초과")
@@ -4125,6 +4153,11 @@ func _draw_puck_at(p: Vector2, sid: int, parts: Dictionary, mside: int, col: Col
 			if not aim.is_empty() and not aim.has("cancel"):
 				sq = 0.12 * float(aim.get("power", 0.0))
 				sq_dir = -aim["dir"]
+		var dt0: float = time - float(st.get("drop_t", -9.0))
+		if dt0 >= 0.0 and dt0 < 0.32:
+			var kd := dt0 / 0.32
+			scl *= 1.0 + 0.35 * (1.0 - kd * kd)
+			lift += 0.9 * u * (1.0 - kd * kd)
 		var et: float = time - float(st.get("equip_t", -9.0))
 		if et >= 0.285 and et < 0.45:
 			lift += 0.25 * u * sin(PI * (et - 0.285) / 0.165)
@@ -4962,3 +4995,212 @@ func _draw_gimmick_chips(vs: Vector2) -> void:
 
 
 var gimmick_rects_x := 0.0
+
+
+# ── 시작 배치 선택 화면 ──────────────────────────────────
+var placing_pid := -1          # 이 기기에서 지금 놓고 있는 자리
+var place_draft: Array = []    # 놓고 있는 알 위치 (월드)
+var place_drag := -1
+var place_left := 0.0
+var place_touched := false
+var place_sent := {}           # 보냈지만 아직 확정 안 된 자리 (온라인)
+var cpu_place_wait := 0.0
+const PLACE_TIME := 15.0
+
+
+func _begin_placing() -> void:
+	cpu_place_wait = 0.4
+	placing_pid = -1
+	_next_placer()
+
+
+## 이 기기의 사람 자리 중 아직 안 놓은 자리를 차례로 (같은 기기 여럿이면 한 명씩, 남의 배치는 안 보인다).
+func _next_placer() -> void:
+	placing_pid = -1
+	for pid in my_seats:
+		if not m.players[pid].cpu and not m.placements.has(pid) and not place_sent.has(pid):
+			placing_pid = pid
+			break
+	place_drag = -1
+	place_touched = false
+	place_left = PLACE_TIME
+	if placing_pid >= 0:
+		place_draft = m.preset(placing_pid, "tri")
+		_show_place_bar()
+		if my_seats.size() > 1:
+			_banner("%s 자리 잡기" % m.players[placing_pid].name, m.players[placing_pid].color, "다른 사람은 보지 마세요")
+	else:
+		_clear_overlay()
+
+
+func _update_place(delta: float) -> void:
+	# CPU 자리는 성향대로 바로 놓는다
+	if _drives_cpu():
+		cpu_place_wait -= delta
+		if cpu_place_wait <= 0.0:
+			for p in m.players:
+				if p.cpu and not m.placements.has(p.id) and not place_sent.has(p.id):
+					var r := RandomNumberGenerator.new()
+					r.seed = randi()
+					_send_place(p.id, m.cpu_placement(p.id, r))
+					break
+			cpu_place_wait = 0.15
+	if placing_pid >= 0:
+		place_left -= delta
+		if place_left <= 0.0:
+			# 시간 끝: 지금 위치로, 손대지 않았거나 잘못 놓였으면 무작위
+			if not place_touched or not m.placement_errors(placing_pid, place_draft).is_empty():
+				var r2 := RandomNumberGenerator.new()
+				r2.seed = randi()
+				place_draft = m.preset(placing_pid, "random", r2)
+			_confirm_place()
+
+
+func _send_place(pid: int, pts: Array) -> void:
+	place_sent[pid] = true
+	var arr: Array = []
+	for q in pts:
+		arr.append([q.x, q.y])
+	_act({"k": "place", "pid": pid, "pos": arr})
+
+
+func _confirm_place() -> void:
+	if placing_pid < 0 or not m.placement_errors(placing_pid, place_draft).is_empty():
+		return
+	snd.play("part_equip", -4.0)
+	var pid := placing_pid
+	_send_place(pid, place_draft)
+	if m.phase == "place":
+		_next_placer()
+		if placing_pid < 0:
+			_show_place_wait()
+
+
+func _on_placed() -> void:
+	# 모두 놓았다: 가렸던 알이 동시에 「탁」 내려앉는다
+	_clear_overlay()
+	placing_pid = -1
+	for st in m.world.stones:
+		var vv: Dictionary = vis.get(st.id, {})
+		vv["drop_t"] = time
+		vv["vf"] = st.facing
+		vis[st.id] = vv
+	get_tree().create_timer(0.3).timeout.connect(func(): snd.play("puck_hit_heavy", 0.0, 0.8))
+	_log("모두 자리를 잡았어요", ACCENT)
+	turn_hold = 0.5
+
+
+func _place_input(event: InputEvent) -> void:
+	if placing_pid < 0:
+		return
+	if event is InputEventMouseMotion:
+		if place_drag >= 0:
+			place_draft[place_drag] = s2w(event.position)
+			place_touched = true
+		return
+	if not (event is InputEventMouseButton) or event.button_index != MOUSE_BUTTON_LEFT:
+		return
+	var wp := s2w(event.position)
+	if event.pressed:
+		var best := -1
+		var bd := CELL * GRAB_R
+		for i in place_draft.size():
+			var d: float = wp.distance_to(place_draft[i])
+			if d < bd:
+				bd = d
+				best = i
+		place_drag = best
+		if best >= 0:
+			snd.play("flick_pull", -8.0)
+	else:
+		if place_drag >= 0:
+			snd.play("puck_hit_light", -8.0)
+		place_drag = -1
+		_show_place_bar()
+
+
+func _show_place_bar() -> void:
+	var root := _new_overlay(false)
+	var vs := get_viewport_rect().size
+	var pc := PanelContainer.new()
+	var sb := _panel_style(Color(SOLID, 0.96), PANEL_LINE)
+	sb.content_margin_left = 16
+	sb.content_margin_right = 12
+	sb.content_margin_top = 10
+	sb.content_margin_bottom = 10
+	pc.add_theme_stylebox_override("panel", sb)
+	root.add_child(pc)
+	var h := HBoxContainer.new()
+	h.add_theme_constant_override("separation", 8)
+	pc.add_child(h)
+	var lbl := _nw(_label("빠른 선택", 14, SUB, 1))
+	lbl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	h.add_child(lbl)
+	var pid := placing_pid
+	for opt in [["line", "일렬"], ["tri", "삼각"], ["spread", "흩어짐"], ["random", "무작위"]]:
+		var k: String = opt[0]
+		var b := _button(opt[1], func():
+			var r := RandomNumberGenerator.new()
+			r.seed = randi()
+			place_draft = m.preset(pid, k, r)
+			place_touched = true
+			snd.play("ui_toggle"))
+		b.custom_minimum_size = Vector2(68, 40)
+		h.add_child(b)
+	var ok := _primary(_button("배치 완료", func(): _confirm_place()))
+	ok.custom_minimum_size = Vector2(120, 40)
+	h.add_child(ok)
+	pc.resized.connect(func(): pc.position = Vector2(vs.x * 0.5 - pc.size.x * 0.5, vs.y - pc.size.y - 16))
+	pc.position = Vector2(vs.x * 0.5 - 260, vs.y - 76)
+
+
+func _show_place_wait() -> void:
+	var v := _hint_panel(my_seats[0] if not my_seats.is_empty() else 0)
+	v.add_child(_label("자리를 잡았어요. 모두 놓으면 동시에 공개돼요.", 16, TEXT, 1))
+
+
+## 배치 중: 내 구역을 주인 색으로 옅게, 놓는 알은 잘못된 자리면 붉게. 남의 알은 보이지 않는다.
+func _draw_placing() -> void:
+	var c0 := view_center + shake_off
+	var k := view_scale
+	for p in m.players:
+		var mine: bool = p.id == placing_pid
+		var col: Color = p.color
+		if m.world.shape == "square":
+			var sgn := 1.0 if p.id == 0 else -1.0
+			var y1 := (m.world.size - Match.PLACE_OUT * CELL) * sgn
+			var y2 := (m.world.size - Match.PLACE_IN * CELL) * sgn
+			var x1 := m.world.size - Match.PLACE_IN * CELL
+			var rr := Rect2(w2s(Vector2(-x1, minf(y1, y2))), Vector2(2 * x1, absf(y2 - y1)) * k)
+			draw_rect(rr, Color(col, 0.18 if mine else 0.05))
+			draw_rect(rr, Color(col, 0.7 if mine else 0.2), false, 2.0)
+			continue
+		var a0 := m.seat_angle(p.id) - PI / m.n
+		var a1 := m.seat_angle(p.id) + PI / m.n
+		var r_in := (m.world.size - Match.PLACE_OUT * CELL) * k
+		var r_out := (m.world.size - Match.PLACE_IN * CELL) * k
+		var pts := PackedVector2Array()
+		var steps := 24
+		for i in steps + 1:
+			pts.append(c0 + Vector2.from_angle(lerpf(a0, a1, float(i) / steps)) * r_out)
+		for i in steps + 1:
+			pts.append(c0 + Vector2.from_angle(lerpf(a1, a0, float(i) / steps)) * r_in)
+		draw_colored_polygon(pts, Color(col, 0.2 if mine else 0.05))
+		pts.append(pts[0])
+		draw_polyline(pts, Color(col, 0.75 if mine else 0.2), 2.0, true)
+	if placing_pid < 0:
+		return
+	var bad := m.placement_errors(placing_pid, place_draft)
+	var pcol: Color = m.players[placing_pid].color
+	for i in place_draft.size():
+		var sp := w2s(place_draft[i])
+		var wrong := bad.has(i)
+		_draw_puck_at(sp, -10 - i, {"weapon": "", "aux": "", "prop": ""}, 1, pcol, placing_pid, (-(place_draft[i] as Vector2)).angle(), 1.0,
+			{"scale": 1.12 if place_drag == i else 1.0})
+		if wrong:
+			draw_circle(sp, World.STONE_R * k, Color(Art.RED, 0.55))
+			draw_arc(sp, (World.STONE_R + 4) * k, 0, TAU, 32, Art.RED, 3.0, true)
+	# 남은 시간
+	var vs := get_viewport_rect().size
+	var tt := "남은 시간 %d초" % int(ceil(place_left))
+	_text_outline(Vector2(vs.x * 0.5, vs.y - 100), tt, 16, Color.WHITE if place_left > 5 else Color("FF7A5C"), true)

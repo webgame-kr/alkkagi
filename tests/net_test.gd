@@ -107,6 +107,11 @@ func _drive(g) -> void:
 	if g.m.phase != "draft" and not g.net_queue.is_empty():
 		return
 	var m = g.m
+	if m.phase == "place":
+		for pid in g.my_seats:
+			if not m.placements.has(pid) and not g.place_sent.has(pid):
+				g._send_place(pid, m.preset(pid, "line"))
+		return
 	if m.phase == "draft":
 		# 동시 선택: 내 자리면 내 차례가 아니어도 바로 고른다
 		for pid in m.draft_queue:

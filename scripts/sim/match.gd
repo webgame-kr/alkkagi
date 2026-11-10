@@ -83,6 +83,11 @@ func setup(n_players: int, cpu_flags: Array, seed_value: int, timed: bool, opts 
 	winners.clear()
 	out_order.clear()
 	shots = 0
+	placements.clear()
+	if bool(opts.get("placement", false)):
+		# 시작 배치 선택: 1바퀴 전에 모두가 자기 구역에 알을 놓는다
+		phase = "place"
+		return
 	_begin_round()
 
 
@@ -441,3 +446,165 @@ func _finish(w: Array, reason: String) -> void:
 	winners = w
 	end_reason = reason
 	phase = "over"
+
+
+# ── 시작 배치 선택 (확장 기획 「시작 배치 선택」) ─────────────
+## 자기 구역: 판을 인원수만큼 부채꼴로 나눈 조각, 가장자리에서 2칸 안쪽부터 6.5칸 안쪽까지.
+## 내 알끼리는 1칸 이상 (중심 간 2칸), 기믹 장애물과는 0.5칸 이상 떨어져야 한다.
+## 모두 놓으면 동시에 공개한다 (그 전까지 남의 배치는 판에 반영되지 않는다).
+
+var placements := {}          # pid → [Vector2, ...] (확정한 배치)
+const PLACE_IN := 2.0         # 칸: 가장자리에서 이만큼 안쪽부터
+const PLACE_OUT := 6.5        # 칸: 이만큼 안쪽까지
+const PLACE_GAP := 2.0        # 칸: 내 알끼리 중심 간 거리
+
+
+func seat_angle(pid: int) -> float:
+	return PI / 2.0 + TAU * pid / n
+
+
+func in_zone(pid: int, p: Vector2) -> bool:
+	if world.shape == "square":
+		var sgn := 1.0 if pid == 0 else -1.0
+		var depth := world.size - p.y * sgn
+		return depth >= PLACE_IN * CELL and depth <= PLACE_OUT * CELL and absf(p.x) <= world.size - PLACE_IN * CELL
+	var ed: float = world.size - p.length()
+	if ed < PLACE_IN * CELL or ed > PLACE_OUT * CELL:
+		return false
+	var da := absf(angle_difference(p.angle(), seat_angle(pid)))
+	# 경계에서 퍽이 이웃 구역으로 넘지 않게 반지름만큼 각도를 줄인다
+	var margin := World.STONE_R / maxf(1.0, p.length())
+	return da <= PI / n - margin
+
+
+## 놓을 수 있는지: 구역 · 간격 · 장애물. 잘못된 알의 번호 목록 (비어 있으면 통과).
+func placement_errors(pid: int, pts: Array) -> Array:
+	var bad: Array = []
+	for i in pts.size():
+		var p: Vector2 = pts[i]
+		var ok := in_zone(pid, p) and not World.Gm.blocks(world, p)
+		for j in pts.size():
+			if j != i and p.distance_to(pts[j]) < PLACE_GAP * CELL - 0.01:
+				ok = false
+		if not ok:
+			bad.append(i)
+	return bad
+
+
+## 배치 확정. 모두 확정하면 알을 옮기고 1바퀴를 시작한다. 성공하면 true.
+func place(pid: int, pts: Array) -> bool:
+	if phase != "place" or placements.has(pid):
+		return false
+	var mine: Array = world.alive_stones_of(pid)
+	if pts.size() != mine.size() or not placement_errors(pid, pts).is_empty():
+		return false
+	placements[pid] = pts.duplicate()
+	if placements.size() >= n:
+		_commit_placements()
+	return true
+
+
+func _commit_placements() -> void:
+	for pid in placements:
+		var mine: Array = world.alive_stones_of(pid)
+		var pts: Array = placements[pid]
+		for i in mine.size():
+			mine[i].pos = pts[i]
+			mine[i].facing = (-(pts[i] as Vector2)).angle()
+			homes[mine[i].id] = pts[i]
+	world.emit({"t": "placed"})
+	_begin_round()
+
+
+## 빠른 선택: line(일렬) · tri(삼각) · spread(흩어짐) · random(무작위)
+func preset(pid: int, kind: String, r: RandomNumberGenerator = null) -> Array:
+	var k := stones_per_player()
+	var pts: Array = []
+	if r == null:
+		r = rng
+	var center_d := world.size - CELL * (PLACE_IN + PLACE_OUT) * 0.5
+	var radial := Vector2.from_angle(seat_angle(pid))
+	if world.shape == "square":
+		radial = Vector2(0, 1) if pid == 0 else Vector2(0, -1)
+	var tang := radial.orthogonal()
+	match kind:
+		"line":
+			for i in k:
+				pts.append(radial * center_d + tang * (i - (k - 1) * 0.5) * CELL * 2.1)
+		"tri":
+			var dd := center_d + CELL * 0.6
+			pts.append(radial * (dd - CELL * 1.8))
+			pts.append(radial * dd + tang * CELL * 1.1)
+			pts.append(radial * dd - tang * CELL * 1.1)
+			if k == 4:
+				pts.append(radial * (dd + CELL * 1.8))
+		"spread":
+			var near := world.size - CELL * (PLACE_OUT - 0.4)
+			var far := world.size - CELL * (PLACE_IN + 0.5)
+			for i in k:
+				var t := (i - (k - 1) * 0.5) * (2.6 if world.shape == "square" else 1.0)
+				var dist := near if i % 2 == 0 else far
+				if world.shape == "square":
+					pts.append(radial * dist + tang * t * CELL)
+				else:
+					var span := (PI / n) * 0.62
+					pts.append(Vector2.from_angle(seat_angle(pid) + span * (i - (k - 1) * 0.5) / maxf(1.0, (k - 1) * 0.5)) * dist)
+		_:
+			for attempt in 200:
+				pts.clear()
+				for i in k:
+					var p := Vector2.ZERO
+					for tries in 40:
+						if world.shape == "square":
+							p = Vector2(r.randf_range(-world.size + CELL * 2.0, world.size - CELL * 2.0), (world.size - r.randf_range(PLACE_IN, PLACE_OUT) * CELL) * (1.0 if pid == 0 else -1.0))
+						else:
+							var a := seat_angle(pid) + r.randf_range(-1.0, 1.0) * (PI / n) * 0.8
+							p = Vector2.from_angle(a) * (world.size - r.randf_range(PLACE_IN + 0.2, PLACE_OUT - 0.2) * CELL)
+						var ok := true
+						for q in pts:
+							if p.distance_to(q) < PLACE_GAP * CELL:
+								ok = false
+						if ok:
+							break
+					pts.append(p)
+				if placement_errors(pid, pts).is_empty():
+					return pts
+	if not placement_errors(pid, pts).is_empty():
+		# 줄 배치가 장애물에 걸리면 무작위로
+		if kind != "random":
+			return preset(pid, "random", r)
+	return pts
+
+
+## CPU 성향: 공격형은 구역 안쪽 끝에 넓게, 생존형은 가장자리에서 먼 쪽에 모아서, 기믹 활용형은 기믹 옆에.
+func cpu_placement(pid: int, r: RandomNumberGenerator) -> Array:
+	var style := pid % 3
+	var pts: Array = []
+	if style == 0:
+		pts = preset(pid, "line", r)
+	elif style == 1:
+		pts = preset(pid, "tri", r)
+	else:
+		# 기믹 쪽으로 기울인 무작위 배치 여러 개 중 기믹에 가장 가까운 것
+		var best: Array = []
+		var best_d := INF
+		for i in 12:
+			var cand := preset(pid, "random", r)
+			if not placement_errors(pid, cand).is_empty():
+				continue
+			var d := 0.0
+			for q in cand:
+				d += _nearest_gimmick(q)
+			if d < best_d:
+				best_d = d
+				best = cand
+		pts = best if not best.is_empty() else preset(pid, "tri", r)
+	return pts
+
+
+func _nearest_gimmick(p: Vector2) -> float:
+	var best := 9999.0
+	for g in world.gimmicks:
+		for it in g["items"]:
+			best = minf(best, p.distance_to(it["pos"]))
+	return best
