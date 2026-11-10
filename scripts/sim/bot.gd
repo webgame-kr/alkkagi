@@ -125,10 +125,43 @@ const PRIORITY := {"pea": 8, "shotgun": 7, "retro": 8, "magnet": 7, "rocket": 6,
 	"shield": 4, "tambourine": 5, "track": 3, "crab": 5, "clockwork": 4, "brake": 4}
 
 
+## CPU 성향 (BAL-02): 자리마다 다르게 해서 모두 같은 부품을 고르지 않게.
+##   attack 공격(무기), survive 생존(보조·추진, 버티는 부품), set 세트 모으기, gimmick 공방 전용·특이한 부품
+const STYLES := ["attack", "survive", "set", "gimmick"]
+const SURVIVE_PARTS := ["brake", "anchor", "retro", "at_field", "torn_cape", "rebound_shoes", "chute", "shield", "bumper", "log_sub", "weight"]
+
+
+static func style_of(player_id: int) -> String:
+	return STYLES[(player_id * 3 + 1) % STYLES.size()]
+
+
+static func _style_bonus(style: String, part: String) -> float:
+	var slot := PartsData.slot_of(part)
+	match style:
+		"attack":
+			return 2.5 if slot == "weapon" else 0.0
+		"survive":
+			return 3.0 if SURVIVE_PARTS.has(part) else (1.0 if slot != "weapon" else 0.0)
+		"set":
+			return 2.0 if PartsData.set_of(part) != "" else 0.0
+		"gimmick":
+			return 2.5 if not PartsData.COMMON_PARTS.has(part) else -1.5
+	return 0.0
+
+
 ## {part, stone, side}
 static func choose_draft(m, player_id: int, rand: RandomNumberGenerator) -> Dictionary:
 	var w = m.world
 	var mine: Array = w.alive_stones_of(player_id)
+	var style := style_of(player_id)
+	# 판 위에 이미 많은 부품은 덜 고른다 (모두 역추진 로켓을 다는 일 막기)
+	var on_board := {}
+	for st in w.stones:
+		if st.alive:
+			for sl in st.parts:
+				var pp: String = st.parts[sl]
+				if pp != "":
+					on_board[pp] = int(on_board.get(pp, 0)) + 1
 	var best_choice := {}
 	var best_val := -INF
 	for part in m.offers.get(player_id, []):
@@ -142,8 +175,9 @@ static func choose_draft(m, player_id: int, rand: RandomNumberGenerator) -> Dict
 						best_val = v0
 						best_choice = {"part": part, "stone": s0.id, "side": 1}
 			continue
+		var flavor: float = _style_bonus(style, part) - 1.2 * float(on_board.get(part, 0))
 		for s in mine:
-			var val: float = PRIORITY.get(part, 4)
+			var val: float = PRIORITY.get(part, 4) + flavor
 			if s.parts[slot] == "":
 				val += 3.0
 			else:
@@ -155,7 +189,7 @@ static func choose_draft(m, player_id: int, rand: RandomNumberGenerator) -> Dict
 			# 세트를 모으는 중이면 같은 알에 이어 붙이는 쪽을 크게 쳐준다.
 			if PartsData.set_of(part) != "":
 				var have: int = PartsData.set_progress(s.parts, PartsData.set_of(part))["count"]
-				val += have * 4.0
+				val += have * (5.5 if style == "set" else 4.0)
 			# 이미 부품이 있는 알에 몰아 다는 쪽을 약간 선호 (조합)
 			var filled := 0
 			for k in tmp:

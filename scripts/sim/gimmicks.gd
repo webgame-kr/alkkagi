@@ -60,8 +60,25 @@ static func generate(ws: String, n_players: int, w, rng: RandomNumberGenerator) 
 		var k := rng.randi_range(0, kinds.size() - 1)
 		var kind: String = kinds[k]
 		kinds.remove_at(k)
-		out.append(_place(kind, w, rng))
+		out.append(_keep_out_of_zones(_place(kind, w, rng), w))
 	return out
+
+
+## 시작 구역(가장자리에서 6.5칸 안쪽까지)에 걸치지 않게 안쪽으로 당긴다.
+static func _keep_out_of_zones(g: Dictionary, w) -> Dictionary:
+	if g["kind"] == "meteor" or g["kind"] == "turntable":
+		return g
+	for it in g["items"]:
+		if not it.has("pos"):
+			continue
+		var p: Vector2 = it["pos"]
+		var r: float = float(it.get("r", 0.0))
+		if g["kind"] == "gwell":
+			r = 0.6 * CELL   # 우물은 가운데 몸통만 (끌어당기는 범위는 넓게 걸쳐도 된다)
+		var lim: float = maxf(1.05 * CELL, w.size - 6.6 * CELL - r)   # 판 중심 1칸 안은 계속 피한다
+		if p.length() > lim:
+			it["pos"] = p.normalized() * lim if p.length() > 0.001 else p
+	return g
 
 
 ## 시작 구역(가장자리에서 6.5칸 안쪽까지)과 판 중심 1칸 안은 피한다. 여러 개는 판 양쪽에 고르게.

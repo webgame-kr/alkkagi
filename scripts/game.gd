@@ -59,6 +59,8 @@ const SPEEDS := [
 	{"name": "빠르게", "play": 1.3, "think": 0.3, "aim_show": 0.45, "hold": 0.2},
 ]
 var turn_hold := 0.0          # 샷이 끝난 뒤 다음 차례까지 잠깐 쉬기
+var last_fastest := 9999.0    # 지난 프레임에 가장 빠른 알의 속도
+const TAIL_SPEED := 70.0      # 이보다 느리면 거의 멈춘 것으로 보고 빨리 감기
 var state := "setup"          # setup | play | result
 
 # 화면 배치
@@ -278,6 +280,8 @@ func _debug_args() -> void:
 	var mi := args.find("--map")
 	if mi >= 0 and args.size() > mi + 1:
 		_apply_map(args[mi + 1], false)
+	if args.has("--derby"):
+		settings["mode"] = "derby"
 	var i := args.find("--auto")
 	if i < 0:
 		return
@@ -491,6 +495,7 @@ func _start_match(seed_value := -1) -> void:
 	vis.clear()
 	last_shot.clear()
 	round_picks.clear()
+	set_alerts.clear()
 	toast_picks.clear()
 	confetti.clear()
 	win_t = -1.0
@@ -510,7 +515,7 @@ func _start_match(seed_value := -1) -> void:
 	parts_btn.visible = true
 	sound_btn.visible = true
 	_layout()
-	var sp: Dictionary = m.players[m.current_player()]
+	var sp: Dictionary = m.players[m.first_player()]
 	_log("%d인전 시작, 선공은 %s" % [m.n, sp.name], sp.color)
 	if online != "":
 		var mine: Array = []
@@ -607,6 +612,9 @@ func _update_play(delta: float) -> void:
 			if hitstop > 0.0:
 				hitstop -= delta
 				spd = 0.0
+			# 알이 거의 멈춘 꼬리 구간은 빨리 감는다 (PACE-01: 기다리는 시간 줄이기, 결과는 그대로)
+			if last_fastest < TAIL_SPEED and m.world.projs.is_empty() and slowmo <= 0.0:
+				spd *= 3.0
 			accum += minf(delta, 0.05) * spd * _sp("play")
 			_motion_tick(delta)
 			while accum >= World.DT and m.phase == "moving" and hitstop <= 0.0:
@@ -621,6 +629,7 @@ func _update_play(delta: float) -> void:
 				if st.alive:
 					fastest = maxf(fastest, st.vel.length())
 			snd.slide(fastest)
+			last_fastest = fastest
 		"draft":
 			var pid := m.current_drafter()
 			if m.players[pid].cpu and _drives_cpu():
@@ -658,6 +667,16 @@ func _update_play(delta: float) -> void:
 					_show_result()
 
 
+## CPU가 생각하는 최대 시간 (ms). 사람이 많을수록, 빠르게일수록 짧게 (PACE-01).
+func _bot_budget_ms() -> int:
+	var ms := 900
+	if settings.get("speed", 1) == 2 or fast_forward:
+		ms = 450
+	if m != null and m.n >= 6:
+		ms = int(ms * 0.7)
+	return ms
+
+
 func _update_cpu(delta: float, pid: int) -> void:
 	if not cpu_aim.is_empty():
 		cpu_aim["t"] -= delta
@@ -684,7 +703,7 @@ func _update_cpu(delta: float, pid: int) -> void:
 		finished = bot.think_step(1)
 	bot_us += Time.get_ticks_usec() - t0
 	# 느린 기기(웹)에서도 CPU가 오래 멈춰 보이지 않게, 1초가 지나면 지금까지 본 최선으로 쏜다
-	if not finished and Time.get_ticks_msec() - bot_started > 1000:
+	if not finished and Time.get_ticks_msec() - bot_started > _bot_budget_ms():
 		bot.finish_now()
 		finished = true
 	if finished:
@@ -695,7 +714,7 @@ func _update_cpu(delta: float, pid: int) -> void:
 			_act({"k": "skip", "pid": pid})
 		else:
 			cpu_aim = r.duplicate()
-			cpu_aim["t"] = _sp("aim_show")
+			cpu_aim["t"] = _sp("aim_show") * (0.7 if m.n >= 6 else 1.0)
 
 
 func _on_phase_changed() -> void:
@@ -706,13 +725,29 @@ func _on_phase_changed() -> void:
 			# 개조가 끝났으니 「골랐어요」 안내는 닫는다 (온라인 동시 선택)
 			if overlay != null and overlay.has_meta("draft_wait"):
 				_clear_overlay()
+			# 바퀴 시작은 차례대로: 개조 공개 → 세트 알림 → 차례 시작 (UI-04)
 			if not round_picks.is_empty():
 				toast_picks = round_picks.duplicate()
 				toast_t = time
 				round_picks.clear()
+				turn_hold = 0.6 if _reduced() else 1.4
+				turn_key = ""
+				return
+			if not set_alerts.is_empty():
+				for al in set_alerts:
+					var st_a = m.world.get_stone(int(al["stone"]))
+					if st_a == null or not st_a.alive:
+						continue
+					fx.append({"k": "text", "pos": st_a.pos + Vector2(0, -40), "t": 0.0, "life": 1.6, "text": al["text"], "c": POWER, "size": 26})
+					fx.append({"k": "ring", "pos": st_a.pos, "t": 0.0, "life": 0.8, "r": 60.0, "c": POWER})
+				set_alerts.clear()
+				snd.play("set_complete", -4.0)
+				turn_hold = 0.4 if _reduced() else 1.1
+				turn_key = ""
+				return
 			aim_left = m.aim_limit
 			bot = null
-			bot_wait = _sp("think")
+			bot_wait = _sp("think") * (0.6 if m.n >= 6 else 1.0)
 			var p: Dictionary = m.players[m.current_player()]
 			if _is_mine(p.id):
 				_banner("내 차례", p.color, "알을 당겨 조준하세요")
@@ -723,7 +758,7 @@ func _on_phase_changed() -> void:
 				_banner("%s 차례" % p.name, p.color)
 			relic_mode = false
 			_tick_mark = -1
-			snd.play("turn_start", -8.0)
+			snd.play("turn_start", -2.0 if _is_mine(p.id) else -8.0)
 			if _is_mine(p.id) and not m.relic_targets(p.id).is_empty():
 				_show_relic_hint(p.id)
 		"draft":
@@ -758,6 +793,7 @@ func _on_phase_changed() -> void:
 
 
 func _after_shot() -> void:
+	last_fastest = 9999.0
 	var shooter_owner: int = m.world.shot.owner if m.world.shot != null else -1
 	var outs: Array = m.world.knockouts.duplicate()
 	m.finish_shot()
@@ -960,9 +996,11 @@ func _unhandled_input(event: InputEvent) -> void:
 	if not (event is InputEventMouseButton) or event.button_index != MOUSE_BUTTON_LEFT:
 		return
 	var wp2 := s2w(event.position)
-	if event.pressed and not m.world.gimmicks.is_empty() and event.position.y < 70 and event.position.x > get_viewport_rect().size.x * 0.5 + 140:
-		gimmick_tip = 0 if gimmick_tip < 0 else -1
-		return
+	if event.pressed and not m.world.gimmicks.is_empty():
+		for gi in gimmick_rects.size():
+			if (gimmick_rects[gi] as Rect2).has_point(event.position):
+				gimmick_tip = gi if gimmick_tip != gi else -1
+				return
 	if event.pressed:
 		hover_stone = _stone_at(wp2, -1)
 	if m.phase == "draft" and draft_part != "" and draft_stone < 0:
@@ -982,11 +1020,15 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	if event.pressed:
 		var sid2 := _stone_at(wp2, m.current_player())
+		var other := _stone_at(wp2, -1)
+		if remote_pick >= 0 and other >= 0 and _remote_targets(remote_pick).has(other):
+			sid2 = other   # 리모컨 조종 단계: 고른 상대 알을 당긴다
+		remote_pick = -1
 		if sid2 < 0:
-			var other := _stone_at(wp2, -1)
 			if other >= 0 and m.remote_holder(m.current_player(), m.world.get_stone(other)) != null:
 				sid2 = other
-				_banner("리모컨!", ACCENT, "%s 알을 대신 쏴요" % m.players[m.world.get_stone(other).owner].name)
+		if sid2 >= 0 and m.world.get_stone(sid2).owner != m.current_player():
+			_banner("리모컨!", ACCENT, "%s 알을 대신 쏴요" % m.players[m.world.get_stone(sid2).owner].name)
 		drag_cloud = false
 		if sid2 < 0:
 			sid2 = _cloud_at(wp2, m.current_player())
@@ -1004,6 +1046,11 @@ func _unhandled_input(event: InputEvent) -> void:
 		if not aim.is_empty():
 			_act({"k": "shot", "pid": m.current_player(), "stone": sid3, "dir": [aim["dir"].x, aim["dir"].y],
 				"power": aim["power"], "charged": _charged(sid3), "from_cloud": drag_cloud})
+		elif not drag_cloud and not _remote_targets(sid3).is_empty():
+			# 리모컨 단 알을 당기지 않고 누르기만 하면: 조종할 상대 알 고르기
+			remote_pick = sid3
+			snd.play("ui_toggle", -4.0)
+			_banner("리모컨", ACCENT, "조종할 상대 알을 누르세요 (점선 고리)")
 		else:
 			snd.play("aim_cancel", -4.0)
 		drag_cloud = false
@@ -1206,8 +1253,8 @@ func _do_equip(pid: int, part: String, sid: int, side: int, reserve := "") -> vo
 		fx.append({"k": "text", "pos": s.pos + Vector2(0, -34), "t": 0.0, "life": 1.3, "text": txt, "c": pl.color.lightened(0.35), "size": 20})
 		var done_set := PartsData.set_of(part)
 		if done_set != "" and PartsData.set_complete(s.parts, done_set):
-			fx.append({"k": "text", "pos": s.pos + Vector2(0, -58), "t": 0.0, "life": 1.8, "text": PartsData.SETS[done_set]["name"] + "!", "c": POWER, "size": 24})
-			fx.append({"k": "ring", "pos": s.pos, "t": 0.0, "life": 0.8, "r": 60.0, "c": POWER})
+			# 세트 알림은 개조 공개가 끝난 뒤에 따로 (UI-04)
+			set_alerts.append({"stone": sid, "text": PartsData.SETS[done_set]["name"] + "!"})
 		fx.append({"k": "ring", "pos": s.pos, "t": 0.0, "life": 0.5, "r": 34.0, "c": pl.color})
 	if online == "":
 		draft_part = ""
@@ -1252,6 +1299,7 @@ func _draw_inner() -> void:
 	_draw_projs()
 	_draw_fx()
 	_draw_aim_over()
+	_draw_remote_marks()
 	_draw_draft_marks()
 	_perf_sec["fx"] = _perf_sec.get("fx", 0.0) + float(Time.get_ticks_usec() - _ts)
 	_ts = Time.get_ticks_usec()
@@ -1283,7 +1331,7 @@ func _draw_lobby_preview(ci: Control) -> void:
 	var half := minf(pr.size.x * 0.5 - 18.0, (pr.size.y - 150.0) * 0.5)
 	var c := Vector2(pr.get_center().x, 12.0 + half + 8.0)
 	var square := n == 2
-	var units := 16.0 if square else (18.0 if n <= 4 else 24.0)
+	var units := 16.0 if square else (18.0 if n <= 4 else 20.0)
 	var u := 2.0 * half / units
 	var r := u * 0.5
 	Arena.board(ci, c, half, u, square, th, time)
@@ -1312,7 +1360,7 @@ func _draw_lobby_preview(ci: Control) -> void:
 	# 판 정보: 판 · 퍽 · 개조 · 조준
 	var timed: bool = settings["timed"]
 	var info := [["판", "정사각 16칸" if square else "지름 %d칸" % int(units)], ["퍽", "%d개씩" % (4 if square else 3)],
-		["개조", "2바퀴부터"], ["조준", "8초 제한" if timed else "제한 없음"]]
+		["개조", "2바퀴부터"], ["조준", "10초 제한" if timed else "제한 없음"]]
 	var x0 := 24.0
 	var y0 := c.y + half + 52.0
 	var cw := (pr.size.x - 48.0) / 4.0
@@ -2227,9 +2275,18 @@ func _draw_turn_card(r: Rect2) -> void:
 		var info := _current_aim()
 		if not info.is_empty() and not info.has("cancel"):
 			_txt(Vector2(r.end.x - 16, r.position.y + 42), "%d%%" % int(round(info["power"] * 100)), 22, POWER, font_bold, 80, HORIZONTAL_ALIGNMENT_RIGHT)
-	if m.phase == "aim" and m.aim_limit > 0.0 and not m.players[m.current_player()].cpu:
+	# 조준 남은 시간: 줄어드는 막대와 숫자 (PACE-02). 마지막 3초는 빨갛게 깜빡인다
+	if m.phase == "aim" and m.aim_limit > 0.0 and not m.players[m.current_player()].cpu and _is_mine(m.current_player()) and not (portrait and drag_stone >= 0):
 		var frac := clampf(aim_left / m.aim_limit, 0.0, 1.0)
-		draw_rect(Rect2(r.position.x + 12, r.end.y - 5, (r.size.x - 24) * frac, 3), POWER if frac > 0.3 else Art.RED)
+		var warn := aim_left <= 3.0
+		var tc: Color = Art.RED if warn else POWER
+		if warn:
+			tc = Color(tc, 0.6 + 0.4 * absf(sin(time * 8.0)))
+		var bar := Rect2(r.position.x + 12, r.end.y - 9, r.size.x - 24, 6)
+		_round_rect(bar, Color(FG, 0.12), 3)
+		_round_rect(Rect2(bar.position, Vector2(bar.size.x * frac, bar.size.y)), tc, 3)
+		_txt(Vector2(r.end.x - 16, r.position.y + 40), "%d" % int(ceil(maxf(aim_left, 0.0))), 26, tc, font_bold, 60, HORIZONTAL_ALIGNMENT_RIGHT)
+		_txt(Vector2(r.end.x - 16, r.position.y + 58), "초", 11, Color(SUB, 0.9), font, 60, HORIZONTAL_ALIGNMENT_RIGHT)
 
 
 ## 차례 순서: 이번 바퀴 순서대로, 지금 차례가 맨 위. 탈락한 사람은 아래에 흐리게.
@@ -2278,9 +2335,11 @@ func _draw_order(r: Rect2) -> void:
 		var nx := row.position.x + 44
 		_txt(Vector2(nx, cy + fs * 0.36), p.name, fs, Color(TEXT, a), font_bold if pid == cur else font, 70)
 		var name_w := (font_bold if pid == cur else font).get_string_size(p.name, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
-		_txt(Vector2(nx + name_w + 8, cy + 4), _seat_word(pid), 12, Color(SUB, a), font, 40)
 		if m.mode == "derby":
-			_txt(Vector2(row.end.x - 70, cy + 5), "%d점" % m.scores[pid], 14, POWER, font_bold, 40, HORIZONTAL_ALIGNMENT_RIGHT)
+			# 더비: 사람/CPU 대신 점수를 이름 옆 자기 칸에 (UI-01: 「지금」「다음」과 붙지 않게)
+			_txt(Vector2(nx + name_w + 8, cy + 5), "%d점" % m.scores[pid], 14, Color(POWER, a), font_bold, 40)
+		else:
+			_txt(Vector2(nx + name_w + 8, cy + 4), _seat_word(pid), 12, Color(SUB, a), font, 40)
 		var gmax := -1
 		for hs in m.world.alive_stones_of(pid):
 			if World.Hero.is_hero(hs):
@@ -3872,7 +3931,9 @@ func _workshop_card(key: String, on: bool) -> Control:
 	var info: Dictionary = PartsData.WORKSHOPS[key]
 	var b := _button("", func(): _pick_workshop(key))
 	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	b.custom_minimum_size = Vector2(0, 176)
+	# 5인 이상이면 자리 목록이 두 줄이 되므로 공방 카드를 낮춰 「공방 열기」가 화면 안에 (UI-05)
+	var compact_ws: bool = int(settings.get("n", 4)) > 4
+	b.custom_minimum_size = Vector2(0, 146 if compact_ws else 176)
 	b.clip_contents = true
 	var nb := _sb(Color(FG, 0.05), ACCENT if on else Color(FG, 0.14), 12)
 	nb.set_border_width_all(3 if on else 2)
@@ -3931,10 +3992,11 @@ func _workshop_card(key: String, on: bool) -> Control:
 	sl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	sign.add_child(sl)
 	box.add_child(sign)
-	var tag := _label(info.get("tag", ""), 12, SUB)
-	tag.custom_minimum_size = Vector2(0, 18)
-	tag.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	box.add_child(tag)
+	if not compact_ws:
+		var tag := _label(info.get("tag", ""), 12, SUB)
+		tag.custom_minimum_size = Vector2(0, 18)
+		tag.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		box.add_child(tag)
 	# 대표 부품 셋
 	var reps := HBoxContainer.new()
 	reps.add_theme_constant_override("separation", 2)
@@ -4686,7 +4748,7 @@ func _show_settings(from_setup: bool) -> void:
 	spr.add_child(spseg)
 	box.add_child(spr)
 	if from_setup:
-		box.add_child(_setting_toggle("조준 8초 제한", "시간이 끝나면 차례가 넘어가요", settings["timed"], func(on: bool): settings["timed"] = on))
+		box.add_child(_setting_toggle("조준 10초 제한", "시간이 끝나면 차례가 넘어가요", settings["timed"], func(on: bool): settings["timed"] = on))
 		box.add_child(_setting_toggle("전체 부품 섞기", "공방 대신 66종을 모두 섞어서 냅니다", settings.get("workshop", "junk") == "all", func(on: bool):
 			settings["workshop"] = "all" if on else "junk"
 			if online == "host":
@@ -4759,6 +4821,7 @@ func _draw_timeline(vs: Vector2) -> void:
 
 # ── 이번 바퀴 개조 공개 ──────────────────────────────────
 var round_picks: Array = []
+var set_alerts: Array = []     # 개조 공개 뒤에 띄울 세트 완성 알림
 var toast_picks: Array = []
 var toast_t := -9.0
 
@@ -4786,8 +4849,14 @@ func _draw_toast(vs: Vector2) -> void:
 	var width := minf(vs.x - 2.0 * side, 172.0 * cols + 24.0) if not portrait else vs.x - 24.0
 	width = maxf(width, 320.0)
 	var cw := (width - 24.0 - 8.0 * (cols - 1)) / cols
-	var ch := 54.0
-	var r := Rect2(vs.x * 0.5 - width * 0.5, (96.0 if not portrait else 124.0) + dy, width, 46.0 + rows * (ch + 8.0) + 6.0)
+	# 칸이 좁으면 열을 줄인다 (UI-03: 이름이 세로로 쪼개지지 않게)
+	while cols > 2 and cw < 140.0:
+		cols -= 1
+		cw = (width - 24.0 - 8.0 * (cols - 1)) / cols
+	rows = int(ceil(float(n) / cols))
+	var ch := 56.0
+	var top := 96.0 + (32.0 if not m.world.gimmicks.is_empty() else 0.0)   # 기믹 칩 아래로
+	var r := Rect2(vs.x * 0.5 - width * 0.5, (top if not portrait else 124.0) + dy, width, 46.0 + rows * (ch + 8.0) + 6.0)
 	_panel(r)
 	var rd: int = toast_picks[0].get("round", m.round_no)
 	draw_string(font_bold, Vector2(r.position.x + 16, r.position.y + 28), "%d바퀴 개조 공개" % rd, HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color(TEXT, a))
@@ -4799,23 +4868,22 @@ func _draw_toast(vs: Vector2) -> void:
 		var cell := Rect2(cx, cy, cw, ch)
 		_round_rect(cell, Color(FG, 0.05), 8, Color(PANEL_LINE, PANEL_LINE.a * a))
 		var pl: Dictionary = m.players[int(pk["pid"])]
-		draw_circle(Vector2(cx + 14, cy + ch * 0.5), 7, Color(Art.outline, a))
-		draw_circle(Vector2(cx + 14, cy + ch * 0.5), 6, Color(pl.color, a))
-		draw_string(font, Vector2(cx + 26, cy + ch * 0.5 + 5), pl.name, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(SUB, a))
+		# 위 줄: 색 점 + 이름, 오른쪽에 부품 그림 · 아래 줄: 부품 이름 (칸 폭 전체)
+		draw_circle(Vector2(cx + 14, cy + 17), 7, Color(Art.outline, a))
+		draw_circle(Vector2(cx + 14, cy + 17), 6, Color(pl.color, a))
+		draw_string(font, Vector2(cx + 26, cy + 22), pl.name, HORIZONTAL_ALIGNMENT_LEFT, cw - 60, 12, Color(SUB, a))
 		var pid_part: String = pk.get("id", "")
-		var ix := cx + 26 + font.get_string_size(pl.name, HORIZONTAL_ALIGNMENT_LEFT, -1, 12).x + 18
 		if pid_part != "":
 			var demo := {"weapon": "", "aux": "", "prop": ""}
 			demo[PartsData.slot_of(pid_part)] = pid_part
-			draw_set_transform(Vector2(ix, cy + ch * 0.5 + 2), -PI / 2.0, Vector2.ONE * 0.42)
+			draw_set_transform(Vector2(cell.end.x - 22, cy + 18), -PI / 2.0, Vector2.ONE * 0.36)
 			Art.draw(self, demo, 1, Art.NEUTRAL, a, -1)
 			draw_set_transform_matrix(Transform2D.IDENTITY)
-		var tx := ix + 18
-		var lines := _wrap(str(pk["part"]), font_bold, 13, cell.end.x - tx - 6)
-		var ly := cy + ch * 0.5 + 5 - (lines.size() - 1) * 8
-		for ln in lines.slice(0, 2):
-			draw_string(font_bold, Vector2(tx, ly), ln, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(TEXT, a))
-			ly += 16
+		var lines := _wrap(str(pk["part"]), font_bold, 13, cw - 16)
+		var ln0: String = lines[0] if not lines.is_empty() else ""
+		if lines.size() > 1:
+			ln0 = ln0.trim_suffix(" ") + "…"
+		draw_string(font_bold, Vector2(cx + 8, cy + 44), ln0, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(TEXT, a))
 
 
 ## 대기실 바탕: 화면보다 길면 위아래로 밀어 볼 수 있게 스크롤 안에 둔다 (휴대폰·패드).
@@ -5057,7 +5125,7 @@ var ko_pills: Array = []
 
 
 func _draw_ko_pills(vs: Vector2) -> void:
-	var y := 104.0 if not portrait else 130.0
+	var y := (104.0 + (30.0 if not m.world.gimmicks.is_empty() else 0.0)) if not portrait else 130.0
 	var keep: Array = []
 	for pill in ko_pills:
 		var age: float = time - float(pill["t"])
@@ -5274,17 +5342,26 @@ var gimmick_tip := -1
 func _draw_gimmick_chips(vs: Vector2) -> void:
 	if m == null or m.world.gimmicks.is_empty() or portrait:
 		return
-	var x := vs.x * 0.5 + 150.0
+	# 바퀴 표시줄 바로 아래 가운데 (UI-02: 오른쪽 위 버튼과 겹치지 않게)
+	var widths: Array = []
+	var total := 0.0
+	for g0 in m.world.gimmicks:
+		var w0 := font_semi.get_string_size(World.Gm.name_of(g0["kind"]), HORIZONTAL_ALIGNMENT_LEFT, -1, 13).x + 34.0
+		widths.append(w0)
+		total += w0 + 6.0
+	var x := vs.x * 0.5 - (total - 6.0) * 0.5
 	var mouse := get_local_mouse_position()
 	var shown := -1
+	gimmick_rects.clear()
 	for i in m.world.gimmicks.size():
 		var g: Dictionary = m.world.gimmicks[i]
 		var nm := World.Gm.name_of(g["kind"])
-		var w := font_semi.get_string_size(nm, HORIZONTAL_ALIGNMENT_LEFT, -1, 13).x + 34.0
-		var r := Rect2(x, 34, w, 30)
+		var w: float = widths[i]
+		var r := Rect2(x, GIMMICK_CHIP_Y, w, 28)
+		gimmick_rects.append(r)
 		_round_rect(r, Color(SOLID, 0.95), 15, ACCENT)
-		draw_circle(r.position + Vector2(15, 15), 6, ACCENT)
-		draw_string(font_semi, r.position + Vector2(26, 20), nm, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, TEXT)
+		draw_circle(r.position + Vector2(15, 14), 6, ACCENT)
+		draw_string(font_semi, r.position + Vector2(26, 19), nm, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, TEXT)
 		if r.has_point(mouse) or gimmick_tip == i:
 			shown = i
 			var desc: String = World.Gm.INFO.get(g["kind"], {}).get("desc", "")
@@ -5293,10 +5370,11 @@ func _draw_gimmick_chips(vs: Vector2) -> void:
 			_round_rect(dr, Color(SOLID, 0.98), 8, PANEL_LINE)
 			draw_string(font, dr.position + Vector2(12, 20), desc, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, TEXT)
 		x += w + 6.0
-	gimmick_rects_x = vs.x * 0.5 + 150.0
 
 
-var gimmick_rects_x := 0.0
+
+const GIMMICK_CHIP_Y := 92.0
+var gimmick_rects: Array = []
 
 
 # ── 시작 배치 선택 화면 ──────────────────────────────────
@@ -5790,3 +5868,48 @@ func _draw_intro_gimmicks(vs: Vector2, gy: float, bg: Color, fg: Color, cx := -1
 	sb2.set_corner_radius_all(17)
 	sb2.draw(shutter.get_canvas_item(), gr)
 	shutter.draw_string(font_bold, Vector2(gr.position.x, gr.position.y + 23), gt, HORIZONTAL_ALIGNMENT_CENTER, gr.size.x, 15, fg)
+
+
+## 리모컨: 내 차례에 리모컨 단 알이 있으면 조종할 수 있는 상대 알을 점선 고리로 보여 준다.
+var remote_pick := -1
+
+
+func _remote_targets(holder_id: int) -> Array:
+	var out: Array = []
+	if m == null:
+		return out
+	var h = m.world.get_stone(holder_id)
+	if h == null or not h.alive or h.parts.get("weapon", "") != "remote":
+		return out
+	for o in m.world.stones:
+		if o.alive and o.owner != h.owner and m.remote_holder(h.owner, o) == h:
+			out.append(o.id)
+	return out
+
+
+func _draw_remote_marks() -> void:
+	if m == null or m.phase != "aim" or not _is_mine(m.current_player()) or drag_stone >= 0:
+		if m != null and m.phase != "aim":
+			remote_pick = -1
+		return
+	for h in m.world.alive_stones_of(m.current_player()):
+		if h.parts.get("weapon", "") != "remote":
+			continue
+		var tg := _remote_targets(h.id)
+		if tg.is_empty():
+			continue
+		var on: bool = remote_pick == h.id
+		var hp: Vector2 = w2s(h.pos)
+		var col := Color(ACCENT, 1.0 if on else 0.55)
+		if on:
+			draw_arc(hp, (World.STONE_R + 9) * view_scale, 0, TAU, 40, ACCENT, 3.0, true)
+		for tid in tg:
+			var t = m.world.get_stone(tid)
+			var tp := w2s(t.pos)
+			var rr := (World.STONE_R * m.world.size_of(t) + 8 + (2.0 * sin(time * 6.0) if on else 0.0)) * view_scale
+			var segs := 16
+			for i in segs:
+				if i % 2 == 0:
+					draw_arc(tp, rr, TAU * i / segs + time * 0.6, TAU * (i + 1) / segs + time * 0.6, 4, col, 2.5 if on else 1.8, true)
+			if on:
+				draw_dashed_line(hp, tp, Color(ACCENT, 0.7), 2.0, 8.0)

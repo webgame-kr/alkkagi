@@ -7,10 +7,10 @@ const PartsData = preload("res://scripts/sim/parts_data.gd")
 const COLORS := [Color("E0533D"), Color("3D6FD1"), Color("E9B935"), Color("38A672"),
 	Color("8A68D1"), Color("E5823A"), Color("52B6CC"), Color("D45C99")]
 const NAMES := ["빨강", "파랑", "노랑", "초록", "보라", "주황", "하늘", "분홍"]
-## 판 크기는 퍽 지름(1칸)으로 잡는다. 2인 한 변 16칸, 3~4인 지름 18칸, 5~8인 지름 24칸.
+## 판 크기는 퍽 지름(1칸)으로 잡는다. 2인 한 변 16칸, 3~4인 지름 18칸, 5~8인 지름 20칸 (BAL-01: 24칸은 가운데가 비었다).
 const CELL := World.STONE_R * 2.0
 const OFFER_COUNT := 3
-const AIM_LIMIT := 8.0
+const AIM_LIMIT := 10.0   # 다인전에서 8초는 촉박하다 (PACE-02)
 
 var n := 4
 var players: Array = []       # {id, name, color, cpu, out, out_round}
@@ -68,7 +68,7 @@ func setup(n_players: int, cpu_flags: Array, seed_value: int, timed: bool, opts 
 		world.size = CELL * 9.0
 	else:
 		world.shape = "circle"
-		world.size = CELL * 12.0
+		world.size = CELL * 10.0
 	aim_limit = AIM_LIMIT if timed else 0.0
 	_place_stones()
 	world.gimmicks = World.Gm.generate(workshop, n, world, gimmick_rng)
@@ -134,6 +134,17 @@ func current_player() -> int:
 	if turn_pos < order.size():
 		return order[turn_pos]
 	return -1
+
+
+## 이번 판의 선공: 시작 배치 중이라 차례 순서가 아직 없어도 1바퀴 첫 차례와 같은 값.
+func first_player() -> int:
+	if not order.is_empty():
+		return order[0]
+	for k in n:
+		var pid := (start_seat + k) % n
+		if not players[pid].out:
+			return pid
+	return start_seat
 
 
 func current_drafter() -> int:

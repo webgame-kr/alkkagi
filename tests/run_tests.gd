@@ -36,7 +36,7 @@ func _initialize() -> void:
 		"test_mushroom_and_wind", "test_second_step", "test_rebound_and_string", "test_at_field_and_beam",
 		"test_hero_band_and_shoes", "test_all_parts_have_art",
 		"test_workshop_pools", "test_offer_fits_empty_slots", "test_min_power_moves_one_cell",
-		"test_knockout_causes", "test_derby_mode", "test_gimmicks_junk", "test_start_placement", "test_upgrades", "test_gimmicks_magic_toon", "test_lab_parts", "test_lab_gimmicks", "test_draft_pass",
+		"test_knockout_causes", "test_derby_mode", "test_gimmicks_junk", "test_start_placement", "test_upgrades", "test_gimmicks_magic_toon", "test_lab_parts", "test_lab_gimmicks", "test_draft_pass", "test_playtest_fixes",
 	]
 	for t in tests:
 		var before := failures
@@ -355,7 +355,7 @@ func test_layout_all_counts() -> void:
 	check(m2.world.shape == "square" and m2.max_rounds == 0, "2p square, no round limit")
 	var m6 := Match.new()
 	m6.setup(6, [], 1, true)
-	check(m6.world.size > 340.0 and m6.max_rounds == 0 and m6.aim_limit == 8.0, "6p wide circle, no limit, timer")
+	check(m6.world.size > 340.0 and m6.max_rounds == 0 and m6.aim_limit == 10.0, "6p wide circle, no limit, timer")
 
 
 func test_draft_schedule_and_equip() -> void:
@@ -1627,3 +1627,48 @@ func test_draft_pass() -> void:
 	check(str(m.world.alive_stones_of(first).map(func(st): return st.parts)) == before, "parts unchanged")
 	check(m.current_drafter() != first, "next drafter")
 	check(not m.equip(first, "", -1), "cannot pass out of turn")
+
+
+func test_playtest_fixes() -> void:
+	# BUG-02: 가장자리에 붙은 주인공 알의 라스트 컷도 판 반대쪽까지 달린다
+	var w := make_world("circle", 340.0)
+	var a := w.add_stone(0, Vector2(-310, 0), 0)
+	w.add_stone(0, Vector2(0, 200), 0)
+	a.parts = {"weapon": "hero_band", "aux": "torn_cape", "prop": "awaken_shoes"}
+	a.status["grit"] = 3
+	a.status["last_given"] = true
+	shoot(w, a.id, Vector2.RIGHT, 0.3)
+	check(a.alive and a.pos.x > 250.0, "edge last cut crossed the board: %s" % a.pos)
+	# BUG-01: 시작 배치 중에도 선공 = 1바퀴 첫 차례
+	for n in [4, 6, 8]:
+		var m := Match.new()
+		m.setup(n, [], 11 + n, false, {"workshop": "junk", "placement": true})
+		var fp := m.first_player()
+		for pid in n:
+			m.place(pid, m.preset(pid, "tri"))
+		check(m.current_player() == fp, "%d players: first player %d == %d" % [n, fp, m.current_player()])
+	# BUG-04: 기믹은 시작 구역에 걸치지 않는다
+	for sd in 40:
+		for ws in ["junk", "magic", "toon", "lab"]:
+			var m2 := Match.new()
+			m2.setup(6, [], sd, false, {"workshop": ws})
+			for g in m2.world.gimmicks:
+				if g["kind"] == "meteor" or g["kind"] == "turntable":
+					continue
+				for it in g["items"]:
+					if it.has("pos"):
+						var rr: float = 0.6 * Match.CELL if g["kind"] == "gwell" else float(it.get("r", 0.0))
+						var edge: float = m2.world.size - (it["pos"] as Vector2).length() - rr
+						check(edge >= Match.CELL * 6.5 - 0.5, "%s %s inside start zone (seed %d)" % [ws, g["kind"], sd])
+	# BAL-02: 8인 CPU가 같은 부품만 고르지 않는다
+	var m3 := Match.new()
+	m3.setup(8, [true, true, true, true, true, true, true, true], 3, false, {"workshop": "junk"})
+	var picks := {}
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 1
+	for pid in 8:
+		m3.offers[pid] = ["retro", "pea", "brake"]
+		var c := Bot.choose_draft(m3, pid, rng)
+		picks[c["part"]] = int(picks.get(c["part"], 0)) + 1
+		m3.world.get_stone(c["stone"]).parts[PartsData.slot_of(c["part"])] = c["part"]
+	check(picks.size() >= 3, "CPU picks spread over offers: %s" % str(picks))

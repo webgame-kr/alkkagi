@@ -107,7 +107,8 @@ static func lastcut_step(w) -> void:
 		return
 	if s.vel != Vector2.ZERO:
 		s.vel = s.vel.normalized() * w.MAX_SPEED
-	if w.edge_distance(s.pos) < w.radius_of(s) * 1.1:
+	# 가장자리에서 출발해도 바로 멈추지 않게: 바깥쪽으로 달리고 있을 때만 판 끝에서 멈춘다
+	if w.edge_distance(s.pos) < w.radius_of(s) * 1.1 and s.vel.dot(w.outward(s.pos)) > 0.0:
 		s.pos -= w.outward(s.pos) * (w.radius_of(s) * 1.1 - w.edge_distance(s.pos))
 		s.vel = Vector2.ZERO
 		w.shot.ex["lastcut"] = false
