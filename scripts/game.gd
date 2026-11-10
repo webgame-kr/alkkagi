@@ -940,6 +940,10 @@ func _consume_events() -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	if state != "play" or m == null:
 		return
+	if shutter_t >= 0.0 and ((event is InputEventMouseButton and event.pressed) or (event is InputEventScreenTouch and event.pressed) or (event is InputEventKey and event.pressed)):
+		if _skip_intro():
+			get_viewport().set_input_as_handled()
+			return
 	if m.phase == "place":
 		_place_input(event)
 		return
@@ -3969,8 +3973,10 @@ var shutter_t := -1.0
 
 func _show_workshop_intro() -> void:
 	_clear_overlay()
-	turn_hold = 1.6
+	match_no += 1
+	turn_hold = INTRO_CLOSED + INTRO_OPEN
 	shutter_t = 0.0
+	_intro_sounds()
 	if shutter == null:
 		shutter = Control.new()
 		shutter.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -3985,7 +3991,7 @@ func _update_shutter(delta: float) -> void:
 	if shutter_t < 0.0 or shutter == null:
 		return
 	shutter_t += delta
-	if shutter_t > 1.6:
+	if shutter_t > INTRO_CLOSED + INTRO_OPEN:
 		shutter_t = -1.0
 		shutter.visible = false
 	shutter.queue_redraw()
@@ -3996,10 +4002,13 @@ func _draw_shutter() -> void:
 	if m != null and m.workshop == "lab":
 		_draw_lab_doors(vs)
 		return
-	var k := 0.0
-	if shutter_t > 0.95:
-		var e := clampf((shutter_t - 0.95) / 0.6, 0.0, 1.0)
-		k = e * e * e * (e * (6.0 * e - 15.0) + 10.0)
+	if m != null and m.workshop == "magic":
+		_draw_magic_curtain(vs)
+		return
+	if m != null and m.workshop == "toon":
+		_draw_manga_cover(vs)
+		return
+	var k := _intro_k()
 	var oy := -vs.y * 1.02 * k
 	# 셔터 날: 18px 회색, 4px 홈, 18px 밝은 회색
 	var y := 0.0
@@ -5521,10 +5530,7 @@ func _draw_star(ci: CanvasItem, c: Vector2, r: float) -> void:
 
 ## 연구소: 셔터 대신 실험실 문이 좌우로 열린다.
 func _draw_lab_doors(vs: Vector2) -> void:
-	var k := 0.0
-	if shutter_t > 0.95:
-		var e := clampf((shutter_t - 0.95) / 0.6, 0.0, 1.0)
-		k = e * e * e * (e * (6.0 * e - 15.0) + 10.0)
+	var k := _intro_k()
 	var half := vs.x * 0.5
 	var off := half * 1.02 * k
 	for side in [-1, 1]:
@@ -5575,3 +5581,212 @@ func _draw_grit(c: Vector2, g: int, ready: bool, k: float) -> void:
 		draw_polyline(pts, Color("5A2A10") if lit else Color(0.5, 0.5, 0.5, 0.7), maxf(1.0, 1.4 * k), true)
 	if ready and k >= 1.0:
 		_text_outline(c + Vector2(0, -16), "라스트 컷 준비", 12, Color("F08A3C"), true)
+
+
+# ── 공방 입장 (디자인 「입장 · 마법 상점」「입장 · 만화 창고」) ──
+# 고물 정비소: 셔터가 위로 · 마법 상점: 커튼이 양옆으로 · 만화 창고: 표지가 넘어감 · 연구소: 문이 좌우로
+const INTRO_CLOSED := 1.3   # 닫힌 화면
+const INTRO_OPEN := 0.9     # 열리는 시간. 누르면 바로 열린다
+var match_no := 0           # 오늘 몇 판째 (만화 창고 표지의 「제 N화」)
+var intro_opened := false
+
+
+func _intro_k() -> float:
+	if shutter_t <= INTRO_CLOSED:
+		return 0.0
+	var e := clampf((shutter_t - INTRO_CLOSED) / INTRO_OPEN, 0.0, 1.0)
+	return e * e * e * (e * (6.0 * e - 15.0) + 10.0)
+
+
+## 입장 화면을 누르면 바로 열린다.
+func _skip_intro() -> bool:
+	if shutter_t < 0.0 or shutter_t >= INTRO_CLOSED:
+		return false
+	shutter_t = INTRO_CLOSED
+	turn_hold = minf(turn_hold, INTRO_OPEN)
+	_intro_open_sound()
+	return true
+
+
+func _intro_sounds() -> void:
+	intro_opened = false
+	var ws: String = m.workshop if m != null else ""
+	if ws == "magic":
+		# 딸랑 종소리 세 음
+		var pitches := [1.5, 1.68, 2.0]
+		for i in 3:
+			var pt: float = pitches[i]
+			get_tree().create_timer(0.12 + 0.16 * i).timeout.connect(func(): snd.play("set_progress", -6.0, pt))
+	elif ws == "toon":
+		snd.play("flick_pull", -5.0, 1.35)   # 종이 펄럭
+	get_tree().create_timer(INTRO_CLOSED).timeout.connect(_intro_open_sound)
+
+
+func _intro_open_sound() -> void:
+	if m == null or intro_opened or shutter_t < 0.0:
+		return
+	intro_opened = true
+	match m.workshop:
+		"magic":
+			snd.play("flick_pull", -6.0, 0.55)   # 천 스치는 소리
+		"toon":
+			snd.play("flick_release", -2.0, 0.6)  # 책장 넘기는 소리와 쿵
+			get_tree().create_timer(0.35).timeout.connect(func(): snd.play("fx_parody_stamp", -4.0, 0.8))
+
+
+## 마법 상점: 별이 박힌 보라 벨벳 커튼이 양옆으로 걷히고, 위쪽 주름 장식이 올라간다.
+func _draw_magic_curtain(vs: Vector2) -> void:
+	var k := _intro_k()
+	var half := vs.x * 0.5
+	var pleat := 26.0
+	var val_h := 34.0
+	for side in [-1, 1]:
+		# 주름이 접히며 가장자리로 몰리고, 끝에는 화면 밖으로 빠진다
+		var w: float = half * lerpf(1.0, 0.16, minf(1.0, k * 1.35))
+		var slide: float = w * 1.05 * clampf((k - 0.55) / 0.45, 0.0, 1.0)
+		var x0: float = (0.0 - slide) if side < 0 else (vs.x - w + slide)
+		var n := int(ceil(half / pleat))
+		var pw: float = w / float(n)
+		for i in n:
+			var px: float = x0 + i * pw
+			var shade := Color("3B2477") if i % 2 == 0 else Color("4E3196")
+			shutter.draw_rect(Rect2(px, 0, pw + 0.5, vs.y), shade)
+			shutter.draw_rect(Rect2(px + pw * 0.35, 0, pw * 0.3, vs.y), Color("5C3DAE", 0.55))
+			shutter.draw_rect(Rect2(px, 0, 2.0, vs.y), Color("23154A", 0.7))
+			var sy := 30.0 + (i % 2) * 22.0
+			while sy < vs.y - 20.0:
+				shutter.draw_circle(Vector2(px + pw * 0.5, sy), 1.4, Color("E9DFFF", 0.75))
+				sy += 44.0
+		# 가운데 맞닿는 곳 그림자
+		var inner: float = (x0 + w - 10.0) if side < 0 else x0
+		shutter.draw_rect(Rect2(inner, 0, 10, vs.y), Color(0.08, 0.04, 0.18, 0.45))
+		# 아래 금색 술 장식
+		var fy := vs.y - 14.0
+		shutter.draw_rect(Rect2(x0, fy, w, 14), Color("B8913F"))
+		var fx0: float = x0
+		while fx0 < x0 + w:
+			shutter.draw_line(Vector2(fx0, fy + 2), Vector2(fx0, vs.y), Color("E3C26E"), 1.5)
+			fx0 += 4.0
+	# 위쪽 주름 장식 (물결 테두리): 열리면 위로 올라간다
+	var vy := -val_h * 1.6 * k
+	shutter.draw_rect(Rect2(0, vy, vs.x, val_h), Color("2A1A5C"))
+	var bx := 0.0
+	while bx < vs.x:
+		shutter.draw_circle(Vector2(bx + 14.0, vy + val_h), 14.0, Color("2A1A5C"))
+		bx += 28.0
+	shutter.draw_rect(Rect2(0, vy + val_h - 4, vs.x, 3), Color("B8913F", 0.7))
+	if m == null:
+		return
+	# 간판: 흐려지며 위로 떠오른다
+	var a := 1.0 - clampf(k * 1.6, 0.0, 1.0)
+	if a <= 0.01:
+		return
+	var info: Dictionary = PartsData.WORKSHOPS["magic"]
+	var nm: String = info["name"]
+	var names: Array = []
+	for pid in info["rep"]:
+		names.append(PartsData.part_name(pid))
+	var bw := maxf(font_display.get_string_size(nm, HORIZONTAL_ALIGNMENT_LEFT, -1, 44).x, font.get_string_size(" · ".join(names), HORIZONTAL_ALIGNMENT_LEFT, -1, 14).x) + 64.0
+	var box := Rect2(vs.x * 0.5 - bw * 0.5, vs.y * 0.5 - 62 - 50.0 * k, bw, 124)
+	for g in 4:
+		var sbg := StyleBoxFlat.new()
+		sbg.bg_color = Color(0.72, 0.62, 1.0, 0.07 * a)
+		sbg.set_corner_radius_all(12 + g * 5)
+		sbg.draw(shutter.get_canvas_item(), box.grow(4.0 + g * 5.0))
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.09, 0.07, 0.2, 0.96 * a)
+	sb.border_color = Color(0.72, 0.62, 1.0, a)
+	sb.set_border_width_all(3)
+	sb.set_corner_radius_all(10)
+	sb.draw(shutter.get_canvas_item(), box)
+	var sub := "오늘의 공방" + ("  ·  개조 더비" if m.mode == "derby" else "")
+	shutter.draw_string(font_bold, Vector2(box.position.x, box.position.y + 28), sub, HORIZONTAL_ALIGNMENT_CENTER, box.size.x, 13, Color(0.78, 0.7, 1.0, a))
+	shutter.draw_string(font_display, Vector2(box.position.x, box.position.y + 78), nm, HORIZONTAL_ALIGNMENT_CENTER, box.size.x, 44, Color(0.97, 0.96, 1.0, a))
+	shutter.draw_string(font, Vector2(box.position.x, box.position.y + 106), " · ".join(names), HORIZONTAL_ALIGNMENT_CENTER, box.size.x, 14, Color(0.8, 0.78, 0.92, a))
+	_draw_intro_gimmicks(vs, box.end.y + 28.0, Color(0.72, 0.62, 1.0, a), Color(0.09, 0.07, 0.2, a))
+
+
+## 만화 창고: 잡지 표지가 덮고 있다가 왼쪽을 축으로 책장처럼 넘어간다. 「제 N화」 = 오늘 몇 판째.
+func _draw_manga_cover(vs: Vector2) -> void:
+	var k := _intro_k()
+	if k >= 0.999:
+		return
+	var ang := k * PI * 0.5
+	var c := cos(ang)
+	# 왼쪽 축으로 넘어가며 오른쪽 끝이 살짝 들린다
+	shutter.draw_set_transform_matrix(Transform2D(Vector2(c, -0.14 * sin(ang)), Vector2(0, 1), Vector2.ZERO))
+	var r := Rect2(Vector2.ZERO, vs)
+	shutter.draw_rect(r, Color("F6F3EC"))
+	# 집중선: 한가운데 커다란 알을 향해
+	var center := Vector2(vs.x * 0.62, vs.y * 0.5)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 7
+	var far := vs.length()
+	var page := PackedVector2Array([Vector2.ZERO, Vector2(vs.x, 0), vs, Vector2(0, vs.y)])
+	for i in 84:
+		var t := TAU * i / 84.0 + rng.randf_range(-0.02, 0.02)
+		var inner := rng.randf_range(100.0, 170.0)
+		var w0 := rng.randf_range(0.006, 0.017)
+		var p1 := center + Vector2.from_angle(t) * inner
+		var p2 := center + Vector2.from_angle(t - w0) * far
+		var p3 := center + Vector2.from_angle(t + w0) * far
+		# 표지 밖으로 나가지 않게 자른다
+		for piece in Geometry2D.intersect_polygons(PackedVector2Array([p1, p2, p3]), page):
+			shutter.draw_colored_polygon(piece, Color("15171A"))
+	var me: int = int(my_seats[0]) if not my_seats.is_empty() else 0
+	var col := Color("E0533D")
+	if m != null and me < m.players.size():
+		col = m.players[me].color
+	var pr := minf(vs.y * 0.13, 70.0)
+	shutter.draw_circle(center + Vector2(4, 10), pr, Color(0, 0, 0, 0.3))
+	Art.draw_puck_top(shutter, center, pr, col, me, -PI / 2.0, 1.0)
+	# 빨간 테두리
+	shutter.draw_rect(r.grow(-6), Color("D2452F"), false, 12.0)
+	# 제목 상자
+	if m != null:
+		var info: Dictionary = PartsData.WORKSHOPS["toon"]
+		var nm: String = info["name"]
+		var names: Array = []
+		for pid in info["rep"]:
+			names.append(PartsData.part_name(pid))
+		var sub := "오늘의 공방 특별 연재 · " + " · ".join(names)
+		if m.mode == "derby":
+			sub = "개조 더비 · " + sub
+		var bw := maxf(font_display.get_string_size(nm, HORIZONTAL_ALIGNMENT_LEFT, -1, 40).x, font.get_string_size(sub, HORIZONTAL_ALIGNMENT_LEFT, -1, 12).x) + 36.0
+		bw = minf(bw, maxf(vs.x * 0.5, 240.0))
+		var box := Rect2(maxf(24.0, vs.x * 0.08), vs.y * 0.5 - 70, bw, 132)
+		shutter.draw_rect(Rect2(box.position + Vector2(6, 6), box.size), Color("15171A"))
+		shutter.draw_rect(box, Color("FFFFFF"))
+		shutter.draw_rect(box, Color("15171A"), false, 3.0)
+		var tag := "제 %d화" % match_no
+		var tw := font_bold.get_string_size(tag, HORIZONTAL_ALIGNMENT_LEFT, -1, 13).x + 16.0
+		shutter.draw_rect(Rect2(box.position + Vector2(16, 14), Vector2(tw, 22)), Color("15171A"))
+		shutter.draw_string(font_bold, box.position + Vector2(24, 30), tag, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color.WHITE)
+		shutter.draw_string(font_display, box.position + Vector2(16, 84), nm, HORIZONTAL_ALIGNMENT_LEFT, box.size.x - 28, 40, Color("15171A"))
+		shutter.draw_string(font, box.position + Vector2(16, 114), sub, HORIZONTAL_ALIGNMENT_LEFT, box.size.x - 28, 12, Color("3A3D42"))
+		_draw_intro_gimmicks(vs, box.end.y + 30.0, Color("15171A"), Color("FFFFFF"), box.get_center().x)
+	# 넘어가며 어두워진다
+	if k > 0.0:
+		shutter.draw_rect(r, Color(0, 0, 0, 0.55 * k))
+	shutter.draw_set_transform_matrix(Transform2D.IDENTITY)
+	if k > 0.0:
+		shutter.draw_rect(Rect2(vs.x * c, 0, 18.0, vs.y), Color(0, 0, 0, 0.25 * (1.0 - k)))
+
+
+## 입장 화면의 맵 기믹 알림 (있을 때만).
+func _draw_intro_gimmicks(vs: Vector2, gy: float, bg: Color, fg: Color, cx := -1.0) -> void:
+	if m == null or m.world.gimmicks.is_empty():
+		return
+	var gn: Array = []
+	for g in m.world.gimmicks:
+		gn.append(World.Gm.name_of(g["kind"]))
+	var gt := "맵 기믹 · " + " · ".join(gn)
+	var gw := font_bold.get_string_size(gt, HORIZONTAL_ALIGNMENT_LEFT, -1, 15).x + 36.0
+	if cx < 0.0:
+		cx = vs.x * 0.5
+	var gr := Rect2(cx - gw * 0.5, gy, gw, 34)
+	var sb2 := StyleBoxFlat.new()
+	sb2.bg_color = bg
+	sb2.set_corner_radius_all(17)
+	sb2.draw(shutter.get_canvas_item(), gr)
+	shutter.draw_string(font_bold, Vector2(gr.position.x, gr.position.y + 23), gt, HORIZONTAL_ALIGNMENT_CENTER, gr.size.x, 15, fg)
