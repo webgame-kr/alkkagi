@@ -933,6 +933,8 @@ func _check_out() -> void:
 	for s in stones:
 		if s.alive and not is_inside(s.pos) and Ex.save_from_edge(self, s):
 			continue
+		if s.alive and not is_inside(s.pos) and Gm.save_from_edge(self, s):
+			continue
 		if s.alive and not is_inside(s.pos):
 			s.alive = false
 			s.vel = Vector2.ZERO

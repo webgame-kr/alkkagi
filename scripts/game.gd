@@ -4041,6 +4041,8 @@ func _part_word(part: String) -> String:
 ## 낙하 지점에 띄울 글: "보라 · 콩알총", "초록 · 몸통 충돌", "보라 · 콩알총 → 연쇄 충돌"
 func _cause_text(c: Dictionary, victim_owner: int) -> String:
 	if not c.has("owner"):
+		if str(c.get("part", "")).begins_with("gm_"):
+			return _part_word(str(c["part"]))
 		return "판 밖으로"
 	var att: String = m.players[int(c["owner"])].name
 	if int(c["owner"]) == victim_owner:
@@ -4974,6 +4976,91 @@ func _draw_gimmicks() -> void:
 						var a0 := time * 0.3 + i * 1.3
 						draw_arc(c + Vector2(-r * 0.12, -r * 0.1), rr, a0, a0 + 1.6, 16, Color(hues[i], 0.35), 2.5, true)
 					draw_circle(c + Vector2(-r * 0.35, -r * 0.3), r * 0.12, Color(1, 1, 1, 0.18))
+			"gwell":
+				for it in g["items"]:
+					var cw := w2s(it["pos"])
+					var rw: float = float(it["r"]) * k
+					draw_circle(cw, rw, Color("6A50B8", 0.16))
+					for arm in 4:
+						var pts := PackedVector2Array()
+						for i in 18:
+							var t := float(i) / 17.0
+							var a := time * 1.2 + arm * TAU / 4.0 + t * 3.2
+							pts.append(cw + Vector2.from_angle(a) * rw * (1.0 - t * 0.9))
+						draw_polyline(pts, Color("B7A2FF", 0.55), 2.0, true)
+					draw_circle(cw, rw * 0.12, Color("2A1A55", 0.9))
+					draw_arc(cw, rw, 0, TAU, 48, Color("B7A2FF", 0.35), 1.5, true)
+			"twins":
+				for it in g["items"]:
+					var ct := w2s(it["pos"])
+					var rt: float = float(it["r"]) * k
+					draw_circle(ct, rt, Color("2A2463", 0.55))
+					draw_arc(ct, rt, 0, TAU, 32, Color("C9D5FF", 0.9), 2.5, true)
+					draw_arc(ct, rt * 0.65, time, time + TAU * 0.75, 20, Color("C9D5FF", 0.7), 1.5, true)
+					var tri := PackedVector2Array()
+					for i in 4:
+						tri.append(ct + Vector2.from_angle(-PI / 2.0 + TAU * i / 3.0 - time * 0.6) * rt * 0.5)
+					draw_polyline(tri, Color("C9D5FF", 0.8), 1.5, true)
+			"meteor":
+				for it in g["items"]:
+					var cm := w2s(it["pos"])
+					var rm: float = float(it["r"]) * k
+					var pulse := 0.5 + 0.5 * sin(time * 5.0)
+					draw_circle(cm, rm, Color("FF4F4F", 0.12 + 0.06 * pulse))
+					var segs := 24
+					for i in segs:
+						var a0 := TAU * i / segs + time * 0.5
+						draw_arc(cm, rm, a0, a0 + TAU / segs * 0.55, 3, Color("FF5A5A", 0.9), 2.5, true)
+					_text_outline(cm + Vector2(0, 6), "!", 22, Color("FF5A5A"), true)
+				for h in g.get("hits", []):
+					if not h.has("t"):
+						h["t"] = time
+						snd.play("puck_hit_heavy", 2.0, 0.6)
+						shake = maxf(shake, 6.0)
+					var ht: float = time - float(h["t"])
+					if ht < 0.8:
+						var hp := w2s(h["pos"])
+						draw_circle(hp, (40.0 + 140.0 * ht) * k, Color("FFB347", 0.5 * (1.0 - ht / 0.8)))
+						_text_outline(hp + Vector2(0, -40), "별똥별!", 22, Color("FFD27A", 1.0 - ht / 0.8), true)
+			"cutline":
+				for it in g["items"]:
+					var n3: Vector2 = it["n"]
+					var along: Vector2 = n3.orthogonal()
+					var L := m.world.size * 2.2
+					var seg := Arena.clip_segment(w2s(it["pos"] - along * L), w2s(it["pos"] + along * L), view_center + shake_off, m.world.size * view_scale, m.world.shape != "circle")
+					if seg.is_empty():
+						continue
+					var cnt := 22
+					for i in cnt:
+						var q: Vector2 = seg[0].lerp(seg[1], (i + 0.5) / cnt)
+						var ln := (18.0 + 14.0 * absf(sin(i * 1.7))) * k
+						draw_line(q + n3 * 4.0, q + n3 * ln, Color("111111", 0.45), 1.5, true)
+					draw_line(seg[0], seg[1], Color("111111", 0.9), 5.0, true)
+			"blocks":
+				for it in g["items"]:
+					var cb := w2s(it["pos"])
+					var rb: float = float(it["r"]) * k
+					var rr := Rect2(cb - Vector2(rb, rb * 0.85), Vector2(rb * 2.0, rb * 1.7))
+					draw_rect(Rect2(rr.position + Vector2(4, 4), rr.size), Color("111111"))
+					draw_rect(rr, Color("FFFDF6"))
+					draw_rect(rr, Color("111111"), false, 2.5)
+					draw_string(font_display, Vector2(rr.position.x, rr.position.y + rr.size.y * 0.78), str(it["word"]), HORIZONTAL_ALIGNMENT_CENTER, rr.size.x, int(rb * 1.25), Color("E04E3A"))
+					if int(it["hp"]) <= 1:
+						draw_polyline(PackedVector2Array([rr.position + Vector2(rr.size.x * 0.2, 0), rr.get_center(), rr.position + Vector2(rr.size.x * 0.7, rr.size.y)]), Color("111111"), 2.0, true)
+			"nextch":
+				for it in g["items"]:
+					var a1: float = float(it["ang"]) - float(it["half"])
+					var a2: float = float(it["ang"]) + float(it["half"])
+					var Rn := m.world.size * view_scale
+					var c0 := view_center + shake_off
+					for side in [0.0, PI]:
+						draw_arc(c0, Rn + 6.0, a1 + side, a2 + side, 24, Color("E04E3A", 0.9), 10.0, false)
+						var stripes := 10
+						for i in stripes:
+							var aa: float = lerpf(a1, a2, (i + 0.5) / stripes) + side
+							draw_line(c0 + Vector2.from_angle(aa) * (Rn + 1.0), c0 + Vector2.from_angle(aa + 0.03) * (Rn + 11.0), Color.WHITE, 2.0, true)
+					var lp := c0 + Vector2.from_angle(float(it["ang"])) * (Rn - 26.0)
+					_text_outline(lp, "다음 화에 계속", 13, Color("E04E3A"), true)
 			"bolt":
 				for it in g["items"]:
 					var c2 := w2s(it["pos"])

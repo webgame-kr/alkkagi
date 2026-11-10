@@ -152,6 +152,17 @@ func _begin_round() -> void:
 	world.round_no = round_no
 	if round_no > 1:
 		World.Gm.on_round(world)
+		# 별똥별: 지난 바퀴가 끝났으니 떨어진다
+		if not World.Gm.meteor_fall(world, round_no - 1).is_empty():
+			for p in players:
+				if not p.out and stones_left(p.id) == 0 and mode != "derby":
+					p.out = true
+					p.out_round = round_no - 1
+					out_order.append(p.id)
+			var alive_now := alive_players()
+			if alive_now.size() <= 1:
+				_finish(alive_now, "last" if alive_now.size() == 1 else "draw")
+				return
 	world.expire_devices()
 	order.clear()
 	for k in n:
@@ -641,5 +652,8 @@ func _nearest_gimmick(p: Vector2) -> float:
 	var best := 9999.0
 	for g in world.gimmicks:
 		for it in g["items"]:
-			best = minf(best, p.distance_to(it["pos"]))
+			if it.has("pos"):
+				best = minf(best, p.distance_to(it["pos"]))
+			elif it.has("ang"):
+				best = minf(best, p.distance_to(Vector2.from_angle(float(it["ang"])) * world.size))
 	return best

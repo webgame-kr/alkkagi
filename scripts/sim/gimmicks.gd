@@ -9,14 +9,20 @@ const TIME_K := 2.5          # parts.gd 와 같은 시간 배율 (사양의 초�
 ## 공방별 기믹 3종
 const BY_WORKSHOP := {
 	"junk": ["oil", "bolt", "belt"],
-	"magic": [],
-	"toon": [],
+	"magic": ["gwell", "twins", "meteor"],
+	"toon": ["cutline", "blocks", "nextch"],
 }
 
 const INFO := {
 	"oil": {"name": "기름 웅덩이", "desc": "안에서는 마찰이 30%로 줄어 훨씬 멀리 미끄러져요"},
 	"bolt": {"name": "범퍼 볼트", "desc": "움직이지 않는 볼트. 부딪힌 알을 120% 속도로 튕겨 내요"},
 	"belt": {"name": "컨베이어 띠", "desc": "띠 위의 알은 화살표 쪽으로 실려 가요. 바퀴마다 방향이 뒤집혀요"},
+	"gwell": {"name": "중력 우물", "desc": "범위 안을 지나는 알의 진행 방향이 우물 중심 쪽으로 휘어요"},
+	"twins": {"name": "쌍둥이 마법진", "desc": "한쪽에 들어간 알은 다른 쪽에서 같은 속도와 방향으로 나와요"},
+	"meteor": {"name": "별똥별 표식", "desc": "바퀴가 끝날 때 붉은 원 안의 알을 바깥쪽으로 3칸 밀어내요"},
+	"cutline": {"name": "컷 경계선", "desc": "집중선 쪽으로 넘으면 1.5배 빨라지고, 반대로 넘으면 0.7배로 느려져요"},
+	"blocks": {"name": "효과음 블록", "desc": "움직이지 않는 글자 블록. 두 번 맞으면 부서져요"},
+	"nextch": {"name": "다음 화 테두리", "desc": "이 구간으로 넘어간 알은 반대편에서 다시 들어와요 (알마다 한 번)"},
 }
 
 const OIL_R := 1.5 * CELL
@@ -26,6 +32,13 @@ const BOLT_BOUNCE := 1.2
 const BELT_HALF := 0.75 * CELL
 const BELT_SPEED := 1.5 * CELL * TIME_K
 const BELT_TIME := 0.8        # 샷마다 띠가 알을 나르는 시간 (초, 판 시간)
+const WELL_R := 2.5 * CELL    # 중력 우물 영향 범위 (지름 5칸)
+const WELL_TURN := 3.2        # 초당 휘는 각 (rad, 판 시간)
+const TWIN_R := 0.7 * CELL
+const METEOR_R := 1.5 * CELL
+const METEOR_PUSH := 3.0 * CELL
+const BLOCK_R := 0.75 * CELL
+const NEXT_HALF := PI / 6.0   # 60도 구간
 
 
 static func name_of(kind: String) -> String:
@@ -76,6 +89,27 @@ static func _place(kind: String, w, rng: RandomNumberGenerator) -> Dictionary:
 			var off := rng.randf_range(-0.8, 0.8) * CELL
 			var p0 := dir.orthogonal() * off
 			return {"kind": "belt", "items": [{"pos": p0, "dir": dir if rng.randf() < 0.5 else -dir}]}
+		"gwell":
+			var d3 := rng.randf_range(ring.x, ring.y)
+			return {"kind": "gwell", "items": [{"pos": Vector2.from_angle(base) * d3, "r": WELL_R}]}
+		"twins":
+			var d4 := rng.randf_range(ring.x + 0.3 * CELL, ring.y + 0.3 * CELL)
+			return {"kind": "twins", "items": [{"pos": Vector2.from_angle(base) * d4, "r": TWIN_R}, {"pos": Vector2.from_angle(base + PI + rng.randf_range(-0.5, 0.5)) * d4, "r": TWIN_R}]}
+		"meteor":
+			return {"kind": "meteor", "items": [{"pos": _meteor_spot(w, rng.randi()), "r": METEOR_R}], "seed": rng.randi(), "hits": []}
+		"cutline":
+			var nrm := Vector2.from_angle(base)
+			return {"kind": "cutline", "items": [{"pos": nrm * rng.randf_range(-0.6, 0.6) * CELL, "n": nrm}]}
+		"blocks":
+			var items5: Array = []
+			var words := ["쾅", "펑"]
+			for i in 2:
+				var a5 := base + PI * i + rng.randf_range(-0.4, 0.4)
+				var d5 := rng.randf_range(ring.x + 0.4 * CELL, ring.y)
+				items5.append({"pos": Vector2.from_angle(a5) * d5, "r": BLOCK_R, "hp": 2, "word": words[i]})
+			return {"kind": "blocks", "items": items5}
+		"nextch":
+			return {"kind": "nextch", "items": [{"ang": base, "half": NEXT_HALF}], "used": []}
 	return {"kind": kind, "items": []}
 
 
@@ -107,6 +141,48 @@ static func before_move(w, dt: float) -> void:
 		return
 	for g in w.gimmicks:
 		match g["kind"]:
+			"gwell":
+				for it in g["items"]:
+					for s in w.stones:
+						if not s.alive or s.vel == Vector2.ZERO:
+							continue
+						var to: Vector2 = it["pos"] - s.pos
+						if to.length() < it["r"] and to.length() > 4.0:
+							var diff := angle_difference(s.vel.angle(), to.angle())
+							s.vel = s.vel.rotated(clampf(diff, -WELL_TURN * dt, WELL_TURN * dt))
+							_mark(w, s, "gm_gwell")
+			"twins":
+				var its: Array = g["items"]
+				for s2 in w.stones:
+					if not s2.alive or s2.vel == Vector2.ZERO:
+						continue
+					var key := "twin:%d" % s2.id
+					if w.shot.used.has(key):
+						continue
+					for k in 2:
+						if s2.pos.distance_to(its[k]["pos"]) < float(its[k]["r"]) * 0.8:
+							var outp: Vector2 = its[1 - k]["pos"] + s2.vel.normalized() * (float(its[k]["r"]) + w.STONE_R + 2.0)
+							if w.is_inside(outp):
+								w.shot.used[key] = 1
+								var from: Vector2 = s2.pos
+								s2.pos = outp
+								_mark(w, s2, "gm_twins")
+								w.emit({"t": "part", "part": "gm_twins", "pos": outp, "owner": w.shot.owner, "text": "쌍둥이 마법진", "from": from})
+							break
+			"cutline":
+				for it3 in g["items"]:
+					var n3: Vector2 = it3["n"]
+					for s3 in w.stones:
+						if not s3.alive or s3.vel == Vector2.ZERO:
+							continue
+						var now: float = (s3.pos - it3["pos"]).dot(n3)
+						var nxt: float = (s3.pos + s3.vel * dt - it3["pos"]).dot(n3)
+						if signf(now) != signf(nxt) and now != 0.0:
+							s3.vel *= 1.5 if nxt > 0.0 else 0.7
+							if s3.vel.length() > w.MAX_SPEED:
+								s3.vel = s3.vel.normalized() * w.MAX_SPEED
+							_mark(w, s3, "gm_cutline")
+							w.emit({"t": "part", "part": "gm_cutline", "pos": s3.pos, "owner": w.shot.owner, "text": "슈욱!" if nxt > 0.0 else "끼익"})
 			"belt":
 				if w.shot.time > BELT_TIME:
 					continue
@@ -127,9 +203,12 @@ static func before_move(w, dt: float) -> void:
 							_mark(w, s2, "gm_oil")
 
 
-## 범퍼 볼트: 정적 장애물. 다가오던 알을 반사하고 1.2배로 튕긴다.
+## 범퍼 볼트 · 효과음 블록: 정적 장애물. 볼트는 1.2배로 튕기고, 블록은 두 번 맞으면 부서진다.
 static func collide(w) -> void:
 	for g in w.gimmicks:
+		if g["kind"] == "blocks":
+			_collide_blocks(w, g)
+			continue
 		if g["kind"] != "bolt":
 			continue
 		for it in g["items"]:
@@ -171,8 +250,83 @@ static func on_round(w) -> void:
 ## 알을 놓을 수 있는지 (장애물과 0.5칸 이상)
 static func blocks(w, p: Vector2, margin := 0.5 * CELL) -> bool:
 	for g in w.gimmicks:
-		if g["kind"] == "bolt":
+		if g["kind"] == "bolt" or g["kind"] == "blocks":
 			for it in g["items"]:
 				if p.distance_to(it["pos"]) < w.STONE_R + float(it["r"]) + margin:
 					return true
 	return false
+
+
+
+static func _collide_blocks(w, g: Dictionary) -> void:
+	for it in g["items"].duplicate():
+		var bp: Vector2 = it["pos"]
+		var rr: float = w.STONE_R + float(it["r"])
+		for s in w.stones:
+			if not s.alive:
+				continue
+			var d: Vector2 = s.pos - bp
+			var dist := d.length()
+			if dist >= rr or dist < 0.0001:
+				continue
+			var nrm := d / dist
+			s.pos = bp + nrm * rr
+			var vn: float = s.vel.dot(nrm)
+			if vn < 0.0:
+				s.vel = (s.vel - 2.0 * vn * nrm) * 0.85
+				it["hp"] = int(it["hp"]) - 1
+				w.emit({"t": "hit", "pos": bp + nrm * float(it["r"]), "strength": -vn * 1.5, "a": s.id, "b": s.id, "n": nrm, "gimmick": "blocks"})
+				_mark(w, s, "gm_blocks")
+				if int(it["hp"]) <= 0:
+					g["items"].erase(it)
+					w.emit({"t": "part", "part": "gm_blocks", "pos": bp, "owner": w.shot.owner if w.shot != null else -1, "text": str(it["word"]) + "! 와장창", "big": true})
+					break
+
+
+## 다음 화 테두리: 이 구간으로 넘어간 알은 반대편에서 다시 들어온다 (판마다 알 하나에 한 번).
+static func save_from_edge(w, s) -> bool:
+	for g in w.gimmicks:
+		if g["kind"] != "nextch":
+			continue
+		if g["used"].has(s.id):
+			continue
+		for it in g["items"]:
+			if absf(angle_difference(s.pos.angle(), float(it["ang"]))) <= float(it["half"]):
+				g["used"].append(s.id)
+				var from: Vector2 = s.pos
+				var back: Vector2 = -s.pos.normalized()
+				s.pos = back * (w.size - w.STONE_R - 6.0) if w.shape == "circle" else -s.pos * 0.9
+				if w.record_events:
+					w.emit({"t": "part", "part": "gm_nextch", "pos": s.pos, "owner": s.owner, "text": "다음 화에 계속!", "from": from, "big": true})
+				return true
+	return false
+
+
+## 별똥별 표식: 판 위 무작위 자리 (시작 구역 제외).
+static func _meteor_spot(w, seed_v: int) -> Vector2:
+	var r := RandomNumberGenerator.new()
+	r.seed = seed_v
+	var ring := _ring(w)
+	return Vector2.from_angle(r.randf() * TAU) * r.randf_range(ring.x, ring.y + 1.0 * CELL)
+
+
+## 바퀴가 끝날 때: 별똥별이 떨어져 원 안의 알을 바깥쪽으로 민다. 판 밖으로 나간 알 목록을 돌려준다.
+static func meteor_fall(w, round_no: int) -> Array:
+	var fallen: Array = []
+	for g in w.gimmicks:
+		if g["kind"] != "meteor":
+			continue
+		for it in g["items"]:
+			var c: Vector2 = it["pos"]
+			for s in w.stones:
+				if not s.alive or s.pos.distance_to(c) > float(it["r"]) + w.STONE_R * 0.5:
+					continue
+				var away: Vector2 = (s.pos - c).normalized() if s.pos.distance_to(c) > 1.0 else s.pos.normalized()
+				s.pos += away * METEOR_PUSH
+				if not w.is_inside(s.pos) and not save_from_edge(w, s):
+					s.alive = false
+					fallen.append(s)
+					w.emit({"t": "out", "pos": s.pos, "owner": s.owner, "cause": {"part": "gm_meteor"}, "stone": s.id})
+			g["hits"] = [{"pos": c, "round": round_no}]
+			it["pos"] = _meteor_spot(w, int(g["seed"]) + round_no * 97)
+	return fallen

@@ -36,7 +36,7 @@ func _initialize() -> void:
 		"test_mushroom_and_wind", "test_second_step", "test_rebound_and_string", "test_at_field_and_beam",
 		"test_hero_band_and_shoes", "test_all_parts_have_art",
 		"test_workshop_pools", "test_offer_fits_empty_slots", "test_min_power_moves_one_cell",
-		"test_knockout_causes", "test_derby_mode", "test_gimmicks_junk", "test_start_placement", "test_upgrades",
+		"test_knockout_causes", "test_derby_mode", "test_gimmicks_junk", "test_start_placement", "test_upgrades", "test_gimmicks_magic_toon",
 	]
 	for t in tests:
 		var before := failures
@@ -1433,3 +1433,52 @@ func test_upgrades() -> void:
 	m.draft_queue = [0]
 	m.offers[0] = ["shotgun"]
 	check(m.equip(0, "shotgun", mine[0].id) and not mine[0].ups.has("weapon"), "replacing the part drops the star")
+
+
+func test_gimmicks_magic_toon() -> void:
+	for ws in ["magic", "toon"]:
+		var m := Match.new()
+		m.setup(8, [], 300, false, {"workshop": ws})
+		check(m.world.gimmicks.size() == 2, "%s: two gimmicks for 8 players" % ws)
+	# 중력 우물: 지나가는 알이 휜다
+	var w := make_world("circle", 900.0)
+	w.gimmicks = [{"kind": "gwell", "items": [{"pos": Vector2(0, -60), "r": 110.0}]}]
+	var a := w.add_stone(0, Vector2(-300, 0), 0)
+	shoot(w, a.id, Vector2.RIGHT, 0.5)
+	check(a.pos.y < -15.0, "gravity well bends the path: %.0f" % a.pos.y)
+	# 쌍둥이 마법진
+	var w2 := make_world("circle", 900.0)
+	w2.gimmicks = [{"kind": "twins", "items": [{"pos": Vector2(-150, 0), "r": 30.8}, {"pos": Vector2(0, 300), "r": 30.8}]}]
+	var b := w2.add_stone(0, Vector2(-300, 0), 0)
+	shoot(w2, b.id, Vector2.RIGHT, 0.3)
+	check(b.pos.y > 200.0, "twin circle teleports: %s" % b.pos)
+	# 컷 경계선
+	var w3 := make_world("circle", 900.0)
+	var c := w3.add_stone(0, Vector2(-300, 0), 0)
+	shoot(w3, c.id, Vector2.RIGHT, 0.3)
+	var plain: float = c.pos.x
+	var w4 := make_world("circle", 900.0)
+	w4.gimmicks = [{"kind": "cutline", "items": [{"pos": Vector2(-200, 0), "n": Vector2.RIGHT}]}]
+	var d := w4.add_stone(0, Vector2(-300, 0), 0)
+	shoot(w4, d.id, Vector2.RIGHT, 0.3)
+	check(d.pos.x > plain + 40.0, "cut line speeds up: %.0f vs %.0f" % [d.pos.x, plain])
+	# 효과음 블록
+	var w5 := make_world("circle", 900.0)
+	w5.gimmicks = [{"kind": "blocks", "items": [{"pos": Vector2(0, 0), "r": 33.0, "hp": 2, "word": "쾅"}]}]
+	var e := w5.add_stone(0, Vector2(-200, 0), 0)
+	shoot(w5, e.id, Vector2.RIGHT, 0.4)
+	check(w5.gimmicks[0]["items"].size() == 1 and int(w5.gimmicks[0]["items"][0]["hp"]) == 1, "block took one hit")
+	# 다음 화 테두리
+	var w6 := make_world("circle", 340.0)
+	w6.gimmicks = [{"kind": "nextch", "items": [{"ang": 0.0, "half": PI / 6.0}], "used": []}]
+	var f := w6.add_stone(0, Vector2(200, 0), 0)
+	shoot(w6, f.id, Vector2.RIGHT, 1.0)
+	check(w6.gimmicks[0]["used"].has(f.id), "next chapter edge caught the puck")
+	# 별똥별
+	var m2 := Match.new()
+	m2.setup(4, [], 301, false, {"workshop": "magic"})
+	m2.world.gimmicks = [{"kind": "meteor", "items": [{"pos": Vector2(0, 0), "r": 66.0}], "seed": 3, "hits": []}]
+	var st = m2.world.alive_stones_of(0)[0]
+	st.pos = Vector2(10, 0)
+	World.Gm.meteor_fall(m2.world, 1)
+	check(st.pos.x > 100.0 or not st.alive, "meteor pushed the puck out: %s" % st.pos)
