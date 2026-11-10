@@ -6,6 +6,7 @@ extends RefCounted
 const Parts = preload("res://scripts/sim/parts.gd")
 const PartsDataRef = preload("res://scripts/sim/parts_data.gd")
 const Ex = preload("res://scripts/sim/expansion.gd")
+const Gm = preload("res://scripts/sim/gimmicks.gd")
 
 const STONE_R := 22.0
 const MAX_SPEED := Parts.LAUNCH_V
@@ -163,6 +164,7 @@ var size := 340.0             # 원의 반지름 또는 정사각형 한 변의 
 var stones: Array = []
 var projs: Array = []
 var devices: Array = []
+var gimmicks: Array = []      # 맵 기믹 (gimmicks.gd)
 var next_device_id := 1
 var round_no := 1
 var shot: ShotCtx = null
@@ -183,6 +185,7 @@ func clone():
 		w.projs.append(p.copy())
 	for d in devices:
 		w.devices.append(d.copy())
+	w.gimmicks = gimmicks.duplicate(true)
 	w.next_device_id = next_device_id
 	w.round_no = round_no
 	w.shot_no = shot_no
@@ -528,13 +531,15 @@ func step() -> void:
 	_update_shot_timers(dt)
 	Ex.timers(self, dt)
 	Ex.before_move(self, dt)
+	Gm.before_move(self, dt)
 	for s in stones:
 		if not s.alive or Ex.is_frozen(self, s):
 			continue
 		var sp: float = s.vel.length()
 		if sp > 0.0:
-			var fr := FRICTION * _friction_scale(s.pos) * Ex.friction_scale(self, s.pos)
-			var ns := sp - fr * dt - sp * DRAG * dt
+			var gk := Gm.friction_scale(self, s.pos)
+			var fr := FRICTION * _friction_scale(s.pos) * Ex.friction_scale(self, s.pos) * gk
+			var ns := sp - fr * dt - sp * DRAG * gk * dt
 			if ns < STOP_SPEED:
 				s.vel = Vector2.ZERO
 			else:
@@ -542,6 +547,7 @@ func step() -> void:
 				s.pos += s.vel * dt
 	_hold_grip(dt)
 	_collide_stones()
+	Gm.collide(self)
 	_check_parachutes()
 	_update_projs(dt)
 	_check_devices()

@@ -36,7 +36,7 @@ func _initialize() -> void:
 		"test_mushroom_and_wind", "test_second_step", "test_rebound_and_string", "test_at_field_and_beam",
 		"test_hero_band_and_shoes", "test_all_parts_have_art",
 		"test_workshop_pools", "test_offer_fits_empty_slots", "test_min_power_moves_one_cell",
-		"test_knockout_causes", "test_derby_mode",
+		"test_knockout_causes", "test_derby_mode", "test_gimmicks_junk",
 	]
 	for t in tests:
 		var before := failures
@@ -1316,3 +1316,43 @@ func test_derby_mode() -> void:
 		_finish_draft(m)
 		m.skip_turn()
 	check(m.phase == "over" and m.end_reason == "score", "ends by score after the fixed rounds")
+
+
+# ── 맵 기믹 ──────────────────────────────────────────────
+
+func test_gimmicks_junk() -> void:
+	const Gm = preload("res://scripts/sim/gimmicks.gd")
+	# 판 시작: 4인 1개, 8인 2개. 시작 구역과 중심 1칸을 피한다
+	for n in [4, 8]:
+		for seed_v in 6:
+			var m := Match.new()
+			m.setup(n, [], 100 + seed_v, false, {"workshop": "junk"})
+			check(m.world.gimmicks.size() == (1 if n <= 4 else 2), "%d players: gimmick count %d" % [n, m.world.gimmicks.size()])
+			for g in m.world.gimmicks:
+				for it in g["items"]:
+					if g["kind"] != "belt":
+						var d: float = it["pos"].length()
+						check(d > 44.0 and d < m.world.size - 5.0 * 44.0, "%s placed away from start zone: %.0f" % [g["kind"], d])
+	# 기름 웅덩이: 같은 힘으로 더 멀리
+	var w := make_world("circle", 900.0)
+	var a := w.add_stone(0, Vector2(-300, 0), 0)
+	shoot(w, a.id, Vector2.RIGHT, 0.3)
+	var plain: float = a.pos.x
+	var w2 := make_world("circle", 900.0)
+	w2.gimmicks = [{"kind": "oil", "items": [{"pos": Vector2(0, 0), "r": 400.0}]}]
+	var b := w2.add_stone(0, Vector2(-300, 0), 0)
+	shoot(w2, b.id, Vector2.RIGHT, 0.3)
+	check(b.pos.x > plain + 60.0, "oil slides further: %.0f vs %.0f" % [b.pos.x, plain])
+	# 범퍼 볼트: 반사
+	var w3 := make_world("circle", 900.0)
+	w3.gimmicks = [{"kind": "bolt", "items": [{"pos": Vector2(0, 0), "r": 17.6}]}]
+	var c := w3.add_stone(0, Vector2(-200, 0), 0)
+	shoot(w3, c.id, Vector2.RIGHT, 0.4)
+	check(c.pos.x < -60.0, "bolt bounces the puck back: %.0f" % c.pos.x)
+	# 컨베이어: 멈춰 있던 알이 다른 알의 샷 동안 실려 간다
+	var w4 := make_world("circle", 900.0)
+	w4.gimmicks = [{"kind": "belt", "items": [{"pos": Vector2(0, 0), "dir": Vector2.UP}]}]
+	var rider := w4.add_stone(1, Vector2(0, 0), 0)
+	var shooter := w4.add_stone(0, Vector2(-400, 300), 0)
+	shoot(w4, shooter.id, Vector2.DOWN, 0.2)
+	check(rider.pos.y < -60.0, "belt carried the resting puck: %.0f" % rider.pos.y)

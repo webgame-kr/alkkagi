@@ -32,7 +32,8 @@ var out_order: Array = []     # 탈락한 순서 (플레이어 id)
 var shots := 0
 var rng := RandomNumberGenerator.new()
 var workshop := "junk"        # 오늘의 공방 (parts_data WORKSHOPS)
-var match_parts: Array = []   # 이번 판에 나오는 부품 (공용 4 + 전용 10)
+var match_parts: Array = []
+var gimmick_rng: RandomNumberGenerator   # 이번 판에 나오는 부품 (공용 4 + 전용 10)
 var mode := "survival"        # survival(최후 생존전) | derby(개조 더비)
 var scores: Array = []        # 개조 더비: 상대 알을 떨어뜨린 점수
 var homes := {}               # 개조 더비: 알 id → 시작 자리 (떨어진 알이 돌아올 곳)
@@ -52,6 +53,7 @@ func setup(n_players: int, cpu_flags: Array, seed_value: int, timed: bool, opts 
 	var prng := RandomNumberGenerator.new()
 	prng.seed = seed_value * 31 + 7
 	match_parts = PartsData.match_pool(workshop, prng)
+	gimmick_rng = prng
 	players.clear()
 	for i in n:
 		players.append({"id": i, "name": NAMES[i], "color": COLORS[i],
@@ -69,6 +71,7 @@ func setup(n_players: int, cpu_flags: Array, seed_value: int, timed: bool, opts 
 		world.size = CELL * 12.0
 	aim_limit = AIM_LIMIT if timed else 0.0
 	_place_stones()
+	world.gimmicks = World.Gm.generate(workshop, n, world, gimmick_rng)
 	homes.clear()
 	for st in world.stones:
 		homes[st.id] = st.pos
@@ -142,6 +145,8 @@ func _begin_round() -> void:
 	if mode == "derby" and round_no > 1:
 		_respawn()
 	world.round_no = round_no
+	if round_no > 1:
+		World.Gm.on_round(world)
 	world.expire_devices()
 	order.clear()
 	for k in n:

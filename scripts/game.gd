@@ -899,6 +899,9 @@ func _unhandled_input(event: InputEvent) -> void:
 	if not (event is InputEventMouseButton) or event.button_index != MOUSE_BUTTON_LEFT:
 		return
 	var wp2 := s2w(event.position)
+	if event.pressed and not m.world.gimmicks.is_empty() and event.position.y < 70 and event.position.x > get_viewport_rect().size.x * 0.5 + 140:
+		gimmick_tip = 0 if gimmick_tip < 0 else -1
+		return
 	if event.pressed:
 		hover_stone = _stone_at(wp2, -1)
 	if m.phase == "draft" and draft_part != "" and draft_stone < 0:
@@ -1138,6 +1141,7 @@ func _draw_inner() -> void:
 			pass
 		return
 	_draw_board()
+	_draw_gimmicks()
 	_draw_devices()
 	_draw_aim_under()
 	var _ts := Time.get_ticks_usec()
@@ -2014,6 +2018,7 @@ func _draw_hud(vs: Vector2) -> void:
 	if not portrait:
 		_draw_timeline(vs)
 	_draw_ko_pills(vs)
+	_draw_gimmick_chips(vs)
 	_draw_toast(vs)
 	_draw_turn_card(hud["turn"])
 	_draw_order(hud["order"])
@@ -3844,6 +3849,19 @@ func _draw_shutter() -> void:
 	shutter.draw_string(font_bold, Vector2(box.position.x, box.position.y + 32), sub, HORIZONTAL_ALIGNMENT_CENTER, box.size.x, 14, Color("FFC23D"))
 	shutter.draw_string(font_display, Vector2(box.position.x, box.position.y + 86), nm, HORIZONTAL_ALIGNMENT_CENTER, box.size.x, big, Color("F2F4F1"))
 	shutter.draw_string(font, Vector2(box.position.x, box.position.y + 114), " · ".join(names), HORIZONTAL_ALIGNMENT_CENTER, box.size.x, 15, Color("C9CED6"))
+	if not m.world.gimmicks.is_empty():
+		var gn: Array = []
+		for g in m.world.gimmicks:
+			gn.append(World.Gm.name_of(g["kind"]))
+		var gy := box.end.y + 30.0
+		var gt := "맵 기믹 · " + " · ".join(gn)
+		var gw := font_bold.get_string_size(gt, HORIZONTAL_ALIGNMENT_LEFT, -1, 16).x + 40.0
+		var gr := Rect2(vs.x * 0.5 - gw * 0.5, gy, gw, 38)
+		var sb2 := StyleBoxFlat.new()
+		sb2.bg_color = Color("FFC23D")
+		sb2.set_corner_radius_all(19)
+		sb2.draw(shutter.get_canvas_item(), gr)
+		shutter.draw_string(font_bold, Vector2(gr.position.x, gr.position.y + 25), gt, HORIZONTAL_ALIGNMENT_CENTER, gr.size.x, 16, Color("1A1A1A"))
 	# 이번 판의 전용 부품 (작은 아이콘 줄)
 	if not excl.is_empty():
 		shutter.draw_string(font_semi, Vector2(box.position.x, box.position.y + 140), "이번 판의 전용 부품", HORIZONTAL_ALIGNMENT_CENTER, box.size.x, 12, Color("FFC23D"))
@@ -3934,6 +3952,8 @@ func _draw_motion(ci: CanvasItem, kind: String, puck_col := Color(0, 0, 0, 0)) -
 # ── 탈락 원인 ────────────────────────────────────────────
 
 func _part_word(part: String) -> String:
+	if part.begins_with("gm_"):
+		return World.Gm.name_of(part.substr(3))
 	if part == "body":
 		return "몸통 충돌"
 	if part == "mecha":
@@ -3950,6 +3970,8 @@ func _cause_text(c: Dictionary, victim_owner: int) -> String:
 	var att: String = m.players[int(c["owner"])].name
 	if int(c["owner"]) == victim_owner:
 		att = "스스로"
+	if str(c["part"]).begins_with("gm_"):
+		return "%s · %s의 샷" % [_part_word(str(c["part"])), m.players[int(c["owner"])].name]
 	var t := "%s · %s" % [att, _part_word(str(c["part"]))]
 	if c.get("chain", false) and str(c["part"]) != "body":
 		t += " → 연쇄 충돌"
@@ -4837,3 +4859,106 @@ func _draw_ko_pills(vs: Vector2) -> void:
 		draw_string(font_bold, Vector2(r.position.x, r.position.y + 24), t, HORIZONTAL_ALIGNMENT_CENTER, r.size.x, 15, Color(TEXT, a))
 		y += 42.0
 	ko_pills = keep
+
+
+# ── 맵 기믹 그리기 ───────────────────────────────────────
+
+func _draw_gimmicks() -> void:
+	var k := view_scale
+	for g in m.world.gimmicks:
+		match str(g["kind"]):
+			"oil":
+				for it in g["items"]:
+					var c := w2s(it["pos"])
+					var r: float = float(it["r"]) * k
+					var pts := PackedVector2Array()
+					for i in 28:
+						var a := TAU * i / 28.0
+						var wob := 1.0 + 0.08 * sin(a * 3.0 + float(it["pos"].x)) + 0.05 * sin(a * 5.0)
+						pts.append(c + Vector2(cos(a) * r * wob, sin(a) * r * 0.82 * wob))
+					draw_colored_polygon(pts, Color("15161C", 0.82))
+					# 무지갯빛 기름막
+					var hues := [Color("FF6BD5"), Color("6BC8FF"), Color("8CFF9B"), Color("FFE36B")]
+					for i in hues.size():
+						var rr := r * (0.35 + 0.13 * i)
+						var a0 := time * 0.3 + i * 1.3
+						draw_arc(c + Vector2(-r * 0.12, -r * 0.1), rr, a0, a0 + 1.6, 16, Color(hues[i], 0.35), 2.5, true)
+					draw_circle(c + Vector2(-r * 0.35, -r * 0.3), r * 0.12, Color(1, 1, 1, 0.18))
+			"bolt":
+				for it in g["items"]:
+					var c2 := w2s(it["pos"])
+					var r2: float = float(it["r"]) * k
+					draw_circle(c2 + Vector2(0, r2 * 0.25), r2 * 1.05, Color(0, 0, 0, 0.35))
+					draw_circle(c2, r2, Color("9AA0A6"))
+					draw_arc(c2, r2, 0, TAU, 24, Art.outline, 2.0, true)
+					var hx := PackedVector2Array()
+					for i in 6:
+						hx.append(c2 + Vector2.from_angle(TAU * i / 6.0 + 0.3) * r2 * 0.55)
+					hx.append(hx[0])
+					draw_polyline(hx, Color("5A6068"), 2.0, true)
+					draw_circle(c2 + Vector2(-r2 * 0.3, -r2 * 0.35), r2 * 0.18, Color(1, 1, 1, 0.5))
+			"belt":
+				for it in g["items"]:
+					var dir: Vector2 = it["dir"]
+					var nrm := dir.orthogonal()
+					var p0: Vector2 = it["pos"]
+					var L := m.world.size * 2.2
+					var R := m.world.size * view_scale
+					var c0 := view_center + shake_off
+					var sq := m.world.shape != "circle"
+					# 띠의 양쪽 가장자리를 판 안으로 잘라 사각형으로
+					var e1 := Arena.clip_segment(w2s(p0 + nrm * World.Gm.BELT_HALF - dir * L), w2s(p0 + nrm * World.Gm.BELT_HALF + dir * L), c0, R, sq)
+					var e2 := Arena.clip_segment(w2s(p0 - nrm * World.Gm.BELT_HALF - dir * L), w2s(p0 - nrm * World.Gm.BELT_HALF + dir * L), c0, R, sq)
+					if e1.is_empty() or e2.is_empty():
+						continue
+					draw_colored_polygon(PackedVector2Array([e1[0], e1[1], e2[1], e2[0]]), Color("2B2F34", 0.78))
+					draw_line(e1[0], e1[1], Color("FFC23D", 0.85), 2.0, true)
+					draw_line(e2[0], e2[1], Color("FFC23D", 0.85), 2.0, true)
+					# 흐르는 화살표 무늬
+					var mid := Arena.clip_segment(w2s(p0 - dir * L), w2s(p0 + dir * L), c0, R - 10.0, sq)
+					if mid.is_empty():
+						continue
+					var a1: Vector2 = mid[0]
+					var b1: Vector2 = mid[1]
+					var sd := (b1 - a1).normalized()
+					var len1 := a1.distance_to(b1)
+					var step := 1.1 * CELL * k
+					var phase := fmod(time * 30.0, step)
+					var hw := World.Gm.BELT_HALF * k * 0.55
+					var d := phase
+					while d < len1:
+						var q := a1 + sd * d
+						draw_polyline(PackedVector2Array([q - sd * hw * 0.6 + nrm * hw, q + sd * hw * 0.4, q - sd * hw * 0.6 - nrm * hw]), Color("FFC23D", 0.7), 3.0, true)
+						d += step
+
+
+## 위쪽 바퀴 칩 옆: 이번 판의 기믹. 마우스를 올리거나 누르면 한 줄 설명.
+var gimmick_tip := -1
+
+
+func _draw_gimmick_chips(vs: Vector2) -> void:
+	if m == null or m.world.gimmicks.is_empty() or portrait:
+		return
+	var x := vs.x * 0.5 + 150.0
+	var mouse := get_local_mouse_position()
+	var shown := -1
+	for i in m.world.gimmicks.size():
+		var g: Dictionary = m.world.gimmicks[i]
+		var nm := World.Gm.name_of(g["kind"])
+		var w := font_semi.get_string_size(nm, HORIZONTAL_ALIGNMENT_LEFT, -1, 13).x + 34.0
+		var r := Rect2(x, 34, w, 30)
+		_round_rect(r, Color(SOLID, 0.95), 15, ACCENT)
+		draw_circle(r.position + Vector2(15, 15), 6, ACCENT)
+		draw_string(font_semi, r.position + Vector2(26, 20), nm, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, TEXT)
+		if r.has_point(mouse) or gimmick_tip == i:
+			shown = i
+			var desc: String = World.Gm.INFO.get(g["kind"], {}).get("desc", "")
+			var dw := font.get_string_size(desc, HORIZONTAL_ALIGNMENT_LEFT, -1, 13).x + 24.0
+			var dr := Rect2(minf(r.position.x, vs.x - dw - 12), r.end.y + 6, dw, 30)
+			_round_rect(dr, Color(SOLID, 0.98), 8, PANEL_LINE)
+			draw_string(font, dr.position + Vector2(12, 20), desc, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, TEXT)
+		x += w + 6.0
+	gimmick_rects_x = vs.x * 0.5 + 150.0
+
+
+var gimmick_rects_x := 0.0
