@@ -14,10 +14,29 @@ const R := 22.0               # world.gd STONE_R 과 같은 값
 const FRONTAL_COS := 0.8      # 진행 방향과 충돌 방향이 이 이상 겹치면 정면 충돌
 
 
-static func _use(w, key: String) -> bool:
-	if w.shot.used.has(key):
+## 강화(★): 이 알의 그 부품 슬롯이 강화됐는지.
+static func up(s, part: String) -> bool:
+	if s == null or part == "":
 		return false
-	w.shot.used[key] = true
+	var slot := D.slot_of(part)
+	return s.ups.get(slot, false) and s.parts.get(slot, "") == part
+
+
+## 강화된 부품의 수치 (parts_data UP_NUM 배율)
+static func NU(s, part: String, key: String) -> float:
+	var v := D.num(part, key)
+	if up(s, part):
+		v *= float(D.UP_NUM.get(part, {}).get(key, 1.0))
+	return v
+
+
+## 한 샷에 한 번 (강화된 부품 중 TWICE 는 두 번)
+static func _use(w, key: String) -> bool:
+	var n: int = int(w.shot.used.get(key, 0)) if typeof(w.shot.used.get(key, 0)) == TYPE_INT else 1
+	var limit := 2 if (D.UP_TWICE.has(key) and up(w.shooter(), key)) else 1
+	if w.shot.used.has(key) and n >= limit:
+		return false
+	w.shot.used[key] = n + 1 if w.shot.used.has(key) else 1
 	return true
 
 
@@ -38,19 +57,22 @@ static func on_launch(w, s) -> void:
 		"pea":
 			if _use(w, "pea"):
 				_fire(w, s, muzzle, dir, D.num("pea", "power"), aux == "decal")
+				if up(s, "pea"):
+					_fire(w, s, muzzle - dir * 18.0, dir, D.num("pea", "power"), false)
 				_part_ev(w, s, "pea", muzzle)
 		"shotgun":
 			if _use(w, "shotgun"):
 				var spread := deg_to_rad(D.num("shotgun", "spread_deg"))
-				for k in [-1, 0, 1]:
-					var d2 := dir.rotated(spread * k)
+				var pellets := [-1.0, 0.0, 1.0] if not up(s, "shotgun") else [-1.0, -0.5, 0.0, 0.5, 1.0]
+				for k in pellets:
+					var d2: Vector2 = dir.rotated(spread * k)
 					_fire(w, s, s.pos + d2 * (R + 7.0), d2, D.num("shotgun", "power"), aux == "decal")
 				_part_ev(w, s, "shotgun", muzzle)
 		"hook":
 			if _use(w, "hook"):
 				var t = first_on_ray(w, s.pos, dir, D.num("hook", "range"), s.id)
 				if t != null and t.owner != s.owner:
-					t.vel += (s.pos - t.pos).normalized() * D.num("hook", "power")
+					t.vel += (s.pos - t.pos).normalized() * NU(s, "hook", "power")
 					_part_ev(w, s, "hook", t.pos, {"from": s.pos})
 				else:
 					_part_ev(w, s, "hook", muzzle, {"miss": true})
@@ -70,6 +92,21 @@ static func on_launch(w, s) -> void:
 			var lead: Vector2 = s.pos + dir * 120.0
 			t.vel += (lead - t.pos).normalized() * D.num("magnet", "power")
 			_part_ev(w, s, "magnet", t.pos, {"from": s.pos})
+			if up(s, "magnet"):
+				# ★ 가까운 두 알
+				var side2: Vector2 = dir.rotated(PI / 2.0 * s.magnet_side)
+				var t2 = null
+				var bd := NU(s, "magnet", "range")
+				for o in w.stones:
+					if not o.alive or o.owner == s.owner or o.id == t.id:
+						continue
+					var off2: Vector2 = o.pos - s.pos
+					if off2.dot(side2) > 0.0 and off2.length() < bd:
+						bd = off2.length()
+						t2 = o
+				if t2 != null:
+					t2.vel += (lead - t2.pos).normalized() * D.num("magnet", "power")
+					_part_ev(w, s, "magnet", t2.pos, {"from": s.pos})
 
 
 static func _fire(w, s, pos: Vector2, dir: Vector2, power: float, decal: bool) -> void:
@@ -93,7 +130,7 @@ static func magnet_target(w, s, dir: Vector2):
 			continue
 		var off: Vector2 = t.pos - s.pos
 		var dist := off.length()
-		if dist > D.num("magnet", "range") or off.dot(side) <= 0.0:
+		if dist > NU(s, "magnet", "range") or off.dot(side) <= 0.0:
 			continue
 		if dist < best_d:
 			best_d = dist
@@ -149,13 +186,19 @@ static func on_contact(w, s, t, n: Vector2, v_before: Vector2, t_before := Vecto
 	match s.parts["weapon"]:
 		"claw":
 			if frontal and opp and _use(w, "claw"):
-				ctx.grip_id = t.id
-				ctx.grip_timer = D.num("claw", "hold")
-				ctx.grip_offset = n
-				var v := v_before * 0.8
-				s.vel = v
-				t.vel = v
-				_part_ev(w, s, "claw", contact)
+				if up(s, "claw"):
+					# ★ 붙잡은 뒤 조준 방향으로 던지기
+					t.vel = ctx.dir * (v_before.length() * 0.9 + 320.0)
+					s.vel = v_before * 0.25
+					_part_ev(w, s, "claw", contact, {"text": "집게 던지기"})
+				else:
+					ctx.grip_id = t.id
+					ctx.grip_timer = D.num("claw", "hold")
+					ctx.grip_offset = n
+					var v := v_before * 0.8
+					s.vel = v
+					t.vel = v
+					_part_ev(w, s, "claw", contact)
 		"nose":
 			if frontal and _use(w, "nose"):
 				t.vel += n * D.num("nose", "power")
@@ -183,7 +226,9 @@ static func on_contact(w, s, t, n: Vector2, v_before: Vector2, t_before := Vecto
 				_part_ev(w, s, "roller", contact)
 		"copier":
 			if first and _use(w, "copier"):
-				w.place_device("turret", s.owner, s.id, contact, dir, -1)
+				var tdev = w.place_device("turret", s.owner, s.id, contact, dir, -1)
+				if up(s, "copier"):
+					tdev.scale = 2.0   # ★ 두 발
 				_part_ev(w, s, "copier", contact)
 
 	match s.parts["aux"]:
@@ -217,6 +262,22 @@ static func on_contact(w, s, t, n: Vector2, v_before: Vector2, t_before := Vecto
 				if o != null:
 					o.vel += (o.pos - s.pos).normalized() * D.num("flipper", "power")
 					_part_ev(w, s, "flipper", o.pos, {"from": s.pos})
+					if up(s, "flipper"):
+						# ★ 양옆으로 한 번씩: 반대쪽 다음 알도 걷어찬다
+						var best2 = null
+						var bd2 := D.num("flipper", "range")
+						for o2 in w.stones:
+							if not o2.alive or o2.id == s.id or o2.id == t.id or o2.id == o.id:
+								continue
+							if (o2.pos - s.pos).dot(o.pos - s.pos) >= 0.0:
+								continue
+							var dd: float = o2.pos.distance_to(s.pos)
+							if dd < bd2:
+								bd2 = dd
+								best2 = o2
+						if best2 != null:
+							best2.vel += (best2.pos - s.pos).normalized() * D.num("flipper", "power")
+							_part_ev(w, s, "flipper", best2.pos, {"from": s.pos})
 		"umbrella":
 			if first and _use(w, "umbrella"):
 				w.place_device("mirror", s.owner, s.id, contact, dir, w.round_no + 1)
@@ -234,18 +295,18 @@ static func on_contact(w, s, t, n: Vector2, v_before: Vector2, t_before := Vecto
 				var target_pos: Vector2 = s.pos - n * (R * 2.0 + 2.0)
 				if _free_spot(w, target_pos, [s.id, t.id]):
 					t.pos = target_pos
-					t.vel = -n * (v_before.length() * 0.9 + D.num("carousel", "power"))
+					t.vel = -n * (v_before.length() * 0.9 + NU(s, "carousel", "power")) * (1.5 if up(s, "carousel") else 1.0)
 					_part_ev(w, s, "carousel", target_pos)
 
 	if first and not ctx.swapped:
 		match s.parts["prop"]:
 			"rocket":
 				if _use(w, "rocket"):
-					s.vel += dir * D.num("rocket", "power")
+					s.vel += dir * NU(s, "rocket", "power")
 					_part_ev(w, s, "rocket", s.pos)
 			"retro":
 				if _use(w, "retro"):
-					s.vel -= dir * D.num("retro", "power")
+					s.vel -= dir * NU(s, "retro", "power")
 					_part_ev(w, s, "retro", s.pos)
 			"reel":
 				if _use(w, "reel"):
@@ -259,6 +320,11 @@ static func on_contact(w, s, t, n: Vector2, v_before: Vector2, t_before := Vecto
 				if _use(w, "crab"):
 					s.vel = dir.rotated(PI / 2.0 * s.prop_side) * D.num("crab", "power")
 					_part_ev(w, s, "crab", s.pos)
+	# ★ 게걸음 바퀴: 다음 충돌 때 반대쪽으로 한 번 더 튄다
+	elif s.parts["prop"] == "crab" and up(s, "crab") and ctx.used.has("crab") and not ctx.used.has("crab2"):
+		ctx.used["crab2"] = 1
+		s.vel = dir.rotated(-PI / 2.0 * s.prop_side) * D.num("crab", "power")
+		_part_ev(w, s, "crab", s.pos)
 
 
 ## 티라노 팔: 옆에 닿은 상대를 내 알 앞쪽으로 끌어온다.
@@ -321,6 +387,11 @@ static func _nearest_other(w, s, t, range_len: float):
 # ── 정지 ─────────────────────────────────────────────────
 
 static func on_stop(w, s) -> void:
+	if s.parts["prop"] == "brake" and up(s, "brake") and w.shot.used.has("brake"):
+		# ★ 멈출 때 주변 1칸의 알을 살짝 민다
+		for o in w.stones:
+			if o.alive and o.id != s.id and o.pos.distance_to(s.pos) < R * 2.0 + 44.0:
+				o.vel += (o.pos - s.pos).normalized() * 220.0
 	match s.parts["aux"]:
 		"bubble":
 			var mid := path_midpoint(w.shot.path)
@@ -328,7 +399,9 @@ static func on_stop(w, s) -> void:
 				w.place_device("bubble", s.owner, s.id, mid, Vector2.RIGHT, w.round_no + int(D.num("bubble", "rounds")))
 				_part_ev(w, s, "bubble", mid)
 		"mine":
-			w.place_device("mine", s.owner, s.id, s.pos, Vector2.RIGHT, w.round_no + int(D.num("mine", "rounds")))
+			var mdev = w.place_device("mine", s.owner, s.id, s.pos, Vector2.RIGHT, w.round_no + int(D.num("mine", "rounds")))
+			if up(s, "mine"):
+				mdev.scale = 1.5   # ★ 범위 1.5배
 			_part_ev(w, s, "mine", s.pos)
 		"track":
 			var g := groove_from_path(w.shot.path, D.num("track", "length"))
@@ -423,7 +496,7 @@ static func aim_preview(w, s, dir: Vector2, power: float) -> Array:
 			var spot: Vector2 = t2.pos + dir * (R * 2.0 + 2.0)
 			out.append({"k": "land", "a": spot, "from": t2.pos, "ok": w.is_inside(spot) and _free_spot(w, spot, [s.id, t2.id])})
 	if s.parts["prop"] == "side_scroll":
-		var turn_at: Vector2 = s.pos + dir * D.num("side_scroll", "dist")
+		var turn_at: Vector2 = s.pos + dir * scroll_dist(s, power)
 		out.append({"k": "turn", "a": turn_at, "b": turn_at + dir.rotated(PI / 2.0 * s.prop_side) * 60.0})
 	if s.parts["weapon"] == "moon_staff":
 		var p3: Vector2 = s.pos + dir * (R + 7.0)
@@ -454,3 +527,11 @@ static func travel_after(v0: float, t: float) -> float:
 ## 시간만 2.5배 빠르게 돌려(속도 ×2.5, 감속 ×2.5²·×2.5) 이동 거리는 사양 그대로, 부품이 미는 거리는 예전과 같게 맞췄다.
 static func launch_speed(p: float) -> float:
 	return LAUNCH_V * (0.25 + 0.5 * pow(clampf(p, 0.0, 1.0), 0.85))
+
+
+
+## 옆구리 주문서가 꺾이는 거리. ★ 강화되면 조준 힘으로 직접 정한다 (짧게 당기면 가까이서 꺾임).
+static func scroll_dist(s, power: float) -> float:
+	if up(s, "side_scroll"):
+		return lerpf(2.0, 8.0, clampf(power, 0.0, 1.0)) * CELL_PX
+	return D.num("side_scroll", "dist")

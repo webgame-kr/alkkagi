@@ -34,6 +34,7 @@ class Stone:
 	var prop_side := 1        # 추진 좌우(게걸음 바퀴, 옆구리 주문서)
 	var status := {}          # 다음 발사까지 남는 상태: sealed(봉인된 슬롯), cursed(저주 건 플레이어)
 	var cause := {}           # 이번 샷에 이 알을 마지막으로 민 원인 {owner, part, chain} (탈락 원인 표시)
+	var ups := {}             # 강화(★)된 슬롯 {slot: true}. 그 슬롯 부품이 바뀌면 사라진다
 
 	func copy() -> Stone:
 		var s := Stone.new()
@@ -47,6 +48,7 @@ class Stone:
 		s.magnet_side = magnet_side
 		s.prop_side = prop_side
 		s.status = status.duplicate()
+		s.ups = ups.duplicate()
 		return s
 
 
@@ -86,6 +88,7 @@ class Device:
 	var kind := ""            # mirror | mine | bubble | turret | slick | groove
 	var length := 0.0         # 띠·홈의 길이 (pos 에서 dir 방향으로), 장치별 보조 값
 	var expires_shot := -1    # 이 샷이 끝나면 사라짐 (shot_no 기준). -1 = 없음
+	var scale := 1.0          # 강화(★)된 부품이 만든 장치의 배율 (범위·발수)
 	var owner := 0
 	var stone_id := -1        # 이 장치를 만든 알 (부품당 하나 유지용)
 	var pos := Vector2.ZERO
@@ -107,6 +110,7 @@ class Device:
 		d.inside = inside.duplicate()
 		d.length = length
 		d.expires_shot = expires_shot
+		d.scale = scale
 		return d
 
 
@@ -422,7 +426,7 @@ func launch(stone_id: int, dir: Vector2, power: float, opts := {}) -> void:
 	knockouts.clear()
 	for o in stones:
 		o.cause = {}
-	s.vel = dir * Parts.launch_speed(power)
+	s.vel = dir * Parts.launch_speed(power) * (0.75 if int(s.status.get("slow", -1)) >= round_no else 1.0)
 	s.facing = dir.angle()
 	emit({"t": "launch", "pos": s.pos, "owner": s.owner, "power": power})
 	# 지뢰·방울은 다음 샷부터 작동한다. 지금 닿아 있는 알은 떠날 때까지 무시.
@@ -443,6 +447,8 @@ func launch(stone_id: int, dir: Vector2, power: float, opts := {}) -> void:
 	for d in devices.duplicate():
 		if d.kind == "turret" and d.owner == s.owner:
 			spawn_bullet(d.owner, d.pos + d.dir * 10.0, d.dir, PartsDataRef.num("copier", "power"), "turret", -1)
+			if d.scale >= 2.0:
+				spawn_bullet(d.owner, d.pos - d.dir * 8.0, d.dir, PartsDataRef.num("copier", "power"), "turret", -1)
 			emit({"t": "part", "part": "copier", "pos": d.pos, "owner": d.owner, "text": "포탑 발사"})
 			devices.erase(d)
 	Parts.on_launch(self, s)
@@ -706,10 +712,11 @@ func _check_parachutes() -> void:
 	for s in stones:
 		if not s.alive or s.parts["prop"] != "chute" or s.vel == Vector2.ZERO:
 			continue
-		if shot.chute_used.has(s.id):
+		var chute_n: int = int(shot.chute_used.get(s.id, 0))
+		if chute_n >= (2 if Parts.up(s, "chute") else 1):
 			continue
 		if edge_distance(s.pos) < EDGE_ZONE and s.vel.dot(outward(s.pos)) > 0.0:
-			shot.chute_used[s.id] = true
+			shot.chute_used[s.id] = chute_n + 1
 			var sp: float = s.vel.length()
 			var ns := maxf(0.0, sp - PartsDataRef.num("chute", "power"))
 			s.vel = s.vel * (ns / sp) if ns > STOP_SPEED else Vector2.ZERO
@@ -771,6 +778,12 @@ func _update_projs(dt: float) -> void:
 					break
 				if p.kind == "sucker":
 					p.alive = false
+					if shot != null and Parts.up(shooter(), "sucker") and s.id != shot.stone_id:
+						# ★ 맞은 알을 멈추고 내 쪽으로 1칸 당긴다
+						var sh := shooter()
+						s.vel = (sh.pos - s.pos).normalized() * 260.0
+						emit({"t": "part", "part": "sucker", "pos": s.pos, "owner": p.owner, "text": "빨판 당기기"})
+						break
 					if s.vel.length() > 40.0:
 						s.vel *= PartsDataRef.num("sucker", "brake")
 						emit({"t": "part", "part": "sucker", "pos": s.pos, "owner": p.owner, "text": "빨판 감속"})
@@ -837,7 +850,7 @@ func _inside_margin(p: Vector2, margin: float) -> bool:
 
 func _device_radius(d: Device) -> float:
 	if d.kind == "mine":
-		return PartsDataRef.num("mine", "radius")
+		return PartsDataRef.num("mine", "radius") * d.scale
 	if d.kind == "bubble":
 		return PartsDataRef.num("bubble", "radius")
 	return 0.0
@@ -901,7 +914,7 @@ func _check_groove(d: Device) -> void:
 
 
 func _explode(d: Device) -> void:
-	var blast := PartsDataRef.num("mine", "blast")
+	var blast := PartsDataRef.num("mine", "blast") * d.scale
 	var power := PartsDataRef.num("mine", "power")
 	for s in stones:
 		if not s.alive:

@@ -42,7 +42,7 @@ static func on_launch_pre(w, s, opts: Dictionary) -> void:
 	var ex = _ex(w)
 	ex["last_stone"] = w.alive_stones_of(s.owner).size() == 1
 	ex["charged"] = opts.get("charged", false)
-	ex["scroll_left"] = D.num("side_scroll", "dist")
+	ex["scroll_left"] = _scroll_dist(s, w.shot.power)
 	# 그림자 가위의 봉인: 이번 발사 한 번만 그 슬롯이 쉰다.
 	var sealed: String = s.status.get("sealed", "")
 	if sealed != "" and s.parts[sealed] != "":
@@ -65,7 +65,7 @@ static func on_launch_pre(w, s, opts: Dictionary) -> void:
 				bd = off.length()
 				best = o
 		if best != null:
-			best.vel += (best.pos - s.pos).normalized() * D.num("night_charm", "power")
+			best.vel += (best.pos - s.pos).normalized() * D.num("night_charm", "power") * (1.8 if s.status.get("cursed_up", false) else 1.0)
 		w.emit({"t": "part", "part": "night_charm", "pos": s.pos - w.shot.dir * 30.0, "owner": by, "text": "저주의 그림자"})
 	# 구름 표식은 그 알이 다시 발사되면 사라진다.
 	for d in w.devices.duplicate():
@@ -106,7 +106,7 @@ static func on_launch(w, s) -> void:
 				w.emit({"t": "cone", "pos": s.pos, "dir": dir, "radius": rr, "owner": s.owner})
 				_ev(w, s.owner, "hero_band", muzzle, {"text": "충격파"})
 	if s.parts["aux"] == "at_field" and _use(w, "at_field"):
-		ex["barrier"] = true
+		ex["barrier"] = 2 if _up(s, "at_field") else 1
 		_ev(w, s.owner, "at_field", muzzle, {"stone": s.id})
 
 
@@ -134,6 +134,8 @@ static func before_move(w, dt: float) -> void:
 					w.shot.used["flash_step"] = true
 					var from: Vector2 = s.pos
 					s.pos = spot
+					if _up(s, "flash_step"):
+						s.vel += vh * 260.0   # ★ 착지 뒤 한 번 더 밀고 나간다
 					_ev(w, s.owner, "flash_step", spot, {"from": from, "stone": s.id})
 				break
 	# 절대영역 방패: 알 앞의 장벽이 처음 닿은 알을 민다.
@@ -144,7 +146,7 @@ static func before_move(w, dt: float) -> void:
 				continue
 			if o.pos.distance_to(bp) < R + 10.0:
 				o.vel += (vh * 0.7 + (o.pos - bp).normalized() * 0.3).normalized() * D.num("at_field", "power")
-				ex["barrier"] = false
+				ex["barrier"] = int(ex["barrier"]) - 1
 				w.emit({"t": "hexbreak", "pos": bp, "owner": s.owner, "dir": vh})
 				break
 	# 옆구리 주문서: 충돌 없이 일정 거리를 가면 90도 꺾인다.
@@ -198,6 +200,9 @@ static func timers(w, dt: float) -> void:
 				if dist < rr and dist > 0.5:
 					o.vel += off / dist * D.num("echo_bell", "power") * (1.0 - dist / rr * 0.6)
 			w.emit({"t": "ripple", "pos": e["pos"], "owner": e["owner"], "radius": rr})
+			if e.get("again", false):
+				# ★ 충격파가 두 번 퍼진다
+				ex["echo"] = {"t": D.num("echo_bell", "delay"), "pos": e["pos"], "owner": e["owner"], "again": false}
 	if ex.has("freeze_t"):
 		ex["freeze_t"] -= dt
 		if ex["freeze_t"] <= 0.0:
@@ -256,6 +261,8 @@ static func pre_collision(w, a, b, nrm: Vector2) -> bool:
 					other.vel = other.vel - 2.0 * other.vel.dot(n) * n * 0.9
 				else:
 					other.vel = other.vel - 2.0 * other.vel.dot(-n) * (-n) * 0.9
+				if _up(me, "log_sub"):
+					other.vel *= 1.4   # ★ 통나무가 더 세게 튕겨 낸다
 				var dev = w.place_device("log", me.owner, me.id, log_pos, n, -1)
 				dev.length = float(w.shot_no)
 				_ev(w, me.owner, "log_sub", log_pos, {"stone": me.id})
@@ -276,7 +283,7 @@ static func post_collision(w, a, b, point: Vector2) -> void:
 	if ft >= 0 and s.parts["prop"] == "rebound_shoes" and not w.shot.used.has("rebound_shoes"):
 		if (a.id == ft and b.id != s.id) or (b.id == ft and a.id != s.id):
 			w.shot.used["rebound_shoes"] = true
-			s.vel = (point - s.pos).normalized() * D.num("rebound_shoes", "power")
+			s.vel = (point - s.pos).normalized() * _nu(s, "rebound_shoes", "power")
 			_ev(w, s.owner, "rebound_shoes", s.pos, {"stone": s.id})
 
 
@@ -326,10 +333,17 @@ static func on_contact(w, s, t, n: Vector2, v_before: Vector2, t_before: Vector2
 					var dv2 = w.place_device("wall", s.owner, s.id, wp, -dir, -1)
 					dv2.length = D.num("alchemy_glove", "half_len")
 					dv2.expires_shot = w.shot_no
+					if _up(s, "alchemy_glove"):
+						# ★ 돌벽 두 개: 옆으로 나란히 하나 더
+						var wp2: Vector2 = wp + dir.orthogonal() * D.num("alchemy_glove", "half_len") * 2.2
+						if w.is_inside(wp2):
+							var dv3 = w.place_device("wall", s.owner, s.id, wp2, -dir, -1)
+							dv3.length = D.num("alchemy_glove", "half_len")
+							dv3.expires_shot = w.shot_no
 					_ev(w, s.owner, "alchemy_glove", wp, {"stone": s.id})
 		"echo_bell":
 			if first and _use(w, "echo_bell"):
-				ex["echo"] = {"t": D.num("echo_bell", "delay"), "pos": contact, "owner": s.owner}
+				ex["echo"] = {"t": D.num("echo_bell", "delay"), "pos": contact, "owner": s.owner, "again": _up(s, "echo_bell")}
 				_ev(w, s.owner, "echo_bell", contact)
 		"string_doll":
 			if opp and _use(w, "string_doll"):
@@ -341,6 +355,7 @@ static func on_contact(w, s, t, n: Vector2, v_before: Vector2, t_before: Vector2
 		"night_charm":
 			if opp and _use(w, "night_charm"):
 				t.status["cursed"] = s.owner
+				t.status["cursed_up"] = _up(s, "night_charm")
 				_ev(w, s.owner, "night_charm", t.pos, {"text": "저주"})
 	match s.parts["aux"]:
 		"star_cloak":
@@ -356,7 +371,7 @@ static func on_contact(w, s, t, n: Vector2, v_before: Vector2, t_before: Vector2
 						o.vel = Vector2.ZERO
 				if not frozen.is_empty():
 					ex["frozen"] = frozen
-					ex["freeze_t"] = D.num("stopwatch", "time")
+					ex["freeze_t"] = _nu(s, "stopwatch", "time")
 				_ev(w, s.owner, "stopwatch", contact, {"stone": s.id})
 		"mushroom":
 			if first and _use(w, "mushroom"):
@@ -372,14 +387,16 @@ static func on_contact(w, s, t, n: Vector2, v_before: Vector2, t_before: Vector2
 				var u2 = _nearest(w, t.pos, [s.id, t.id], D.num("shadow_scale", "range"))
 				if u2 != null:
 					var imp: Vector2 = t.vel - t_before
-					var part: Vector2 = imp * D.num("shadow_scale", "share")
+					var part: Vector2 = imp * _nu(s, "shadow_scale", "share")
 					t.vel -= part
 					u2.vel += part
 					w.emit({"t": "line_fx", "a": t.pos, "b": u2.pos, "owner": s.owner})
 					_ev(w, s.owner, "shadow_scale", u2.pos)
 		"moon_well":
 			if first and _use(w, "moon_well"):
-				w.place_device("well", s.owner, s.id, contact, Vector2.RIGHT, w.round_no + int(D.num("moon_well", "rounds")))
+				var wdev = w.place_device("well", s.owner, s.id, contact, Vector2.RIGHT, w.round_no + int(D.num("moon_well", "rounds")))
+				if _up(s, "moon_well"):
+					wdev.scale = 1.5   # ★ 지름 1.5배
 				_ev(w, s.owner, "moon_well", contact)
 	if first:
 		match s.parts["prop"]:
@@ -520,7 +537,7 @@ static func device_radius(d) -> float:
 		"wind":
 			return D.num("wind_knot", "radius")
 		"well":
-			return D.num("moon_well", "radius")
+			return D.num("moon_well", "radius") * d.scale
 	return 0.0
 
 
@@ -565,6 +582,8 @@ static func _touch_device(w, d) -> void:
 			w.devices.erase(d)
 		"card":
 			s.vel = -s.vel * 0.9
+			if d.scale >= 2.0:
+				s.status["slow"] = w.round_no + 1   # ★ 1바퀴 동안 느리게
 			_ev(w, d.owner, "trap_card", d.pos, {"text": "함정 발동"})
 			w.devices.erase(d)
 		"mushroom":
@@ -575,7 +594,7 @@ static func _touch_device(w, d) -> void:
 		"wind":
 			var cur = s.vel.angle()
 			var diff = wrapf(d.dir.angle() - cur, -PI, PI)
-			var turn = deg_to_rad(D.num("wind_knot", "turn_deg"))
+			var turn = deg_to_rad(D.num("wind_knot", "turn_deg") * d.scale)
 			s.vel = s.vel.rotated(clampf(diff, -turn, turn))
 			w.emit({"t": "part", "part": "wind_knot", "pos": d.pos, "owner": d.owner, "text": "바람"})
 			w.devices.erase(d)
@@ -654,7 +673,7 @@ static func save_from_edge(w, s) -> bool:
 		w.shot.used["drift:%d" % s.id] = true
 		var tan: Vector2 = s.vel - s.vel.dot(nrm) * nrm
 		s.pos = inside_pt - nrm * 4.0
-		s.vel = tan * 0.95
+		s.vel = tan * (1.35 if _up(s, "drift_tire") else 0.95)
 		_ev(w, s.owner, "drift_tire", s.pos, {"stone": s.id})
 		return true
 	return false
@@ -739,11 +758,18 @@ static func on_end(w, s) -> void:
 				var from: Vector2 = s.pos
 				s.pos = w.shot.start
 				w.emit({"t": "part", "part": "anchor", "pos": s.pos, "owner": s.owner, "text": "약속의 닻", "from": from})
+				if _up(s, "anchor"):
+					# ★ 돌아온 자리 주변 알을 밀어낸다
+					for o in w.stones:
+						if o.alive and o.id != s.id and o.pos.distance_to(s.pos) < R * 2.0 + 44.0:
+							o.vel += (o.pos - s.pos).normalized() * 300.0
 			else:
 				w.emit({"t": "part", "part": "anchor", "pos": s.pos, "owner": s.owner, "text": "출발점이 막힘"})
 		match s.parts["aux"]:
 			"trap_card":
-				w.place_device("card", s.owner, s.id, s.pos, Vector2.RIGHT, w.round_no)
+				var cdev = w.place_device("card", s.owner, s.id, s.pos, Vector2.RIGHT, w.round_no)
+				if _up(s, "trap_card"):
+					cdev.scale = 2.0
 				_ev(w, s.owner, "trap_card", s.pos, {"stone": s.id, "text": "카드 설치"})
 			"wind_knot":
 				var path: Array = w.shot.path
@@ -752,7 +778,9 @@ static func on_end(w, s) -> void:
 					var v: Vector2 = path[path.size() - 1] - path[maxi(0, path.size() - 4)]
 					if v.length() > 1.0:
 						dir = v.normalized()
-				w.place_device("wind", s.owner, s.id, s.pos, dir, w.round_no + int(D.num("wind_knot", "rounds")))
+				var wnd = w.place_device("wind", s.owner, s.id, s.pos, dir, w.round_no + int(D.num("wind_knot", "rounds")))
+				if _up(s, "wind_knot"):
+					wnd.scale = 1.6
 				w.emit({"t": "part", "part": "wind_knot", "pos": s.pos, "owner": s.owner, "text": "바람 매듭"})
 		if s.parts["prop"] == "cloud_mailbox":
 			w.place_device("cloud", s.owner, s.id, s.pos, Vector2.RIGHT, -1)
@@ -763,3 +791,25 @@ static func on_end(w, s) -> void:
 			w.devices.erase(d)
 		elif d.expires_shot >= 0 and d.expires_shot <= w.shot_no:
 			w.devices.erase(d)
+
+
+
+# ── 강화(★) 도우미 (parts.gd 와 같은 규칙) ──
+static func _up(s, part: String) -> bool:
+	if s == null or part == "":
+		return false
+	var slot := D.slot_of(part)
+	return s.ups.get(slot, false) and s.parts.get(slot, "") == part
+
+
+static func _nu(s, part: String, key: String) -> float:
+	var v := D.num(part, key)
+	if _up(s, part):
+		v *= float(D.UP_NUM.get(part, {}).get(key, 1.0))
+	return v
+
+
+static func _scroll_dist(s, power: float) -> float:
+	if _up(s, "side_scroll"):
+		return lerpf(2.0, 8.0, clampf(power, 0.0, 1.0)) * 44.0
+	return D.num("side_scroll", "dist")

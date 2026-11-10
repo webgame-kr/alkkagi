@@ -247,6 +247,28 @@ func roll_offer(pid: int) -> Array:
 		pool.erase(pick2)
 		if fits.call(pick2):
 			fit_count += 1
+	# 부품 업그레이드: 3바퀴 25%, 4바퀴부터 35%로 후보 한 장이 강화 카드로 (세트 추천·예약 자리는 그대로)
+	if round_no >= 3 and workshop != "all":
+		var chance := 0.25 if round_no == 3 else 0.35
+		var ups := upgrade_targets(pid)
+		if not ups.is_empty() and rng.randf() < chance:
+			var protected := 0
+			if not missing.is_empty():
+				protected += 1
+			var idx := out.size() - 1
+			if idx >= protected:
+				out[idx] = "up:" + str(ups[rng.randi_range(0, ups.size() - 1)])
+	return out
+
+
+## 강화할 수 있는 부품: 살아 있는 내 알에 달린, 아직 강화 안 된 업그레이드 대상 부품.
+func upgrade_targets(pid: int) -> Array:
+	var out: Array = []
+	for st in world.alive_stones_of(pid):
+		for slot in PartsData.SLOTS:
+			var part: String = st.parts[slot]
+			if part != "" and PartsData.upgradable(part) and not st.ups.get(slot, false) and not out.has(part):
+				out.append(part)
 	return out
 
 
@@ -284,7 +306,20 @@ func equip(pid: int, part_id: String, stone_id: int, side := 1, reserve := "") -
 	var s = world.get_stone(stone_id)
 	if s == null or not s.alive or s.owner != pid:
 		return false
-	s.parts[PartsData.slot_of(part_id)] = part_id
+	var slot := PartsData.slot_of(part_id)
+	if PartsData.is_up(part_id):
+		# 강화 카드: 그 부품을 단 알 하나를 ★ 로
+		if s.parts[slot] != PartsData.base_of(part_id) or s.ups.get(slot, false):
+			return false
+		s.ups[slot] = true
+		players[pid].focus = stone_id
+		draft_queue.pop_front()
+		if draft_queue.is_empty():
+			phase = "aim"
+			_mark_relic_turn()
+		return true
+	s.parts[slot] = part_id
+	s.ups.erase(slot)
 	players[pid].focus = stone_id
 	# 운명의 책갈피: 이번에 고르지 않은 후보 하나를 다음 선택에 예약.
 	if part_id == "bookmark":

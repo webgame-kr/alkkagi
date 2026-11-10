@@ -290,18 +290,27 @@ static func ids() -> Array:
 	return CATALOG.keys()
 
 
+## 강화 카드는 "up:부품" 으로 쓴다.
+static func is_up(id: String) -> bool:
+	return id.begins_with("up:")
+
+
+static func base_of(id: String) -> String:
+	return id.substr(3) if id.begins_with("up:") else id
+
+
 static func get_part(id: String) -> Dictionary:
-	return CATALOG.get(id, {})
+	return CATALOG.get(base_of(id), {})
 
 
 static func part_name(id: String) -> String:
 	if id == "":
 		return "-"
-	return CATALOG[id]["name"]
+	return CATALOG[base_of(id)]["name"] + (" ★" if is_up(id) else "")
 
 
 static func slot_of(id: String) -> String:
-	return CATALOG[id]["slot"]
+	return CATALOG[base_of(id)]["slot"]
 
 
 static func num(id: String, key: String) -> float:
@@ -317,11 +326,13 @@ static func unmet_need(id: String, stone_parts: Dictionary) -> String:
 
 
 static func set_of(id: String) -> String:
+	if is_up(id):
+		return ""
 	return CATALOG.get(id, {}).get("set", "")
 
 
 static func is_anime(id: String) -> bool:
-	return CATALOG.get(id, {}).get("anime", false)
+	return CATALOG.get(base_of(id), {}).get("anime", false)
 
 
 ## 이 알에 달린 부품이 속한 세트 중 가장 많이 모인 것. 없으면 "".
@@ -378,3 +389,32 @@ static func set_label(stone_parts: Dictionary, set_id := "") -> String:
 	for m in pr["missing"]:
 		need.append(st["short"][m])
 	return "%s %d/%d · %s 필요" % [st["name"], pr["count"], pr["total"], "·".join(need)]
+
+
+
+# ── 부품 업그레이드 (확장 기획 「부품 업그레이드」) ─────────────
+## 강화(★)는 부품마다 한 단계. 공용 4종과 공방 전용 단품만 (세트 부품·연구소 부품 제외).
+const UPGRADES := {
+	"pea": "정면 두 발 연사", "shotgun": "부채꼴 다섯 발", "claw": "붙잡은 뒤 조준 방향으로 던지기",
+	"nose": "정면 충돌 두 번까지 세게", "magnet": "범위 4.5칸, 가까운 두 알", "bumper": "측면 충돌 두 번까지",
+	"flipper": "양옆으로 한 번씩", "rocket": "가속 1.5배", "retro": "후퇴 1.5배", "chute": "두 번 급제동",
+	"sucker": "맞은 알을 멈추고 내 쪽으로 1칸 당기기", "brake": "멈출 때 주변 1칸의 알을 살짝 밀기",
+	"mine": "지뢰 범위 1.5배", "shadow_scale": "60%를 옆 알에", "night_charm": "저주의 그림자가 1.8배로 밀친다",
+	"anchor": "돌아온 자리 주변 알을 밀어낸다", "drift_tire": "가장자리를 더 빠르게 멀리 달린다", "flash_step": "착지 뒤 앞으로 한 번 더 밀고 나간다",
+	"log_sub": "통나무가 더 세게 튕겨 낸다", "trap_card": "되돌린 알을 1바퀴 동안 느리게", "rubber_fist": "뻗는 거리 1.5배",
+	"charge_palm": "빔이 1.4배 세게 민다", "hook": "1.6배 세게 끌어온다", "copier": "포탑이 두 발을 쏜다", "carousel": "던지는 거리 1.5배",
+	"crab": "좌우로 한 번씩, 두 번 튄다", "echo_bell": "충격파가 두 번 퍼진다", "moon_well": "원의 지름 1.5배",
+	"wind_knot": "바람이 1.6배 더 꺾는다", "side_scroll": "꺾이는 위치를 조준 힘으로 정한다", "at_field": "장벽이 두 번까지 버틴다",
+	"stopwatch": "1초 동안 멈춘다", "rebound_shoes": "1.4배 세게 뛰어든다", "alchemy_glove": "돌벽을 두 개 세운다",
+}
+const UP_TWICE := ["nose", "bumper"]
+const UP_NUM := {
+	"magnet": {"range": 1.5}, "rocket": {"power": 1.5}, "retro": {"power": 1.5}, "shadow_scale": {"share": 1.5},
+	"rubber_fist": {"reach": 1.5}, "charge_palm": {"power": 1.4}, "hook": {"power": 1.6}, "carousel": {"power": 1.0},
+	"stopwatch": {"time": 2.0}, "rebound_shoes": {"power": 1.4}, "drift_tire": {"dist": 2.0}, "at_field": {"power": 1.4},
+	"wind_knot": {"turn_deg": 1.6}, "night_charm": {"power": 1.8}, "trap_card": {}, "sucker": {}, "brake": {},
+}
+
+
+static func upgradable(part: String) -> bool:
+	return UPGRADES.has(part) and set_of(part) == ""

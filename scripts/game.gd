@@ -313,6 +313,15 @@ func _debug_args() -> void:
 		# 사람(빨강)이 먼저 고르도록 순서를 맞춘다
 		m.draft_queue.erase(0)
 		m.draft_queue.push_front(0)
+	if args.has("--upcard"):
+		get_tree().create_timer(2.5).timeout.connect(func():
+			var st0 = m.world.alive_stones_of(0)[0]
+			st0.parts["weapon"] = "pea"
+			st0.ups["aux"] = false
+			m.world.alive_stones_of(0)[1].parts["aux"] = "magnet"
+			m.world.alive_stones_of(0)[1].ups["aux"] = true
+			m.offers[0][2] = "up:pea"
+			_show_draft_cards(0))
 	for dbg in ["--pickside", "--pickhover"]:
 		if args.has(dbg):
 			var kind: String = dbg
@@ -1024,6 +1033,8 @@ func _on_card_picked(pid: int, part: String) -> void:
 	draft_part = part
 	draft_stone = -1
 	var mine: Array = m.world.alive_stones_of(pid)
+	if PartsData.is_up(part):
+		mine = _up_targets(pid, part)
 	if mine.size() == 1:
 		_pick_stone_for_part(pid, mine[0].id)
 	else:
@@ -1034,6 +1045,11 @@ func _pick_stone_for_part(pid: int, sid: int) -> void:
 	if draft_part == "bookmark":
 		draft_stone = sid
 		_show_bookmark_choice(pid)
+		return
+	if PartsData.is_up(draft_part):
+		if not _up_targets(pid, draft_part).any(func(x): return x.id == sid):
+			return
+		_apply_equip(pid, draft_part, sid, 1)
 		return
 	if PartsData.SIDE_PARTS.has(draft_part):
 		draft_stone = sid
@@ -1079,6 +1095,20 @@ func _online_draft_ui() -> void:
 
 func _do_equip(pid: int, part: String, sid: int, side: int, reserve := "") -> void:
 	var s = m.world.get_stone(sid)
+	if PartsData.is_up(part):
+		if m.equip(pid, part, sid, side, reserve):
+			var pl0: Dictionary = m.players[pid]
+			round_picks.append({"pid": pid, "part": PartsData.part_name(part), "id": PartsData.base_of(part), "round": m.round_no})
+			_log("%d바퀴 시작, %s %s ★ 강화했어요" % [m.round_no, _j(pl0.name, "이", "가"), PartsData.part_name(PartsData.base_of(part))], pl0.color)
+			snd.play("set_progress", -2.0, 1.15)
+			fx.append({"k": "text", "pos": s.pos + Vector2(0, -34), "t": 0.0, "life": 1.4, "text": "★ 강화", "c": BRASS.lightened(0.2), "size": 22})
+			for i in 12:
+				fx.append({"k": "spark", "pos": s.pos, "vel": Vector2.from_angle(TAU * i / 12.0) * randf_range(80.0, 150.0), "t": 0.0, "life": randf_range(0.3, 0.5), "c": Color("FFD27A")})
+		if online == "":
+			draft_part = ""
+			draft_stone = -1
+			_clear_overlay()
+		return
 	var slot := PartsData.slot_of(part)
 	var old: String = s.parts[slot]
 	if m.equip(pid, part, sid, side, reserve):
@@ -1897,7 +1927,8 @@ func _draw_draft_marks() -> void:
 	var pid := drafting_pid
 	var slot := PartsData.slot_of(draft_part)
 	var col: Color = m.players[pid].color
-	for s in m.world.alive_stones_of(pid):
+	var cands: Array = _up_targets(pid, draft_part) if PartsData.is_up(draft_part) else m.world.alive_stones_of(pid)
+	for s in cands:
 		var p := w2s(s.pos)
 		var facing: float = vis.get(s.id, {}).get("vf", s.facing)
 		# 자석팔·딱지 방패 같은 옆 부품: 고른 알 양쪽에 반투명 미리보기 + 쏘는 방향
@@ -1926,7 +1957,7 @@ func _draw_draft_marks() -> void:
 			continue
 		# 손을 올린 알: 부품을 미리 달아 보이고, 말풍선으로 무엇이 바뀌는지
 		var demo := {"weapon": "", "aux": "", "prop": ""}
-		demo[slot] = draft_part
+		demo[slot] = PartsData.base_of(draft_part)
 		draw_set_transform(p, facing, Vector2.ONE * view_scale)
 		Art.skip_body = true
 		Art.draw(self, demo, s.magnet_side, col, 0.75, pid)
@@ -1935,6 +1966,8 @@ func _draw_draft_marks() -> void:
 		var cur: String = s.parts[slot]
 		var line1 := "%s · %s → %s" % [PartsData.SLOT_LABEL[slot], "비어 있음" if cur == "" else PartsData.part_name(cur), PartsData.part_name(draft_part)]
 		var line2 := "이 알에 달아요" if cur == "" else "지금 부품과 바꿔요"
+		if PartsData.is_up(draft_part):
+			line2 = "이 알의 %s ★ 강화" % PartsData.part_name(cur)
 		var sid_set := PartsData.set_of(draft_part)
 		if sid_set != "":
 			var tmp: Dictionary = s.parts.duplicate()
@@ -2307,6 +2340,8 @@ func _draw_aimed(r: Rect2) -> void:
 		Art.draw_slot_icon(self, Vector2(r.position.x + 18 + 11, y), 22, slot)
 		_txt(Vector2(r.position.x + 50, y + 5), PartsData.SLOT_LABEL[slot], 13, SUB, font)
 		var nm := PartsData.part_name(id) if id != "" else "비어 있음"
+		if id != "" and s.ups.get(slot, false):
+			nm += " ★"
 		if PartsData.SIDE_PARTS.has(id):
 			var sd: int = s.prop_side if slot == "prop" else s.magnet_side
 			nm += " (왼쪽)" if sd < 0 else " (오른쪽)"
@@ -2884,6 +2919,13 @@ func _part_card(pid: int, part: String, compact := false) -> Button:
 	badges.add_theme_constant_override("separation", 4)
 	badges.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	badges.add_child(_badge(PartsData.SLOT_LABEL[slot], Color(FG, 0.12), TEXT))
+	var is_up := PartsData.is_up(part)
+	if is_up:
+		badges.add_child(_badge("강화", BRASS, INK))
+		var ub := b.get_theme_stylebox("normal").duplicate()
+		ub.border_color = BRASS
+		ub.set_border_width_all(3)
+		b.add_theme_stylebox_override("normal", ub)
 	var set_id := PartsData.set_of(part)
 	if set_id != "":
 		var best := 0
@@ -2894,11 +2936,16 @@ func _part_card(pid: int, part: String, compact := false) -> Button:
 		badges.add_child(_badge("%s %d/3" % [PartsData.SETS[set_id]["name"], best + 1], ACCENT, ACCENT_INK))
 	v.add_child(badges)
 	var demo := {"weapon": "", "aux": "", "prop": ""}
-	demo[slot] = part
-	pic_box.add_child(_puck_pic(demo, m.players[pid].color, pid, Vector2(0, 92 if compact else 104), 0.86 if compact else 0.98))
+	demo[slot] = PartsData.base_of(part)
+	var pic := _puck_pic(demo, m.players[pid].color, pid, Vector2(0, 92 if compact else 104), 0.86 if compact else 0.98)
+	if is_up:
+		pic.draw.connect(func(): _draw_star(pic, Vector2(pic.size.x * 0.5 + 34, 18), 11.0))
+	pic_box.add_child(pic)
 	var name_l := _label(d["name"], 16 if compact else 17, TEXT, 2)
 	name_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT if compact else HORIZONTAL_ALIGNMENT_CENTER
 	var one: String = d["when"] + " · " + str(d["desc"]).split(". ")[0].trim_suffix(".")
+	if is_up:
+		one = "지금: %s\n강화 후: %s" % [str(d["desc"]).split(". ")[0].trim_suffix("."), PartsData.UPGRADES.get(PartsData.base_of(part), "")]
 	var desc_l := _label(one, 12, SUB)
 	desc_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT if compact else HORIZONTAL_ALIGNMENT_CENTER
 	desc_l.custom_minimum_size = Vector2(0, 0 if compact else 34)
@@ -2927,7 +2974,7 @@ func _part_card(pid: int, part: String, compact := false) -> Button:
 		if st.parts[slot] == "":
 			fit = true
 	var ok_col := Color("2F8F5B") if not th["dark"] else Color("7FD1A8")
-	var fl := _label("빈 슬롯에 바로 장착" if fit else "기존 부품과 교체", 13, ok_col if fit else TEXT, 2)
+	var fl := _label("이미 단 부품을 ★로 키워요" if is_up else ("빈 슬롯에 바로 장착" if fit else "기존 부품과 교체"), 13, BRASS.darkened(0.2) if is_up else (ok_col if fit else TEXT), 2)
 	fl.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT if compact else HORIZONTAL_ALIGNMENT_CENTER
 	fl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	v.add_child(fl)
@@ -3065,7 +3112,7 @@ func _show_stone_hint(pid: int) -> void:
 	pc.add_child(h)
 	var d := PartsData.get_part(draft_part)
 	var demo := {"weapon": "", "aux": "", "prop": ""}
-	demo[d["slot"]] = draft_part
+	demo[d["slot"]] = PartsData.base_of(draft_part)
 	h.add_child(_puck_pic(demo, Art.NEUTRAL, -1, Vector2(40, 40), 0.42))
 	var hl := _nw(_label("%s 달 알을 누르세요" % _j(d["name"], "을", "를"), 16, TEXT, 2))
 	hl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
@@ -4183,6 +4230,16 @@ func _draw_puck_at(p: Vector2, sid: int, parts: Dictionary, mside: int, col: Col
 	Art.draw(self, parts, mside, col, alpha, symbol)
 	Art.skip_body = false
 	draw_set_transform_matrix(base)
+	if sid >= 0:
+		var stn = m.world.get_stone(sid) if m != null else null
+		if stn != null and not stn.ups.is_empty():
+			draw_set_transform_matrix(Transform2D.IDENTITY)
+			var k3 := 0
+			for slot3 in PartsData.SLOTS:
+				if stn.ups.get(slot3, false):
+					_draw_star(self, pc + Vector2(u * 0.95 + k3 * u * 0.55, -u * 0.95), u * 0.32)
+					k3 += 1
+			draw_set_transform_matrix(base)
 	if not Art.is_set_form(parts):
 		if not Art.mono and symbol >= 0 and symbol < 8 and puck_vp != null:
 			# 미리 구워 둔 퍽 몸통 + 정면 홈만 따로
@@ -5204,3 +5261,23 @@ func _draw_placing() -> void:
 	var vs := get_viewport_rect().size
 	var tt := "남은 시간 %d초" % int(ceil(place_left))
 	_text_outline(Vector2(vs.x * 0.5, vs.y - 100), tt, 16, Color.WHITE if place_left > 5 else Color("FF7A5C"), true)
+
+
+func _up_targets(pid: int, card: String) -> Array:
+	var base := PartsData.base_of(card)
+	var slot := PartsData.slot_of(card)
+	var out: Array = []
+	for st in m.world.alive_stones_of(pid):
+		if st.parts[slot] == base and not st.ups.get(slot, false):
+			out.append(st)
+	return out
+
+
+func _draw_star(ci: CanvasItem, c: Vector2, r: float) -> void:
+	var pts := PackedVector2Array()
+	for i in 10:
+		var rr := r if i % 2 == 0 else r * 0.45
+		pts.append(c + Vector2.from_angle(-PI / 2.0 + TAU * i / 10.0) * rr)
+	ci.draw_colored_polygon(pts, Color("F2C94C"))
+	pts.append(pts[0])
+	ci.draw_polyline(pts, Color("5A3A10"), maxf(1.0, r * 0.14), true)

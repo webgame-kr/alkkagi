@@ -133,6 +133,15 @@ static func choose_draft(m, player_id: int, rand: RandomNumberGenerator) -> Dict
 	var best_val := -INF
 	for part in m.offers.get(player_id, []):
 		var slot := PartsData.slot_of(part)
+		if PartsData.is_up(part):
+			# 강화 카드: 그 부품을 단 알 중 가장자리에서 먼 알
+			for s0 in mine:
+				if s0.parts[slot] == PartsData.base_of(part) and not s0.ups.get(slot, false):
+					var v0: float = PRIORITY.get(PartsData.base_of(part), 4) + 2.5 + rand.randf() * 1.5
+					if v0 > best_val:
+						best_val = v0
+						best_choice = {"part": part, "stone": s0.id, "side": 1}
+			continue
 		for s in mine:
 			var val: float = PRIORITY.get(part, 4)
 			if s.parts[slot] == "":

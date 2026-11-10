@@ -36,7 +36,7 @@ func _initialize() -> void:
 		"test_mushroom_and_wind", "test_second_step", "test_rebound_and_string", "test_at_field_and_beam",
 		"test_hero_band_and_shoes", "test_all_parts_have_art",
 		"test_workshop_pools", "test_offer_fits_empty_slots", "test_min_power_moves_one_cell",
-		"test_knockout_causes", "test_derby_mode", "test_gimmicks_junk", "test_start_placement",
+		"test_knockout_causes", "test_derby_mode", "test_gimmicks_junk", "test_start_placement", "test_upgrades",
 	]
 	for t in tests:
 		var before := failures
@@ -1384,3 +1384,52 @@ func test_start_placement() -> void:
 		check(m.phase == "aim" and m.round_no == 1, "%d: round 1 starts after everyone placed" % n)
 		var st = m.world.alive_stones_of(0)[0]
 		check(st.pos == m.placements[0][0] and m.homes[st.id] == st.pos, "%d: stones moved, homes updated" % n)
+
+
+func test_upgrades() -> void:
+	# 강화 카드: 3바퀴부터, 단 부품이 있을 때만
+	var m := Match.new()
+	m.setup(4, [], 77, false, {"workshop": "junk"})
+	var mine: Array = m.world.alive_stones_of(0)
+	mine[0].parts = {"weapon": "pea", "aux": "", "prop": ""}
+	m.round_no = 2
+	var seen := false
+	for i in 80:
+		for id in m.roll_offer(0):
+			if PartsData.is_up(id):
+				seen = true
+	check(not seen, "no upgrade cards in round 2")
+	m.round_no = 4
+	for i in 80:
+		for id in m.roll_offer(0):
+			if PartsData.is_up(id):
+				seen = true
+				check(id == "up:pea", "upgrade only parts I have: %s" % id)
+	check(seen, "upgrade cards appear from round 3")
+	# 장착: 그 부품을 단 알만 강화, 부품을 바꾸면 사라진다
+	m.phase = "draft"
+	m.draft_queue = [0]
+	m.offers[0] = ["up:pea", "rocket", "mine"]
+	check(not m.equip(0, "up:pea", mine[1].id), "cannot upgrade a stone without the part")
+	check(m.equip(0, "up:pea", mine[0].id) and mine[0].ups.get("weapon", false), "upgraded")
+	# 효과: 콩알총 ★ 은 두 발
+	var w := make_world()
+	var a := w.add_stone(0, Vector2(-200, 0), 0)
+	a.parts["weapon"] = "pea"
+	a.ups["weapon"] = true
+	w.launch(a.id, Vector2.RIGHT, 0.0)
+	check(w.projs.size() == 2, "upgraded pea fires two: %d" % w.projs.size())
+	# 고무코 ★ 은 정면 충돌 두 번까지
+	var w2 := make_world("circle", 900.0)
+	var b := w2.add_stone(0, Vector2(-300, 0), 0)
+	w2.add_stone(1, Vector2(-200, 0), 0)
+	b.parts["weapon"] = "nose"
+	b.ups["weapon"] = true
+	w2.launch(b.id, Vector2.RIGHT, 0.5)
+	w2.run_until_settled()
+	check(count_events(w2, "part", "nose") >= 1, "nose fired")
+	# 바꾸면 ★ 사라짐
+	m.phase = "draft"
+	m.draft_queue = [0]
+	m.offers[0] = ["shotgun"]
+	check(m.equip(0, "shotgun", mine[0].id) and not mine[0].ups.has("weapon"), "replacing the part drops the star")
