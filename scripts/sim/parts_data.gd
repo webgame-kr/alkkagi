@@ -221,14 +221,17 @@ const SETS := {
 }
 
 ## 오늘의 공방: 매 판 하나의 공방이 열리고, 그 판의 부품은 공용 10종 + 공방 전용 6종.
-const COMMON_PARTS := ["pea", "shotgun", "claw", "nose", "magnet", "bumper", "flipper", "rocket", "retro", "chute"]
+## 공용 4종: 정면 공격 · 측면 공격 · 밀고 들어가기 · 뒤로 빠지기 (확장 기획 「부품 확장」)
+const COMMON_PARTS := ["pea", "magnet", "rocket", "retro"]
+const MATCH_EXCLUSIVE := 10   # 한 판에 쓰는 공방 전용 부품 수
 const WORKSHOPS := {
 	"junk": {"name": "고물 정비소", "tag": "티라노를 조립하고 몸통으로 들이받는 곳", "desc": "티라노를 조립하고, 몸통으로 들이받을 각도와 가장자리에서 살아남을 방법을 고른다.",
-		"parts": ["trex_head", "trex_arm", "trex_leg", "sucker", "brake", "mine"], "rep": ["trex_head", "sucker", "mine"], "set": "trex"},
+		"parts": ["trex_head", "trex_arm", "trex_leg", "sucker", "brake", "mine", "hook", "copier", "carousel", "crab", "shotgun", "claw"], "rep": ["trex_head", "sucker", "mine"], "set": "trex"},
 	"magic": {"name": "수상한 마법 상점", "tag": "닿지 않는 알을 밀고 한 발 뒤를 준비하는 곳", "desc": "직접 닿지 않는 알을 밀고, 한 발 뒤에 일어날 일을 준비한다.",
-		"parts": ["moon_staff", "star_cloak", "moon_boots", "shadow_scale", "night_charm", "anchor"], "rep": ["moon_staff", "night_charm", "anchor"], "set": "moon"},
+		"parts": ["moon_staff", "star_cloak", "moon_boots", "shadow_scale", "night_charm", "anchor", "echo_bell", "moon_well", "wind_knot", "side_scroll"], "rep": ["moon_staff", "night_charm", "anchor"], "set": "moon"},
 	"toon": {"name": "만화 소품 창고", "tag": "판 끝을 달리고 상대 뒤로 넘어가는 곳", "desc": "최후의 주인공을 모으거나, 상대 뒤로 넘어가고 판 끝을 타며 직선 조준으로는 잡기 힘든 알을 노린다.",
-		"parts": ["hero_band", "torn_cape", "awaken_shoes", "drift_tire", "flash_step", "log_sub", "trap_card", "rubber_fist", "charge_palm"],
+		"parts": ["hero_band", "torn_cape", "awaken_shoes", "drift_tire", "flash_step", "log_sub", "trap_card", "rubber_fist", "charge_palm",
+			"at_field", "stopwatch", "rebound_shoes", "alchemy_glove", "nose", "flipper", "chute"],
 		"rep": ["hero_band", "flash_step", "rubber_fist"], "set": "hero"},
 	"all": {"name": "잡동사니 창고", "tag": "모든 부품이 섞여 나오는 곳", "desc": "모든 부품 66종이 섞여 나온다.", "parts": [], "rep": ["pea", "moon_staff", "rubber_fist"], "set": ""},
 }
@@ -242,6 +245,38 @@ static func workshop_pool(ws: String) -> Array:
 	var out: Array = COMMON_PARTS.duplicate()
 	out.append_array(WORKSHOPS[ws]["parts"])
 	return out
+
+
+## 한 판에 쓸 부품: 공용 4종 + 전용 중 10종. 세트 부품은 항상 넣고, 무기·보조·추진이 각 3종 이상 되게 뽑는다.
+static func match_pool(ws: String, rng: RandomNumberGenerator) -> Array:
+	if ws == "all" or not WORKSHOPS.has(ws):
+		return ids()
+	var excl: Array = WORKSHOPS[ws]["parts"]
+	if excl.size() <= MATCH_EXCLUSIVE:
+		return COMMON_PARTS + excl
+	var set_id: String = WORKSHOPS[ws].get("set", "")
+	var fixed: Array = []
+	var rest: Array = []
+	for id in excl:
+		if set_id != "" and set_of(id) == set_id:
+			fixed.append(id)
+		else:
+			rest.append(id)
+	var best: Array = []
+	for attempt in 60:
+		var pick: Array = fixed.duplicate()
+		var bag: Array = rest.duplicate()
+		while pick.size() < MATCH_EXCLUSIVE and not bag.is_empty():
+			var k := rng.randi_range(0, bag.size() - 1)
+			pick.append(bag[k])
+			bag.remove_at(k)
+		best = pick
+		var cnt := {"weapon": 0, "aux": 0, "prop": 0}
+		for id in COMMON_PARTS + pick:
+			cnt[slot_of(id)] += 1
+		if cnt["weapon"] >= 3 and cnt["aux"] >= 3 and cnt["prop"] >= 3:
+			break
+	return COMMON_PARTS + best
 
 
 ## 장착할 때 좌우를 고르는 부품. 보조는 Stone.magnet_side, 추진은 Stone.prop_side 에 저장.

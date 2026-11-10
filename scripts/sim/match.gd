@@ -32,6 +32,7 @@ var out_order: Array = []     # 탈락한 순서 (플레이어 id)
 var shots := 0
 var rng := RandomNumberGenerator.new()
 var workshop := "junk"        # 오늘의 공방 (parts_data WORKSHOPS)
+var match_parts: Array = []   # 이번 판에 나오는 부품 (공용 4 + 전용 10)
 var mode := "survival"        # survival(최후 생존전) | derby(개조 더비)
 var scores: Array = []        # 개조 더비: 상대 알을 떨어뜨린 점수
 var homes := {}               # 개조 더비: 알 id → 시작 자리 (떨어진 알이 돌아올 곳)
@@ -47,6 +48,10 @@ func setup(n_players: int, cpu_flags: Array, seed_value: int, timed: bool, opts 
 	for i in n:
 		scores.append(0)
 	rng.seed = seed_value
+	# 이번 판의 부품은 따로 뽑는다 (본 난수 순서를 흔들지 않게)
+	var prng := RandomNumberGenerator.new()
+	prng.seed = seed_value * 31 + 7
+	match_parts = PartsData.match_pool(workshop, prng)
 	players.clear()
 	for i in n:
 		players.append({"id": i, "name": NAMES[i], "color": COLORS[i],
@@ -201,7 +206,7 @@ func roll_offer(pid: int) -> Array:
 			out.append(pick)
 	# 오늘의 공방 부품 중에서. 세 개 중 적어도 둘은 살아 있는 내 알의 빈 슬롯에 바로 붙일 수 있게.
 	var pool: Array = []
-	for id in PartsData.workshop_pool(workshop):
+	for id in match_parts:
 		if missing.is_empty() or PartsData.set_of(id) == "":
 			if not out.has(id):
 				pool.append(id)
@@ -217,10 +222,16 @@ func roll_offer(pid: int) -> Array:
 			fit_count += 1
 	while out.size() < OFFER_COUNT and not pool.is_empty():
 		var candidates: Array = pool
+		# 후보 중 공용 부품은 최대 1장 (나머지는 공방 전용)
+		var commons := out.filter(func(x): return PartsData.COMMON_PARTS.has(x)).size()
+		if commons >= 1 and workshop != "all":
+			var excl_only: Array = candidates.filter(func(x): return not PartsData.COMMON_PARTS.has(x))
+			if not excl_only.is_empty():
+				candidates = excl_only
 		if fit_count < 2:
-			var fitting: Array = pool.filter(func(x): return fits.call(x))
-			if not fitting.is_empty():
-				candidates = fitting
+			var fitting0: Array = candidates.filter(func(x): return fits.call(x))
+			if not fitting0.is_empty():
+				candidates = fitting0
 		var pick2: String = candidates[rng.randi_range(0, candidates.size() - 1)]
 		out.append(pick2)
 		pool.erase(pick2)

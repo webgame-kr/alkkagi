@@ -3830,7 +3830,9 @@ func _draw_shutter() -> void:
 	var big := 48
 	var nm: String = info["name"]
 	var bw := maxf(font_display.get_string_size(nm, HORIZONTAL_ALIGNMENT_LEFT, -1, big).x, font.get_string_size(" · ".join(names), HORIZONTAL_ALIGNMENT_LEFT, -1, 15).x) + 68.0
-	var box := Rect2(vs.x * 0.5 - bw * 0.5, vs.y * 0.5 - 66 + oy, bw, 132)
+	var excl: Array = m.match_parts.filter(func(x): return not PartsData.COMMON_PARTS.has(x)) if m.workshop != "all" else []
+	bw = maxf(bw, excl.size() * 44.0 + 48.0)
+	var box := Rect2(vs.x * 0.5 - bw * 0.5, vs.y * 0.5 - 66 + oy, bw, 132 + (74.0 if not excl.is_empty() else 0.0))
 	shutter.draw_rect(Rect2(box.position + Vector2(0, 10), box.size), Color(0, 0, 0, 0.25))
 	var sb := StyleBoxFlat.new()
 	sb.bg_color = Color("1A1D20")
@@ -3842,6 +3844,16 @@ func _draw_shutter() -> void:
 	shutter.draw_string(font_bold, Vector2(box.position.x, box.position.y + 32), sub, HORIZONTAL_ALIGNMENT_CENTER, box.size.x, 14, Color("FFC23D"))
 	shutter.draw_string(font_display, Vector2(box.position.x, box.position.y + 86), nm, HORIZONTAL_ALIGNMENT_CENTER, box.size.x, big, Color("F2F4F1"))
 	shutter.draw_string(font, Vector2(box.position.x, box.position.y + 114), " · ".join(names), HORIZONTAL_ALIGNMENT_CENTER, box.size.x, 15, Color("C9CED6"))
+	# 이번 판의 전용 부품 (작은 아이콘 줄)
+	if not excl.is_empty():
+		shutter.draw_string(font_semi, Vector2(box.position.x, box.position.y + 140), "이번 판의 전용 부품", HORIZONTAL_ALIGNMENT_CENTER, box.size.x, 12, Color("FFC23D"))
+		var x0 := box.get_center().x - (excl.size() - 1) * 22.0
+		for i in excl.size():
+			var demo := {"weapon": "", "aux": "", "prop": ""}
+			demo[PartsData.slot_of(excl[i])] = excl[i]
+			shutter.draw_set_transform(Vector2(x0 + i * 44.0, box.position.y + 170), -PI / 2.0, Vector2.ONE * 0.45)
+			Art.draw(shutter, demo, 1, Art.NEUTRAL, 1.0, -1)
+			shutter.draw_set_transform_matrix(Transform2D.IDENTITY)
 
 
 # ── 개조 카드의 움직임 화살표 ────────────────────────────

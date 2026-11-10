@@ -1197,14 +1197,28 @@ func test_all_parts_have_art() -> void:
 func test_workshop_pools() -> void:
 	for ws in ["junk", "magic", "toon"]:
 		var pool := PartsData.workshop_pool(ws)
-		var want: int = 10 + PartsData.WORKSHOPS[ws]["parts"].size()
+		var want: int = 4 + PartsData.WORKSHOPS[ws]["parts"].size()
 		check(pool.size() == want, "%s: %d parts" % [ws, want])
 		var m := Match.new()
 		m.setup(4, [], 7, false, {"workshop": ws})
 		check(m.workshop == ws, "workshop set")
+		check(m.match_parts.size() == 14, "%s: 14 parts in a match (%d)" % [ws, m.match_parts.size()])
+		var cnt := {"weapon": 0, "aux": 0, "prop": 0}
+		for id in m.match_parts:
+			cnt[PartsData.slot_of(id)] += 1
+		check(cnt["weapon"] >= 3 and cnt["aux"] >= 3 and cnt["prop"] >= 3, "%s: slot balance %s" % [ws, cnt])
+		var set_id: String = PartsData.WORKSHOPS[ws].get("set", "")
+		if set_id != "":
+			for sp in PartsData.SETS[set_id]["parts"]:
+				check(m.match_parts.has(sp), "%s: set part always in: %s" % [ws, sp])
 		for i in 30:
-			for id in m.roll_offer(0):
-				check(pool.has(id), "%s offers only its parts: %s" % [ws, id])
+			var offer := m.roll_offer(0)
+			var commons := 0
+			for id in offer:
+				check(m.match_parts.has(id), "%s offers only this match's parts: %s" % [ws, id])
+				if PartsData.COMMON_PARTS.has(id):
+					commons += 1
+			check(commons <= 1, "at most one common card: %s" % str(offer))
 	check(PartsData.workshop_pool("all").size() == PartsData.ids().size(), "all = every part")
 
 
