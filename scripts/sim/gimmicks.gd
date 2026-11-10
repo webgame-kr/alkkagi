@@ -52,6 +52,10 @@ static func name_of(kind: String) -> String:
 ## 판 시작 때 기믹을 고르고 놓는다. 반환: [{kind, items:[...]}]
 static func generate(ws: String, n_players: int, w, rng: RandomNumberGenerator) -> Array:
 	var kinds: Array = BY_WORKSHOP.get(ws, []).duplicate()
+	if not w.parcel.is_empty():
+		# 택배 쟁탈전: 목표물 처리까지 달라지는 기믹은 뺀다 (크기 변환·회전 원판·다음 화 예고)
+		for k0 in ["sizering", "turntable", "nextch"]:
+			kinds.erase(k0)
 	if kinds.is_empty():
 		return []
 	var count := 1 if n_players <= 4 else 2
@@ -79,7 +83,7 @@ static func _keep_out_of_zones(g: Dictionary, w) -> Dictionary:
 		if p.length() > lim:
 			it["pos"] = p.normalized() * lim if p.length() > 0.001 else p
 		# 왕관 쟁탈전: 가운데 왕관 자리는 비워 둔다
-		if not w.crown.is_empty():
+		if not w.crown.is_empty() or not w.parcel.is_empty():
 			var need: float = 2.0 * CELL + r * 0.6
 			var q: Vector2 = it["pos"]
 			if q.length() < need:

@@ -43,6 +43,16 @@ const DERBY_ROUNDS_BIG := 6   # 5~8인
 const CROWN_GOAL := World.Crown.GOAL
 var crown_stats: Array = []   # pid → {gain, defend, steal}
 var crown_events: Array = []  # 화면이 읽고 비우는 점수 알림 {kind: gain|defend, pid}
+## 택배 쟁탈전: 두 팀(0 왼쪽 빨강 진영 · 1 오른쪽 파랑 진영), 알 2개, 개조 1·2·3바퀴.
+## parcel_every 바퀴마다 택배가 있는 진영의 팀 +1, parcel_goal 점 선취. 팀이 번갈아 쏜다.
+const TEAM_COLORS := [Color("E0533D"), Color("3D6FD1")]
+const TEAM_NAMES := ["빨강", "파랑"]
+var team_scores := [0, 0]
+var parcel_every := 2
+var parcel_goal := 3
+var start_team := 0
+var parcel_events: Array = []  # 화면이 읽고 비우는 정산 알림 {kind: settle, team, scores}
+var parcel_stats := {"settles": 0, "zero": 0}
 
 
 func setup(n_players: int, cpu_flags: Array, seed_value: int, timed: bool, opts := {}) -> void:
@@ -62,9 +72,11 @@ func setup(n_players: int, cpu_flags: Array, seed_value: int, timed: bool, opts 
 	for i in n:
 		players.append({"id": i, "name": NAMES[i], "color": COLORS[i],
 			"cpu": bool(cpu_flags[i]) if i < cpu_flags.size() else false, "out": false, "out_round": 0,
-			"reserved": "", "focus": -1, "relic": "", "relic_turn": false})
+			"reserved": "", "focus": -1, "relic": "", "relic_turn": false, "team": -1})
+	if mode == "parcel":
+		_setup_teams(opts)
 	world = World.new()
-	if n == 2 and mode != "crown":
+	if n == 2 and mode != "crown" and mode != "parcel":
 		world.shape = "square"
 		world.size = CELL * 8.0
 	elif n <= 4:
@@ -78,11 +90,13 @@ func setup(n_players: int, cpu_flags: Array, seed_value: int, timed: bool, opts 
 	draft_rounds = []
 	crown_stats.clear()
 	crown_events.clear()
-	if mode == "crown":
+	if mode == "crown" or mode == "parcel":
 		first_draft_round = 1
 		draft_rounds = [1, 2, 3]
 		for i in n:
 			crown_stats.append({"gain": 0, "defend": 0, "steal": 0})
+	if mode == "parcel":
+		world.parcel = World.Parcel.make()
 	_place_stones()
 	if mode == "crown":
 		world.crown = World.Crown.make(world.stones.size())
@@ -113,7 +127,7 @@ const SIDE_GAP := 1.25        # 원형 앞줄 두 퍽의 좌우 간격 (칸, 중
 
 
 func stones_per_player() -> int:
-	if mode == "crown":
+	if mode == "crown" or mode == "parcel":
 		return 2
 	return 4 if n == 2 else 3
 
@@ -126,7 +140,7 @@ func _place_stones() -> void:
 				world.add_stone(p, Vector2((k - 1.5) * CELL * 2.5, y), -PI / 2.0 if p == 0 else PI / 2.0)
 		return
 	for p in n:
-		var ang := PI / 2.0 + TAU * p / n
+		var ang := seat_angle(p)
 		var radial := Vector2.from_angle(ang)
 		var tang := radial.orthogonal()
 		var front := radial * (world.size - CELL * 4.0)
@@ -185,7 +199,7 @@ func _begin_round() -> void:
 		# 별똥별: 지난 바퀴가 끝났으니 떨어진다
 		if not World.Gm.meteor_fall(world, round_no - 1).is_empty():
 			for p in players:
-				if not p.out and stones_left(p.id) == 0 and mode != "derby":
+				if not p.out and stones_left(p.id) == 0 and mode == "survival":
 					p.out = true
 					p.out_round = round_no - 1
 					out_order.append(p.id)
@@ -200,7 +214,9 @@ func _begin_round() -> void:
 		if not players[pid].out:
 			order.append(pid)
 	turn_pos = 0
-	if mode == "crown" and not order.is_empty():
+	if mode == "parcel":
+		order = parcel_order()
+	if (mode == "crown" or mode == "parcel") and not order.is_empty():
 		_respawn_of(order[0])
 	if is_draft_round(round_no):
 		draft_queue = order.duplicate()
@@ -428,6 +444,10 @@ func finish_shot() -> void:
 			return
 		_settle_turn()
 		return
+	if mode == "parcel":
+		world.end_shot()
+		_settle_turn()
+		return
 	if mode == "derby" and world.shot != null:
 		var shooter_owner: int = world.shot.owner
 		for k in world.knockouts:
@@ -497,7 +517,7 @@ func _settle_turn() -> void:
 			_finish([], "draw")
 			return
 	turn_pos += 1
-	if mode == "crown" and turn_pos < order.size():
+	if (mode == "crown" or mode == "parcel") and turn_pos < order.size():
 		_respawn_of(order[turn_pos])   # 떨어진 알은 다음 내 차례 시작에 돌아온다
 	# 떨어진 자리는 건너뛴다 (더비에서는 이번 바퀴에 알이 하나도 없는 사람도)
 	while turn_pos < order.size() and (players[order[turn_pos]].out or stones_left(order[turn_pos]) == 0):
@@ -507,6 +527,8 @@ func _settle_turn() -> void:
 		_mark_relic_turn()
 		return
 	# 바퀴 끝
+	if mode == "parcel" and round_no % parcel_every == 0 and _parcel_settle():
+		return
 	round_no += 1
 	if max_rounds > 0 and round_no > max_rounds:
 		if mode == "derby":
@@ -514,8 +536,8 @@ func _settle_turn() -> void:
 		else:
 			_finish_by_count()
 		return
-	if mode != "crown":
-		start_seat = (start_seat + 1) % n   # 왕관 쟁탈전은 차례 순서를 고정한다
+	if mode != "crown" and mode != "parcel":
+		start_seat = (start_seat + 1) % n   # 왕관·택배 쟁탈전은 각자 정한 순서를 쓴다
 	_begin_round()
 
 
@@ -608,6 +630,13 @@ const PLACE_GAP := 2.0        # 칸: 내 알끼리 중심 간 거리
 
 
 func seat_angle(pid: int) -> float:
+	if mode == "parcel" and players.size() == n and int(players[pid].get("team", -1)) >= 0:
+		# 택배 쟁탈전: 팀마다 자기 진영(빨강 왼쪽 · 파랑 오른쪽) 반원을 나눠 쓴다
+		var team: int = players[pid]["team"]
+		var mates := team_members(team)
+		var k := mates.find(pid)
+		var base := PI / 2.0 if team == 0 else -PI / 2.0
+		return base + PI / mates.size() * (k + 0.5)
 	return PI / 2.0 + TAU * pid / n
 
 
@@ -777,3 +806,89 @@ func remote_holder(pid: int, target):
 				bd = d
 				best = st
 	return best
+
+
+# ── 택배 쟁탈전 ──────────────────────────────────────────
+
+func _setup_teams(opts: Dictionary) -> void:
+	var teams: Array = opts.get("teams", [])
+	parcel_every = clampi(int(opts.get("parcel_every", 2)), 1, 4)
+	parcel_goal = clampi(int(opts.get("parcel_goal", 3)), 1, 9)
+	team_scores = [0, 0]
+	parcel_events.clear()
+	parcel_stats = {"settles": 0, "zero": 0}
+	for i in n:
+		var t: int = int(teams[i]) if i < teams.size() else i % 2
+		players[i]["team"] = clampi(t, 0, 1)
+	for t in 2:
+		var mates := team_members(t)
+		for k in mates.size():
+			players[mates[k]]["name"] = "%s %d" % [TEAM_NAMES[t], k + 1]
+			players[mates[k]]["color"] = TEAM_COLORS[t]
+	start_team = rng.randi_range(0, 1)
+
+
+func team_of(pid: int) -> int:
+	return int(players[pid].get("team", -1)) if pid >= 0 and pid < players.size() else -1
+
+
+func team_members(t: int) -> Array:
+	var out: Array = []
+	for p in players:
+		if int(p.get("team", -1)) == t:
+			out.append(p.id)
+	return out
+
+
+## 이번 구간의 차례: 두 팀이 번갈아 (빨강 1 → 파랑 1 → 빨강 2 → 파랑 2).
+## 구간마다 먼저 쏘는 팀을 바꾸고, 팀 안의 선두도 한 칸씩 돌린다.
+func parcel_order() -> Array:
+	var seg := int((round_no - 1) / parcel_every)
+	var first := (start_team + seg) % 2
+	var a := _rotated(team_members(first), seg)
+	var b := _rotated(team_members(1 - first), seg)
+	var out: Array = []
+	for k in maxi(a.size(), b.size()):
+		if k < a.size():
+			out.append(a[k])
+		if k < b.size():
+			out.append(b[k])
+	return out
+
+
+func _rotated(arr: Array, k: int) -> Array:
+	if arr.is_empty():
+		return arr
+	var out: Array = []
+	for i in arr.size():
+		out.append(arr[(i + k) % arr.size()])
+	return out
+
+
+## 정산까지 남은 차례 (지금 차례 포함)
+func turns_to_settle() -> int:
+	var rounds_left := parcel_every - 1 - ((round_no - 1) % parcel_every)
+	return (order.size() - turn_pos) + rounds_left * order.size()
+
+
+## 이번 바퀴가 정산 바퀴인지
+func is_settle_round() -> bool:
+	return round_no % parcel_every == 0
+
+
+## 정산: 택배가 있는 진영의 팀 +1 (중립·대기·추락은 무득점). 목표 점수면 끝. 아니면 택배만 중앙으로.
+func _parcel_settle() -> bool:
+	var team := World.Parcel.side_team(world)
+	parcel_stats["settles"] += 1
+	if team >= 0:
+		team_scores[team] += 1
+		for pid in team_members(team):
+			scores[pid] = team_scores[team]
+	else:
+		parcel_stats["zero"] += 1
+	parcel_events.append({"kind": "settle", "team": team, "scores": team_scores.duplicate(), "pos": world.parcel.get("pos", Vector2.ZERO)})
+	if team >= 0 and team_scores[team] >= parcel_goal:
+		_finish(team_members(team), "parcel")
+		return true
+	World.Parcel.send_home(world)
+	return false

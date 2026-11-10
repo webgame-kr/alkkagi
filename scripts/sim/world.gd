@@ -10,6 +10,7 @@ const Gm = preload("res://scripts/sim/gimmicks.gd")
 const Lab = preload("res://scripts/sim/lab.gd")
 const Hero = preload("res://scripts/sim/hero.gd")
 const Crown = preload("res://scripts/sim/crown.gd")
+const Parcel = preload("res://scripts/sim/parcel.gd")
 
 const STONE_R := 22.0
 const MAX_SPEED := Parts.LAUNCH_V
@@ -188,6 +189,7 @@ var knockouts: Array = []     # 이번 샷에 떨어진 알 {stone, owner}
 var shot_no := 0              # 지금까지 쏜 횟수 (샷 단위로 사라지는 장치용)
 var relics: Array = []        # 유품 리본으로 회수한 부품 {owner, part}. 경기 관리가 가져간다.
 var crown := {}               # 왕관 쟁탈전의 왕관 (crown.gd). 비어 있으면 다른 모드
+var parcel := {}              # 택배 쟁탈전의 택배 (parcel.gd). 비어 있으면 다른 모드
 
 
 func clone():
@@ -203,6 +205,7 @@ func clone():
 	w.gimmicks = gimmicks.duplicate(true)
 	w.glue = glue.duplicate(true)
 	w.crown = crown.duplicate(true)
+	w.parcel = parcel.duplicate(true)
 	w.next_device_id = next_device_id
 	w.round_no = round_no
 	w.shot_no = shot_no
@@ -539,11 +542,14 @@ func end_shot() -> void:
 	Hero.on_end(self)
 	Gm.after_shot(self)
 	Crown.end_shot(self)
+	Parcel.end_shot(self)
 	shot = null
 
 
 func is_settled() -> bool:
 	if not projs.is_empty():
+		return false
+	if Parcel.moving(self):
 		return false
 	if shot != null and (shot.grip_timer > 0.0 or shot.reel_timer > 0.0 or shot.clock_timer > 0.0):
 		return false
@@ -569,6 +575,8 @@ func force_stop() -> void:
 	projs.clear()
 	for s in stones:
 		s.vel = Vector2.ZERO
+	if not parcel.is_empty():
+		parcel["vel"] = Vector2.ZERO
 	if shot != null:
 		shot.grip_timer = 0.0
 		shot.reel_timer = 0.0
@@ -607,10 +615,12 @@ func step() -> void:
 			else:
 				s.vel *= ns / sp
 				s.pos += s.vel * dt
+	Parcel.move(self, dt)
 	Lab.after_move(self)
 	Hero.lastcut_step(self)
 	_hold_grip(dt)
 	_collide_stones()
+	Parcel.collide(self)
 	Gm.collide(self)
 	_check_parachutes()
 	_update_projs(dt)
@@ -618,6 +628,7 @@ func step() -> void:
 	Lab.check_decoys(self)
 	Ex.check_devices(self)
 	_check_out()
+	Parcel.check_out(self)
 	Ex.after_step(self)
 	Crown.after_step(self)
 	_record_path(dt)

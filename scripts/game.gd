@@ -51,7 +51,8 @@ var font_bold: Font
 var font_display: Font        # 제목·배너용 굵은 제목체 (Black Han Sans)
 var m: Match
 var settings := {"n": 4, "cpu": [false, true, true, true, true, true, true, true], "timed": false, "speed": 1,
-	"friend": [false, false, false, false, false, false, false, false], "workshop": "junk", "mode": "survival"}
+	"friend": [false, false, false, false, false, false, false, false], "workshop": "junk", "mode": "survival",
+	"teams": [0, 1, 0, 1, 0, 1, 0, 1], "parcel_every": 2, "parcel_goal": 3}
 ## 게임 속도: 퍽이 움직이는 빠르기(재생 배율), CPU가 뜸 들이는 시간, 차례 사이 쉬는 시간.
 const SPEEDS := [
 	{"name": "느리게", "play": 0.75, "think": 1.0, "aim_show": 1.1, "hold": 0.7},
@@ -275,6 +276,8 @@ func _debug_args() -> void:
 		settings["mode"] = "derby"
 	if args.has("--crown"):
 		settings["mode"] = "crown"
+	if args.has("--parcel"):
+		settings["mode"] = "parcel"
 	var wi := args.find("--ws")
 	if wi >= 0 and args.size() > wi + 1:
 		settings["workshop"] = args[wi + 1]
@@ -473,6 +476,7 @@ func _start_match(seed_value := -1) -> void:
 	match_started_t = time
 	mode_alerts.clear()
 	crown_fly = {}
+	parcel_fly = {}
 	if seed_value < 0:
 		seed_value = randi()
 	if online == "":
@@ -484,7 +488,8 @@ func _start_match(seed_value := -1) -> void:
 	var ws: String = settings.get("workshop", "junk")
 	if ws == "random":
 		ws = ["junk", "magic", "toon"][seed_value % 3]
-	m.setup(settings["n"], settings["cpu"], seed_value, settings["timed"], {"workshop": ws, "mode": settings.get("mode", "survival"), "placement": true})
+	m.setup(settings["n"], settings["cpu"], seed_value, settings["timed"], {"workshop": ws, "mode": settings.get("mode", "survival"), "placement": true,
+		"teams": settings.get("teams", []), "parcel_every": settings.get("parcel_every", 2), "parcel_goal": settings.get("parcel_goal", 3)})
 	state = "play"
 	_refresh_theme()
 	turn_hold = 0.0
@@ -599,6 +604,7 @@ func _update_play(delta: float) -> void:
 	if overlay != null and m.phase != "draft" and overlay.has_meta("draft_wait"):
 		_clear_overlay()
 	_take_crown_scores()
+	_take_parcel_events()
 	if turn_hold > 0.0:
 		turn_hold -= delta
 		return
@@ -971,6 +977,8 @@ func _consume_events() -> void:
 				fx.append({"k": "ring", "pos": e["pos"], "t": 0.0, "life": 0.4, "r": 24.0, "c": Color("2A2F45")})
 			"crown":
 				_on_crown_event(e)
+			"parcel":
+				_on_parcel_event(e)
 			"respawn":
 				fx.append({"k": "text", "pos": e["pos"] + Vector2(0, -30), "t": 0.0, "life": 1.2, "text": "복귀", "c": owner_col.lightened(0.3), "size": 18})
 				fx.append({"k": "ring", "pos": e["pos"], "t": 0.0, "life": 0.6, "r": 40.0, "c": owner_col})
@@ -1297,6 +1305,7 @@ func _draw_inner() -> void:
 	_draw_gimmicks()
 	_draw_devices()
 	_draw_crown_floor()
+	_draw_parcel()
 	_draw_aim_under()
 	var _ts := Time.get_ticks_usec()
 	if m.phase == "place":
@@ -1342,11 +1351,14 @@ func _draw_lobby_preview(ci: Control) -> void:
 	var half := minf(pr.size.x * 0.5 - 18.0, (pr.size.y - 150.0) * 0.5)
 	var c := Vector2(pr.get_center().x, 12.0 + half + 8.0)
 	var crown_mode: bool = settings.get("mode", "survival") == "crown"
-	var square := n == 2 and not crown_mode
+	var parcel_mode: bool = settings.get("mode", "survival") == "parcel"
+	var square := n == 2 and not crown_mode and not parcel_mode
 	var units := 16.0 if square else (18.0 if n <= 4 else 20.0)
 	var u := 2.0 * half / units
 	var r := u * 0.5
 	Arena.board(ci, c, half, u, square, th, time)
+	if parcel_mode:
+		_draw_parcel_halves(ci, c, half - 0.2 * u, u)
 	var pucks: Array = []
 	if square:
 		for i in 2:
@@ -1355,27 +1367,35 @@ func _draw_lobby_preview(ci: Control) -> void:
 				pucks.append([i, Vector2(c.x + (j - 1.5) * 2.5 * u, y)])
 	else:
 		var R := half / u
+		var pm := Match.new() if parcel_mode else null
+		if parcel_mode:
+			pm.n = n
+			pm.mode = "parcel"
+			for i0 in n:
+				pm.players.append({"id": i0, "team": int(settings["teams"][i0])})
 		for i in n:
-			var a := deg_to_rad(90.0 + 360.0 * i / n)
+			var a := deg_to_rad(90.0 + 360.0 * i / n) if not parcel_mode else pm.seat_angle(i)
 			var rad := Vector2(cos(a), sin(a))
 			var tg := rad.orthogonal()
 			pucks.append([i, c + rad * (R - 4.0) * u + tg * Match.SIDE_GAP * u])
 			pucks.append([i, c + rad * (R - 4.0) * u - tg * Match.SIDE_GAP * u])
-			if not crown_mode:
+			if not crown_mode and not parcel_mode:
 				pucks.append([i, c + rad * (R - 5.5) * u])
 	if crown_mode:
 		_draw_crown_icon(ci, c, u * 1.1, 1.0)
+	if parcel_mode:
+		_draw_parcel_box(ci, c, u * 0.65, 0.0, -1, 1.0)
 	for pk in pucks:
 		var i: int = pk[0]
 		if not settings["cpu"][i]:
 			ci.draw_arc(pk[1], r + 4, 0, TAU, 24, th["outline"], 3.0, true)
 			ci.draw_arc(pk[1], r + 5.5, 0, TAU, 24, BRASS, 2.0, true)
 		Art.draw_puck_shadow(ci, pk[1], r)
-		Art.draw_puck_top(ci, pk[1], r, Match.COLORS[i], i, -PI / 2)
+		Art.draw_puck_top(ci, pk[1], r, Match.TEAM_COLORS[int(settings["teams"][i])] if parcel_mode else Match.COLORS[i], i, -PI / 2)
 	# 판 정보: 판 · 퍽 · 개조 · 조준
 	var timed: bool = settings["timed"]
-	var info := [["판", "정사각 16칸" if square else "지름 %d칸" % int(units)], ["퍽", "%d개씩" % (2 if crown_mode else (4 if square else 3))],
-		["개조", "1·2·3바퀴" if crown_mode else "2바퀴부터"], ["조준", "10초 제한" if timed else "제한 없음"]]
+	var info := [["판", "정사각 16칸" if square else "지름 %d칸" % int(units)], ["퍽", "%d개씩" % (2 if (crown_mode or parcel_mode) else (4 if square else 3))],
+		["개조", "1·2·3바퀴" if (crown_mode or parcel_mode) else "2바퀴부터"], ["조준", "10초 제한" if timed else "제한 없음"]]
 	var x0 := 24.0
 	var y0 := c.y + half + 52.0
 	var cw := (pr.size.x - 48.0) / 4.0
@@ -2207,6 +2227,8 @@ func _draw_hud(vs: Vector2) -> void:
 	if not portrait:
 		if m.mode == "crown":
 			_draw_crown_forecast(vs)
+		elif m.mode == "parcel":
+			_draw_parcel_clock(vs)
 		else:
 			_draw_timeline(vs)
 	_draw_mode_alerts(vs)
@@ -2238,6 +2260,8 @@ func _draw_turn_card(r: Rect2) -> void:
 				sub = "알을 당겨 조준하세요" if m.phase == "aim" else "움직이는 중"
 				if m.mode == "crown" and m.phase == "aim":
 					sub = _crown_hint(pid)
+				elif m.mode == "parcel" and m.phase == "aim":
+					sub = _parcel_hint(pid)
 		"place":
 			pid = placing_pid
 			title = "자리 잡기"
@@ -2281,6 +2305,8 @@ func _draw_turn_card(r: Rect2) -> void:
 	_txt(Vector2(r.position.x + 18, y), "%d바퀴째" % m.round_no, 13, LABEL, font_semi)
 	if m.mode == "crown":
 		_txt(Vector2(r.end.x - 18, y), "%d점 선취" % Match.CROWN_GOAL, 13, SUB, font, 120, HORIZONTAL_ALIGNMENT_RIGHT)
+	elif m.mode == "parcel":
+		_txt(Vector2(r.end.x - 18, y), "%d점 선취" % m.parcel_goal, 13, SUB, font, 120, HORIZONTAL_ALIGNMENT_RIGHT)
 	elif m.max_rounds > 0:
 		_txt(Vector2(r.end.x - 18, y), "%d바퀴까지" % m.max_rounds, 13, SUB, font, 120, HORIZONTAL_ALIGNMENT_RIGHT)
 	else:
@@ -2289,6 +2315,9 @@ func _draw_turn_card(r: Rect2) -> void:
 	var seg_r := Rect2(r.position.x + 18, y + 8, r.size.x - 36, 5)
 	var n := m.max_rounds if m.max_rounds > 0 else m.n
 	var lit := m.round_no if m.max_rounds > 0 else m.alive_players().size()
+	if m.mode == "parcel":
+		n = m.parcel_goal
+		lit = maxi(int(m.team_scores[0]), int(m.team_scores[1]))
 	if m.mode == "crown":
 		# 왕관 쟁탈전: 선두의 점수
 		n = Match.CROWN_GOAL
@@ -2346,11 +2375,15 @@ func _draw_order(r: Rect2) -> void:
 	if portrait:
 		row_h = clampf((r.size.y - 36.0) / rows.size(), 17.0, 30.0)
 		fs = 13 if row_h < 24.0 else 14
+	var team_h := 84.0 if m.mode == "parcel" else 0.0
 	if not portrait:
-		r.size.y = 14 + 24 + rows.size() * row_h + 10
+		r.size.y = 14 + 24 + rows.size() * row_h + 10 + team_h
 		hud["order_end"] = r.end.y
 	_panel(r)
-	_txt(r.position + Vector2(18, 27), "차례 순서", 13, SUB, font_semi)
+	if team_h > 0.0:
+		_draw_team_scores(Rect2(r.position + Vector2(10, 8), Vector2(r.size.x - 20, team_h - 8)))
+		r.position.y += team_h
+	_txt(r.position + Vector2(18, 27), "차례 순서" + (" · 이번 구간" if m.mode == "parcel" else ""), 13, SUB, font_semi)
 	if m.mode == "crown":
 		_txt(Vector2(r.end.x - 18, r.position.y + 27), "%d점 선취" % Match.CROWN_GOAL, 13, SUB, font, 100, HORIZONTAL_ALIGNMENT_RIGHT)
 	var y := r.position.y + 36
@@ -2399,8 +2432,10 @@ func _draw_order(r: Rect2) -> void:
 				tag = "지금"
 			elif i == 1 and m.phase != "draft":
 				tag = "다음"
+			if m.mode == "parcel" and m.phase != "draft" and m.is_settle_round() and not m.order.is_empty() and pid == m.order[m.order.size() - 1] and pid != cur:
+				tag = "정산 직전"
 			if tag != "" and not portrait:
-				_txt(Vector2(right - 12 - left * 12, cy + 4), tag, 12, HINT_GOLD if tag == "지금" else SUB, font_semi, 40, HORIZONTAL_ALIGNMENT_RIGHT)
+				_txt(Vector2(right - 12 - left * 12, cy + 4), tag, 12, HINT_GOLD if tag == "지금" else SUB, font_semi, 70, HORIZONTAL_ALIGNMENT_RIGHT)
 		y += row_h
 		i += 1
 
@@ -2751,8 +2786,10 @@ func _show_setup() -> void:
 	mv.size_flags_stretch_ratio = 0.85
 	mv.add_child(_label("모드", 14, LABEL, 1))
 	var cur_mode: String = settings.get("mode", "survival")
-	mv.add_child(_seg([["survival", "생존전"], ["derby", "개조 더비"], ["crown", "왕관전"]], cur_mode, func(k):
+	mv.add_child(_seg([["survival", "생존전"], ["derby", "더비"], ["crown", "왕관전"], ["parcel", "택배전"]], cur_mode, func(k):
 		settings["mode"] = k
+		if k == "parcel":
+			_fix_parcel_count()
 		if online == "host":
 			_host_broadcast_lobby()
 		_show_setup()))
@@ -2763,7 +2800,7 @@ func _show_setup() -> void:
 	nv.size_flags_stretch_ratio = 1.15
 	nv.add_child(_label("인원", 14, LABEL, 1))
 	var counts: Array = []
-	for n in range(2, 9):
+	for n in ([4, 6, 8] if cur_mode == "parcel" else range(2, 9)):
 		counts.append([n, str(n)])
 	nv.add_child(_seg(counts, settings["n"], func(k): _set_count(k)))
 	mr.add_child(nv)
@@ -2772,7 +2809,9 @@ func _show_setup() -> void:
 		col.add_child(_label("알 2개 · 왕관을 얻으면 1점, 남의 차례를 버틸 때마다 1점 · 5점 선취 · 떨어진 알은 다음 차례에 복귀", 12, SUB))
 	if cur_mode == "derby":
 		col.add_child(_label("정해진 %d바퀴 동안 모두 계속 둡니다. 떨어진 퍽은 다음 바퀴에 부품을 단 채 돌아오고, 상대 퍽을 떨어뜨리면 1점." % (Match.DERBY_ROUNDS_SMALL if settings["n"] <= 4 else Match.DERBY_ROUNDS_BIG), 12, SUB))
-	# 자리
+	# 자리 (택배 쟁탈전은 팀 나누기)
+	if cur_mode == "parcel":
+		col.add_child(_team_panel(narrow))
 	var g2 := VBoxContainer.new()
 	g2.add_theme_constant_override("separation", 8)
 	var hr := HBoxContainer.new()
@@ -2792,7 +2831,8 @@ func _show_setup() -> void:
 	for i in settings["n"]:
 		grid.add_child(_seat_button(i))
 	g2.add_child(grid)
-	col.add_child(g2)
+	if cur_mode != "parcel":
+		col.add_child(g2)
 	# 시작
 	var gap := Control.new()
 	gap.custom_minimum_size = Vector2(0, 4)
@@ -3402,6 +3442,10 @@ func _show_result() -> void:
 		var wp: int = m.winners[0]
 		title = "내가 이겼어요" if _is_mine(wp) and my_seats.size() == 1 else "%s 승리" % m.players[wp].name
 		col = m.players[wp].color
+	elif m.mode == "parcel":
+		var wt: int = m.team_of(m.winners[0])
+		title = "%s 팀 승리" % Match.TEAM_NAMES[wt]
+		col = Match.TEAM_COLORS[wt]
 	else:
 		var names: Array = []
 		for w in m.winners:
@@ -3430,7 +3474,7 @@ func _show_result() -> void:
 	var score_line: Array = []
 	for pp in m.players:
 		score_line.append("%s %d" % [pp.name, m.scores[pp.id]])
-	var reason := {"score": "점수 " + " · ".join(score_line), "last": "마지막 생존", "limit": "최대 %d바퀴 도달 · 남은 퍽이 가장 많은 사람이 승리" % m.max_rounds, "draw": "한 발에 모두 떨어졌습니다", "crown": "왕관 %d점 선취" % Match.CROWN_GOAL}
+	var reason := {"score": "점수 " + " · ".join(score_line), "last": "마지막 생존", "limit": "최대 %d바퀴 도달 · 남은 퍽이 가장 많은 사람이 승리" % m.max_rounds, "draw": "한 발에 모두 떨어졌습니다", "crown": "왕관 %d점 선취" % Match.CROWN_GOAL, "parcel": "택배 %d점 선취 · %d : %d" % [m.parcel_goal, m.team_scores[0], m.team_scores[1]]}
 	box.add_child(_label(reason.get(m.end_reason, ""), 15, SUB))
 	# 순위: 남은 퍽 많은 순, 그다음 늦게 탈락한 순
 	var rank: Array = []
@@ -3439,6 +3483,12 @@ func _show_result() -> void:
 			rank.append(p.id)
 	if m.mode == "derby" or m.mode == "crown":
 		rank.sort_custom(func(a, b): return m.scores[a] > m.scores[b])
+	elif m.mode == "parcel":
+		var tch: Dictionary = m.world.parcel.get("touch", {})
+		rank.sort_custom(func(a, b):
+			if m.team_scores[m.team_of(a)] != m.team_scores[m.team_of(b)]:
+				return m.team_scores[m.team_of(a)] > m.team_scores[m.team_of(b)]
+			return int(tch.get(a, 0)) > int(tch.get(b, 0)))
 	else:
 		rank.sort_custom(func(a, b): return m.stones_left(a) > m.stones_left(b))
 	var outs: Array = m.out_order.duplicate()
@@ -3454,10 +3504,12 @@ func _show_result() -> void:
 		var nm := _label(p.name, 17, Color(TEXT, 1.0 if not p.out else 0.6), 1)
 		nm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		r.add_child(nm)
+		if m.mode == "parcel":
+			r.add_child(_nw(_label("택배 접촉 %d" % int(m.world.parcel.get("touch", {}).get(pid, 0)), 13, SUB)))
 		if m.mode == "crown":
 			var cs: Dictionary = m.crown_stats[pid]
 			r.add_child(_nw(_label("획득 %d · 방어 %d" % [cs["gain"], cs["defend"]], 13, SUB)))
-		var right_txt: String = ("%d점" % m.scores[pid]) if (m.mode == "derby" or m.mode == "crown") else (("퍽 %d개" % m.stones_left(pid)) if not p.out else "%d바퀴 탈락" % p.out_round)
+		var right_txt: String = ("%d점" % m.scores[pid]) if (m.mode == "derby" or m.mode == "crown" or m.mode == "parcel") else (("퍽 %d개" % m.stones_left(pid)) if not p.out else "%d바퀴 탈락" % p.out_round)
 		r.add_child(_nw(_label(right_txt, 15, SUB)))
 		box.add_child(r)
 		i += 1
@@ -3468,6 +3520,8 @@ func _show_result() -> void:
 		for cs2 in m.crown_stats:
 			steals += int(cs2["steal"])
 		tail += " · 강탈 %d회" % steals
+	if m.mode == "parcel":
+		tail += " · 정산 %d회 · 무득점 %d" % [m.parcel_stats["settles"], m.parcel_stats["zero"]]
 	box.add_child(_label(tail, 13, SUB))
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 8)
@@ -3708,7 +3762,8 @@ func _lobby_state() -> Dictionary:
 		else:
 			kinds.append("host")
 	return {"t": "lobby", "n": settings["n"], "kinds": kinds, "timed": settings["timed"], "speed": settings["speed"],
-		"workshop": settings.get("workshop", "junk"), "mode": settings.get("mode", "survival"), "map": map_id}
+		"workshop": settings.get("workshop", "junk"), "mode": settings.get("mode", "survival"), "map": map_id,
+		"teams": settings.get("teams", []), "parcel_every": settings.get("parcel_every", 2), "parcel_goal": settings.get("parcel_goal", 3)}
 
 
 func _host_broadcast_lobby() -> void:
@@ -3738,7 +3793,8 @@ func _host_start() -> void:
 	var seed_value := randi()
 	net.broadcast({"t": "start", "seed": seed_value, "n": settings["n"], "cpu": cpu, "timed": settings["timed"],
 		"workshop": settings.get("workshop", "junk"), "mode": settings.get("mode", "survival"),
-		"speed": settings["speed"], "owners": owners, "map": map_id})
+		"speed": settings["speed"], "owners": owners, "map": map_id,
+		"teams": settings.get("teams", []), "parcel_every": settings.get("parcel_every", 2), "parcel_goal": settings.get("parcel_goal", 3)})
 	_start_match(seed_value)
 
 
@@ -3841,6 +3897,9 @@ func _guest_msg(from: String, d: Dictionary) -> void:
 			settings["speed"] = int(d["speed"])
 			settings["workshop"] = str(d.get("workshop", "junk"))
 			settings["mode"] = str(d.get("mode", "survival"))
+			settings["teams"] = d.get("teams", settings["teams"])
+			settings["parcel_every"] = int(d.get("parcel_every", 2))
+			settings["parcel_goal"] = int(d.get("parcel_goal", 3))
 			if str(d.get("map", map_id)) != map_id:
 				_apply_map(str(d.get("map", map_id)), false)
 			for i in 8:
@@ -3902,7 +3961,7 @@ func _show_guest_lobby() -> void:
 		col.add_child(_label("호스트가 시작하길 기다리고 있어요. 친구 %d인전." % int(guest_lobby["n"]), 16, SUB))
 		var ws_key: String = str(guest_lobby.get("workshop", "junk"))
 		var ws_name: String = "무작위 공방" if ws_key == "random" else PartsData.WORKSHOPS.get(ws_key, PartsData.WORKSHOPS["junk"])["name"]
-		col.add_child(_label("오늘의 공방: %s%s" % [ws_name, {"derby": "  ·  개조 더비", "crown": "  ·  왕관 쟁탈전"}.get(str(guest_lobby.get("mode", "")), "")], 15, HINT_GOLD, 1))
+		col.add_child(_label("오늘의 공방: %s%s" % [ws_name, {"derby": "  ·  개조 더비", "crown": "  ·  왕관 쟁탈전", "parcel": "  ·  택배 쟁탈전"}.get(str(guest_lobby.get("mode", "")), "")], 15, HINT_GOLD, 1))
 		col.add_child(_map_row(true))
 		var grid := GridContainer.new()
 		grid.columns = 2
@@ -3981,7 +4040,8 @@ func _workshop_card(key: String, on: bool) -> Control:
 	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	# 5인 이상이면 자리 목록이 두 줄이 되므로 공방 카드를 낮춰 「공방 열기」가 화면 안에 (UI-05)
 	var compact_ws: bool = int(settings.get("n", 4)) > 4 or settings.get("mode", "survival") != "survival"
-	b.custom_minimum_size = Vector2(0, 146 if compact_ws else 176)
+	var tiny_ws: bool = settings.get("mode", "survival") == "parcel"   # 팀 나누기 칸이 길어서 대표 부품 그림은 뺀다
+	b.custom_minimum_size = Vector2(0, 96 if tiny_ws else (146 if compact_ws else 176))
 	b.clip_contents = true
 	var nb := _sb(Color(FG, 0.05), ACCENT if on else Color(FG, 0.14), 12)
 	nb.set_border_width_all(3 if on else 2)
@@ -4063,7 +4123,8 @@ func _workshop_card(key: String, on: bool) -> Control:
 		nm.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		cell.add_child(nm)
 		reps.add_child(cell)
-	box.add_child(reps)
+	if not tiny_ws:
+		box.add_child(reps)
 	var set_id: String = info.get("set", "")
 	var gms: Array = []
 	for gk in World.Gm.BY_WORKSHOP.get(key, []):
@@ -4483,7 +4544,7 @@ func _draw_puck_at(p: Vector2, sid: int, parts: Dictionary, mside: int, col: Col
 					k3 += 1
 			draw_set_transform_matrix(base)
 	if not Art.is_set_form(parts):
-		if not Art.mono and symbol >= 0 and symbol < 8 and puck_vp != null:
+		if not Art.mono and symbol >= 0 and symbol < 8 and puck_vp != null and col == Match.COLORS[symbol]:
 			# 미리 구워 둔 퍽 몸통 + 정면 홈만 따로
 			var tile := float(PUCK_TILE)
 			var sz := tile * u / PUCK_U
@@ -4905,7 +4966,7 @@ func _draw_toast(vs: Vector2) -> void:
 		cw = (width - 24.0 - 8.0 * (cols - 1)) / cols
 	rows = int(ceil(float(n) / cols))
 	var ch := 56.0
-	var top := 96.0 + (32.0 if not m.world.gimmicks.is_empty() else 0.0)   # 기믹 칩 아래로
+	var top := 96.0 + (32.0 if not m.world.gimmicks.is_empty() else 0.0) + _parcel_line_h()   # 기믹 칩 아래로
 	var r := Rect2(vs.x * 0.5 - width * 0.5, (top if not portrait else 124.0) + dy, width, 46.0 + rows * (ch + 8.0) + 6.0)
 	_panel(r)
 	var rd: int = toast_picks[0].get("round", m.round_no)
@@ -5023,6 +5084,11 @@ func _draw_arena_cache() -> void:
 	if m != null:
 		var w := m.world
 		Arena.board(arena_drawer, view_center, w.size * view_scale, CELL * view_scale, w.shape != "circle", th, time)
+		if m.mode == "parcel":
+			_draw_parcel_halves(arena_drawer, view_center, w.size * view_scale, CELL * view_scale)
+			for t in 2:
+				var lp := view_center + Vector2((-0.48 if t == 0 else 0.48) * w.size * view_scale, -0.62 * w.size * view_scale)
+				arena_drawer.draw_string(font_display, lp - Vector2(80, 0), "%s 진영" % Match.TEAM_NAMES[t], HORIZONTAL_ALIGNMENT_CENTER, 160, 18, Color(Match.TEAM_COLORS[t].darkened(0.2), 0.7))
 
 
 ## HUD 퍽 아이콘: 구워 둔 퍽 그림을 작게 붙인다.
@@ -5175,7 +5241,7 @@ var ko_pills: Array = []
 
 
 func _draw_ko_pills(vs: Vector2) -> void:
-	var y := (104.0 + (30.0 if not m.world.gimmicks.is_empty() else 0.0)) if not portrait else 130.0
+	var y := (104.0 + (30.0 if not m.world.gimmicks.is_empty() else 0.0) + _parcel_line_h()) if not portrait else 130.0
 	var keep: Array = []
 	for pill in ko_pills:
 		var age: float = time - float(pill["t"])
@@ -5407,7 +5473,7 @@ func _draw_gimmick_chips(vs: Vector2) -> void:
 		var g: Dictionary = m.world.gimmicks[i]
 		var nm := World.Gm.name_of(g["kind"])
 		var w: float = widths[i]
-		var r := Rect2(x, GIMMICK_CHIP_Y, w, 28)
+		var r := Rect2(x, GIMMICK_CHIP_Y + _parcel_line_h(), w, 28)
 		gimmick_rects.append(r)
 		_round_rect(r, Color(SOLID, 0.95), 15, ACCENT)
 		draw_circle(r.position + Vector2(15, 14), 6, ACCENT)
@@ -5978,7 +6044,7 @@ const CROWN_GOLD := Color("F2C14E")
 func _mode_suffix() -> String:
 	if m == null:
 		return ""
-	return {"derby": "  ·  개조 더비", "crown": "  ·  왕관 쟁탈전"}.get(m.mode, "")
+	return {"derby": "  ·  개조 더비", "crown": "  ·  왕관 쟁탈전", "parcel": "  ·  택배 쟁탈전"}.get(m.mode, "")
 
 
 ## 왕관 아이콘: s = 반 폭
@@ -6199,3 +6265,401 @@ func _draw_mode_alerts(vs: Vector2) -> void:
 		draw_string(font_bold, Vector2(-w * 0.5, 30), al["sub"], HORIZONTAL_ALIGNMENT_CENTER, w, 15, Color(ink, a))
 		draw_set_transform_matrix(Transform2D.IDENTITY)
 	mode_alerts = keep
+
+
+# ── 택배 쟁탈전: 로비 (디자인 「모드 고르기와 팀 나누기」) ──
+const PARCEL_RED_BG := Color("F3B3A8")
+const PARCEL_RED_LINE := Color("EE9A8C")
+const PARCEL_BLUE_BG := Color("B5C8F0")
+const PARCEL_BLUE_DOT := Color("93AEE6")
+
+
+## 팀전은 4·6·8인만. 다른 인원이면 가까운 짝수로 맞추고 팀을 반반으로.
+func _fix_parcel_count() -> void:
+	var n: int = settings["n"]
+	if not [4, 6, 8].has(n):
+		settings["n"] = clampi(n + (n % 2), 4, 8)
+		settings["timed"] = settings["n"] >= 5
+	_balance_teams()
+
+
+func _balance_teams() -> void:
+	var n: int = settings["n"]
+	var cnt := [0, 0]
+	for i in n:
+		cnt[int(settings["teams"][i])] += 1
+	if cnt[0] != cnt[1]:
+		for i in 8:
+			settings["teams"][i] = i % 2
+
+
+func _team_label(i: int) -> String:
+	var t: int = int(settings["teams"][i])
+	var k := 1
+	for j in i:
+		if int(settings["teams"][j]) == t:
+			k += 1
+	return "%s %d" % [Match.TEAM_NAMES[t], k]
+
+
+## 팀 나누기: 두 칸. ⇄ 는 같은 줄의 상대 팀 사람과 자리를 바꾼다. 「무작위로 섞기」.
+func _team_panel(narrow: bool) -> Control:
+	_balance_teams()
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 8)
+	var hr := HBoxContainer.new()
+	var hl := _nw(_label("팀 나누기 · ⇄ 를 누르면 반대 팀과 맞바꿔요", 14, LABEL, 1))
+	hl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	hr.add_child(hl)
+	var shuffle := _button("무작위로 섞기", func():
+		var ids: Array = range(settings["n"])
+		ids.shuffle()
+		for k in ids.size():
+			settings["teams"][ids[k]] = k % 2
+		if online == "host":
+			_host_broadcast_lobby()
+		_show_setup())
+	shuffle.flat = true
+	shuffle.add_theme_color_override("font_color", HINT_GOLD)
+	shuffle.add_theme_font_size_override("font_size", 13)
+	hr.add_child(shuffle)
+	v.add_child(hr)
+	var cols: BoxContainer = HBoxContainer.new() if not narrow else VBoxContainer.new()
+	cols.add_theme_constant_override("separation", 10)
+	for t in 2:
+		var box := PanelContainer.new()
+		box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		var tc: Color = Match.TEAM_COLORS[t]
+		var sb := _sb(Color(tc, 0.12), tc, 10)
+		sb.set_border_width_all(2)
+		sb.content_margin_left = 10
+		sb.content_margin_right = 10
+		sb.content_margin_top = 8
+		sb.content_margin_bottom = 8
+		box.add_theme_stylebox_override("panel", sb)
+		var bv := VBoxContainer.new()
+		bv.add_theme_constant_override("separation", 6)
+		bv.add_child(_label("%s 팀" % Match.TEAM_NAMES[t], 14, tc.lightened(0.15), 1))
+		for i in settings["n"]:
+			if int(settings["teams"][i]) == t:
+				bv.add_child(_team_member_row(i))
+		box.add_child(bv)
+		cols.add_child(box)
+	v.add_child(cols)
+	# 정산 간격 · 목표 점수 (테스트용 설정)
+	var opt := HBoxContainer.new()
+	opt.add_theme_constant_override("separation", 10)
+	for spec in [["정산", "parcel_every", [[1, "1바퀴"], [2, "2바퀴"]]], ["목표", "parcel_goal", [[3, "3점"], [5, "5점"]]]]:
+		var ov := HBoxContainer.new()
+		ov.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		ov.add_theme_constant_override("separation", 8)
+		var ol := _nw(_label(spec[0], 13, LABEL, 1))
+		ol.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		ov.add_child(ol)
+		var key: String = spec[1]
+		var sg := _seg(spec[2], int(settings.get(key, 2)), func(k):
+			settings[key] = k
+			if online == "host":
+				_host_broadcast_lobby()
+			_show_setup())
+		sg.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		ov.add_child(sg)
+		opt.add_child(ov)
+	v.add_child(opt)
+	return v
+
+
+func _team_member_row(i: int) -> Control:
+	var friend: bool = settings["friend"][i] and online == "host"
+	var human: bool = not settings["cpu"][i] and not friend
+	var h := HBoxContainer.new()
+	h.add_theme_constant_override("separation", 8)
+	h.custom_minimum_size = Vector2(0, 28)
+	var ic := _icon_pic(Match.TEAM_COLORS[int(settings["teams"][i])], i, 22)
+	ic.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	h.add_child(ic)
+	var nm := _nw(_label(_team_label(i), 14, TEXT))
+	nm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	nm.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	nm.size_flags_vertical = Control.SIZE_FILL
+	h.add_child(nm)
+	var word := "사람" if human else "CPU"
+	if friend:
+		word = "친구" if friend_peer.has(i) else "친구 대기"
+	var pill := _button(word, func(): _toggle_cpu(i))
+	pill.custom_minimum_size = Vector2(52, 24)
+	pill.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	pill.add_theme_font_size_override("font_size", 12)
+	var pc := BRASS if human else (Color("7FB2FF") if friend else Color(FG, 0.1))
+	for st_name in ["normal", "hover", "pressed"]:
+		var psb := _sb(pc if st_name == "normal" else pc.lightened(0.1), Color(0, 0, 0, 0), 999)
+		psb.content_margin_top = 1
+		psb.content_margin_bottom = 1
+		pill.add_theme_stylebox_override(st_name, psb)
+	for c in ["font_color", "font_hover_color", "font_pressed_color"]:
+		pill.add_theme_color_override(c, INK if human or friend else LABEL)
+	h.add_child(pill)
+	var sw := _button("⇄", func(): _swap_team(i))
+	sw.tooltip_text = "반대 팀과 맞바꾸기"
+	sw.custom_minimum_size = Vector2(30, 24)
+	sw.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	sw.flat = true
+	h.add_child(sw)
+	return h
+
+
+## i 와 반대 팀의 같은 순번 사람을 맞바꾼다 (팀 인원은 그대로).
+func _swap_team(i: int) -> void:
+	snd.play("ui_toggle")
+	var t: int = int(settings["teams"][i])
+	var my_k := 0
+	for j in i:
+		if int(settings["teams"][j]) == t:
+			my_k += 1
+	var others: Array = []
+	for j in settings["n"]:
+		if int(settings["teams"][j]) != t:
+			others.append(j)
+	if others.is_empty():
+		return
+	var o: int = others[mini(my_k, others.size() - 1)]
+	settings["teams"][i] = 1 - t
+	settings["teams"][o] = t
+	if online == "host":
+		_host_broadcast_lobby()
+	_show_setup()
+
+
+## 진영 두 쪽: 빨강은 사선, 파랑은 점무늬. 가운데 폭 1칸 중립 띠는 점선 테두리. c·R 은 화면 좌표.
+func _draw_parcel_halves(ci: CanvasItem, c: Vector2, R: float, u: float) -> void:
+	var nh := 0.5 * u   # 중립 띠 반 폭 (1칸 = u)
+	for side in [-1, 1]:
+		var pts := PackedVector2Array()
+		for k in 33:
+			var a: float = -PI / 2.0 + PI * k / 32.0
+			var p := Vector2(cos(a) * float(side), sin(a)) * R
+			if absf(p.x) < nh:
+				p.x = nh * side
+			pts.append(c + p)
+		ci.draw_colored_polygon(pts, Color(PARCEL_RED_BG if side < 0 else PARCEL_BLUE_BG, 0.55))
+	# 빨강 사선
+	var step := 14.0
+	var t := -2.0 * R
+	while t < 2.0 * R:
+		# 선 x - y = t 를 왼쪽 반원(x <= -nh) 안으로 자른다
+		var seg := _clip_line_half(Vector2(t, 0), Vector2(1, 1).normalized(), R, nh, -1)
+		if not seg.is_empty():
+			ci.draw_line(c + seg[0], c + seg[1], Color(PARCEL_RED_LINE, 0.7), 4.0)
+		t += step
+	# 파랑 점무늬
+	var y := -R
+	while y < R:
+		var x := nh + 7.0
+		while x < R:
+			if Vector2(x, y).length() < R - 4.0:
+				ci.draw_circle(c + Vector2(x, y), 2.4, Color(PARCEL_BLUE_DOT, 0.75))
+			x += 14.0
+		y += 14.0
+	# 중립 띠: 크림색, 점선 테두리
+	var band := PackedVector2Array()
+	for k in 17:
+		var yy: float = -R + 2.0 * R * k / 16.0
+		band.append(c + Vector2(-nh, yy * sqrt(maxf(0.0, 1.0 - (nh * nh) / (R * R)))))
+	for k in 17:
+		var yy2: float = R - 2.0 * R * k / 16.0
+		band.append(c + Vector2(nh, yy2 * sqrt(maxf(0.0, 1.0 - (nh * nh) / (R * R)))))
+	ci.draw_colored_polygon(band, Color("F5EFE2", 0.92))
+	for sx in [-nh, nh]:
+		var hh := sqrt(maxf(0.0, R * R - sx * sx))
+		ci.draw_dashed_line(c + Vector2(sx, -hh), c + Vector2(sx, hh), Color("2A1E12", 0.7), 2.0, 8.0)
+
+
+## 직선 (p + d·s) 을 반지름 R 원 안, x 가 중립 띠 바깥 side 쪽인 부분으로 자른다. [a, b] 또는 [].
+func _clip_line_half(p: Vector2, d: Vector2, R: float, nh: float, side: int) -> Array:
+	var b := p.dot(d)
+	var cc := p.dot(p) - R * R
+	var disc := b * b - cc
+	if disc <= 0.0:
+		return []
+	var s0 := -b - sqrt(disc)
+	var s1 := -b + sqrt(disc)
+	# x 조건: side<0 이면 x <= -nh
+	var lim := -nh if side < 0 else nh
+	if absf(d.x) > 0.0001:
+		var sx := (lim - p.x) / d.x
+		if side < 0:
+			if d.x > 0.0:
+				s1 = minf(s1, sx)
+			else:
+				s0 = maxf(s0, sx)
+		else:
+			if d.x > 0.0:
+				s0 = maxf(s0, sx)
+			else:
+				s1 = minf(s1, sx)
+	if s1 <= s0:
+		return []
+	return [p + d * s0, p + d * s1]
+
+
+## 골판지 택배 상자. half = 반 폭(화면), glow_team: 지금 있는 진영의 팀 색 테두리 (-1 없음), wait: 점선 유령
+func _draw_parcel_box(ci: CanvasItem, c: Vector2, half: float, ang: float, glow_team: int, a: float, wait := false) -> void:
+	var xf := Transform2D(ang, c)
+	var corners := [Vector2(-1, -1), Vector2(1, -1), Vector2(1, 1), Vector2(-1, 1)]
+	var pts := PackedVector2Array()
+	for q in corners:
+		pts.append(xf * (q * half))
+	if glow_team >= 0:
+		var gp := PackedVector2Array()
+		for q in corners:
+			gp.append(xf * (q * (half + 7.0)))
+		gp.append(gp[0])
+		ci.draw_polyline(gp, Color(Match.TEAM_COLORS[glow_team], 0.9 * a), 4.0, true)
+	if wait:
+		var dp := pts.duplicate()
+		dp.append(dp[0])
+		for k in 4:
+			ci.draw_dashed_line(dp[k], dp[k + 1], Color(0.3, 0.3, 0.3, 0.8 * a), 2.0, 6.0)
+		ci.draw_colored_polygon(pts, Color(0.92, 0.9, 0.86, 0.5 * a))
+		return
+	var sh := PackedVector2Array()
+	for q in pts:
+		sh.append(q + Vector2(3, 5))
+	ci.draw_colored_polygon(sh, Color(0, 0, 0, 0.3 * a))
+	ci.draw_colored_polygon(pts, Color("C99A62", a))
+	# 테이프 십자
+	var tw := half * 0.32
+	ci.draw_line(xf * Vector2(-half, 0), xf * Vector2(half, 0), Color("E8D49A", a), tw)
+	ci.draw_line(xf * Vector2(0, -half), xf * Vector2(0, half), Color("E8D49A", a), tw)
+	var ol := pts.duplicate()
+	ol.append(ol[0])
+	ci.draw_polyline(ol, Color(0.1, 0.11, 0.13, a), maxf(1.5, half * 0.11), true)
+	ci.draw_circle(xf * Vector2.ZERO, maxf(1.5, half * 0.14), Color(0.1, 0.11, 0.13, a))
+
+
+# ── 택배 쟁탈전: 경기 화면 (디자인 「택배 쟁탈전 · 경기 화면」「택배·왕관 상태와 알림」) ──
+var parcel_fly := {}           # 택배가 중앙으로 날아가는 중 {from, to, t0}
+var parcel_dropped := false
+const PARCEL_FLY_T := 0.5
+
+
+## 위쪽 정산 예측 줄 높이 (기믹 칩 등을 그만큼 내린다)
+func _parcel_line_h() -> float:
+	return 36.0 if (m != null and m.mode == "parcel" and not portrait) else 0.0
+
+
+func _draw_parcel() -> void:
+	if m == null or m.world.parcel.is_empty() or m.phase == "place":
+		return
+	var pc: Dictionary = m.world.parcel
+	var half := World.Parcel.R * 0.86 * view_scale
+	if not parcel_fly.is_empty() and time - float(parcel_fly["t0"]) < PARCEL_FLY_T:
+		var k := clampf((time - float(parcel_fly["t0"])) / PARCEL_FLY_T, 0.0, 1.0)
+		var a := w2s(parcel_fly["from"])
+		var b := w2s(parcel_fly["to"])
+		var p := a.lerp(b, k) + Vector2(0, -sin(PI * k) * 60.0 * view_scale)
+		# 지나간 자리: 점선
+		for j in 6:
+			var kj := k * j / 6.0
+			draw_circle(a.lerp(b, kj) + Vector2(0, -sin(PI * kj) * 60.0 * view_scale), 2.0, Color(0.2, 0.2, 0.2, 0.5))
+		_draw_parcel_box(self, p, half * (1.0 + 0.15 * sin(PI * k)), k * TAU * 0.5, -1, 1.0)
+		return
+	match str(pc["state"]):
+		"field":
+			_draw_parcel_box(self, w2s(pc["pos"]), half, float(pc["ang"]), World.Parcel.side_team(m.world), 1.0)
+		"wait":
+			var c := w2s(Vector2.ZERO)
+			_draw_parcel_box(self, c, half, 0.0, -1, 1.0, true)
+			_txt(c + Vector2(0, half + 18), "대기", 12, SUB, font_semi, 60, HORIZONTAL_ALIGNMENT_CENTER)
+
+
+func _parcel_hint(pid: int) -> String:
+	var t: int = m.team_of(pid)
+	var side := World.Parcel.side_team(m.world)
+	var dir := "왼쪽" if t == 0 else "오른쪽"
+	if side == t:
+		return "택배가 우리 진영에 있어요 · 정산까지 지키세요"
+	return "택배 뒤로 돌아가 우리 진영(%s)으로 미세요" % dir
+
+
+## 위쪽 가운데: 정산까지 남은 차례(점) + 아래 「지금 정산하면 ○○ +1」
+func _draw_parcel_clock(vs: Vector2) -> void:
+	var total: int = m.order.size() * m.parcel_every
+	var left: int = m.turns_to_settle() if m.phase != "draft" else total
+	left = clampi(left, 0, total)
+	var dot := 16.0
+	var gap := 5.0
+	var w := 96.0 + total * (dot + gap) + 70.0
+	var r := Rect2(vs.x * 0.5 - w * 0.5, 24, w, 56)
+	_panel(r)
+	_txt(r.position + Vector2(18, 26), "정산까지", 14, TEXT, font_bold)
+	_txt(r.position + Vector2(18, 44), "%d바퀴마다" % m.parcel_every, 11, SUB)
+	var x0 := r.position.x + 96.0
+	for i in total:
+		var c := Vector2(x0 + i * (dot + gap) + dot * 0.5, r.position.y + 28)
+		var on := i < left
+		draw_circle(c, dot * 0.5, BRASS if on else Color(0, 0, 0, 0))
+		draw_arc(c, dot * 0.5, 0, TAU, 20, Color(TEXT, 0.8), 2.0, true)
+	_txt(Vector2(r.end.x - 16, r.position.y + 36), "%d차례" % left, 18, TEXT, font_bold, 70, HORIZONTAL_ALIGNMENT_RIGHT)
+	# 정산 예측 알약
+	var side := World.Parcel.side_team(m.world)
+	var txt := "지금 정산하면 %s +1" % (Match.TEAM_NAMES[side] + " 팀") if side >= 0 else ("택배 대기 중 · 무득점" if m.world.parcel["state"] != "field" else "지금 정산하면 무득점 (중립)")
+	var pw := font_bold.get_string_size(txt, HORIZONTAL_ALIGNMENT_LEFT, -1, 13).x + 30.0
+	var pr := Rect2(vs.x * 0.5 - pw * 0.5, 88, pw, 28)
+	var tc: Color = Match.TEAM_COLORS[side] if side >= 0 else Color("8A8F96")
+	_round_rect(pr, tc.lerp(Color.WHITE, 0.78), 14, tc)
+	draw_string(font_bold, pr.position + Vector2(0, 19), txt, HORIZONTAL_ALIGNMENT_CENTER, pw, 13, Color("2A1E12"))
+
+
+## 차례 목록 위: 두 팀의 점수 (목표 칸 + 숫자)
+func _draw_team_scores(r: Rect2) -> void:
+	_txt(r.position + Vector2(8, 16), "택배 쟁탈전", 13, SUB, font_semi)
+	_txt(Vector2(r.end.x - 8, r.position.y + 16), "%d점 선취" % m.parcel_goal, 12, SUB, font, 100, HORIZONTAL_ALIGNMENT_RIGHT)
+	for t in 2:
+		var y := r.position.y + 28 + t * 26
+		var tc: Color = Match.TEAM_COLORS[t]
+		draw_rect(Rect2(r.position.x + 8, y, 8, 22), tc)
+		_txt(Vector2(r.position.x + 24, y + 16), "%s 팀" % Match.TEAM_NAMES[t], 15, TEXT, font_bold)
+		var sc: int = m.team_scores[t]
+		_txt(Vector2(r.end.x - 8, y + 18), "%d" % sc, 20, TEXT, font_bold, 30, HORIZONTAL_ALIGNMENT_RIGHT)
+		var bw := 12.0
+		var x0 := r.end.x - 34.0 - m.parcel_goal * (bw + 3.0)
+		for k in m.parcel_goal:
+			var br := Rect2(x0 + k * (bw + 3.0), y + 5, bw, bw)
+			draw_rect(br, tc if k < sc else Color(FG, 0.12))
+			draw_rect(br, Color(0.1, 0.1, 0.12, 0.7), false, 1.2)
+
+
+func _on_parcel_event(e: Dictionary) -> void:
+	match str(e.get("kind", "")):
+		"drop":
+			parcel_dropped = true
+			fx.append({"k": "text", "pos": e["pos"] + Vector2(0, -36), "t": 0.0, "life": 1.0, "text": "택배 추락", "c": Color("C99A62"), "size": 18})
+		"home":
+			parcel_fly = {"from": e.get("from", Vector2.ZERO), "to": e["pos"], "t0": time}
+			if parcel_dropped:
+				_push_alert("택배 추락", "중앙으로 복귀", Color("ECE7DD"), Color("8A8F96"), Color("4A4E55"))
+			parcel_dropped = false
+
+
+## 정산 알림: 화면이 잠깐 멈추고 판정
+func _take_parcel_events() -> void:
+	if m == null or m.parcel_events.is_empty():
+		return
+	for ev in m.parcel_events:
+		var t: int = int(ev["team"])
+		var sc: Array = ev["scores"]
+		var at: Vector2 = ev.get("pos", Vector2.ZERO)
+		fx.append({"k": "text", "pos": at + Vector2(0, -40), "t": 0.0, "life": 1.2, "text": "정산!", "c": Color("2A1E12"), "size": 26})
+		if t >= 0:
+			var tc: Color = Match.TEAM_COLORS[t]
+			_push_alert("정산! %s 팀 +1" % Match.TEAM_NAMES[t], "%d : %d" % [sc[0], sc[1]], tc.lerp(Color.WHITE, 0.82), tc, tc.darkened(0.3))
+			fx.append({"k": "text", "pos": at + Vector2(0, -70), "t": 0.0, "life": 1.2, "text": "+1", "c": tc, "size": 28})
+			_log("정산: %s 팀 +1 (%d : %d)" % [Match.TEAM_NAMES[t], sc[0], sc[1]], tc)
+			snd.play("set_complete", -4.0)
+		else:
+			_push_alert("정산! 무득점", "%d : %d" % [sc[0], sc[1]], Color("ECE7DD"), Color("8A8F96"), Color("4A4E55"))
+			_log("정산: 무득점 (%d : %d)" % [sc[0], sc[1]], SUB)
+			snd.play("fx_parody_stamp", -6.0, 0.9)
+		turn_hold = maxf(turn_hold, 0.6 if _reduced() else 1.3)
+	m.parcel_events.clear()

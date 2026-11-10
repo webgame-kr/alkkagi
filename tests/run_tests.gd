@@ -36,7 +36,7 @@ func _initialize() -> void:
 		"test_mushroom_and_wind", "test_second_step", "test_rebound_and_string", "test_at_field_and_beam",
 		"test_hero_band_and_shoes", "test_all_parts_have_art",
 		"test_workshop_pools", "test_offer_fits_empty_slots", "test_min_power_moves_one_cell",
-		"test_knockout_causes", "test_derby_mode", "test_gimmicks_junk", "test_start_placement", "test_upgrades", "test_gimmicks_magic_toon", "test_lab_parts", "test_lab_gimmicks", "test_draft_pass", "test_playtest_fixes", "test_crown_rules", "test_crown_match",
+		"test_knockout_causes", "test_derby_mode", "test_gimmicks_junk", "test_start_placement", "test_upgrades", "test_gimmicks_magic_toon", "test_lab_parts", "test_lab_gimmicks", "test_draft_pass", "test_playtest_fixes", "test_crown_rules", "test_crown_match", "test_parcel_physics", "test_parcel_match",
 	]
 	for t in tests:
 		var before := failures
@@ -1758,3 +1758,74 @@ func test_crown_match() -> void:
 		m.skip_turn()
 	m.skip_turn()
 	check(m.phase == "over" and m.winners == [other], "first to 5 wins")
+
+
+func test_parcel_physics() -> void:
+	# 몸통으로 밀면 움직이고, 판 밖으로 나가면 샷이 끝난 뒤 중앙으로
+	var w := make_world("circle", 396.0)
+	w.parcel = World.Parcel.make()
+	var a := w.add_stone(0, Vector2(-150, 0), 0)
+	shoot(w, a.id, Vector2.RIGHT, 0.5)
+	check((w.parcel["pos"] as Vector2).x > 40.0, "body hit pushes the parcel: %s" % str(w.parcel["pos"]))
+	# 총알은 택배를 그냥 지나간다
+	var w2 := make_world("circle", 396.0)
+	w2.parcel = World.Parcel.make()
+	var g := w2.add_stone(0, Vector2(-250, 0), 0)
+	g.parts["weapon"] = "pea"
+	w2.launch(g.id, Vector2.UP, 0.05)
+	w2.spawn_bullet(0, Vector2(-100, 0), Vector2.RIGHT, 1.0, "pea", g.id)
+	w2.run_until_settled(5.0)
+	check(w2.parcel["pos"] == Vector2.ZERO, "bullets do not move the parcel")
+	w2.end_shot()
+	# 추락 → 중앙 복귀
+	var w3 := make_world("circle", 396.0)
+	w3.parcel = World.Parcel.make()
+	w3.parcel["pos"] = Vector2(340, 0)
+	var b := w3.add_stone(0, Vector2(280, 0), 0)
+	shoot(w3, b.id, Vector2.RIGHT, 0.8)
+	check(w3.parcel["state"] == "field" and (w3.parcel["pos"] as Vector2).length() < 1.0, "fallen parcel returns to the center: %s" % str(w3.parcel))
+	check(World.Parcel.side_team(w3) == -1, "center is neutral")
+
+
+func test_parcel_match() -> void:
+	var m := Match.new()
+	m.setup(4, [], 9, false, {"workshop": "junk", "mode": "parcel", "teams": [0, 1, 0, 1], "parcel_every": 2, "parcel_goal": 3})
+	check(m.world.stones.size() == 8, "parcel: 2 stones each")
+	for st in m.world.stones:
+		var t := m.team_of(st.owner)
+		check((st.pos.x < 0.0) == (t == 0), "stones start in their own half")
+	check(m.players[0]["name"] == "빨강 1" and m.players[2]["name"] == "빨강 2" and m.players[1]["color"] == Match.TEAM_COLORS[1], "team names and colors")
+	while m.phase == "draft":
+		m.equip(m.current_drafter(), "", -1)
+	# 팀이 번갈아 쏜다
+	var o: Array = m.order
+	check(m.team_of(o[0]) != m.team_of(o[1]) and m.team_of(o[1]) != m.team_of(o[2]), "teams alternate: %s" % str(o))
+	var first_team := m.team_of(o[0])
+	# 1바퀴 끝: 아직 정산 아님. 택배를 빨강 진영에 두고 2바퀴 끝 → 빨강 +1
+	m.world.parcel["pos"] = Vector2(-200, 0)
+	for i in 4:
+		m.skip_turn()
+	while m.phase == "draft":
+		m.equip(m.current_drafter(), "", -1)
+	check(m.team_scores == [0, 0], "no settle after round 1")
+	check(m.turns_to_settle() == 4, "4 turns to the settle: %d" % m.turns_to_settle())
+	for i in 4:
+		m.skip_turn()
+	check(m.team_scores == [1, 0] and m.parcel_events.size() == 1, "red side at the settle: red +1 %s" % str(m.team_scores))
+	check(m.world.parcel["pos"] == Vector2.ZERO, "parcel back to the center after the settle")
+	while m.phase == "draft":
+		m.equip(m.current_drafter(), "", -1)
+	check(m.team_of(m.order[0]) != first_team, "next segment: the other team goes first")
+	# 중립이면 무득점, 3점이면 승리
+	for i in 8:
+		m.skip_turn()
+		while m.phase == "draft":
+			m.equip(m.current_drafter(), "", -1)
+	check(m.team_scores == [1, 0] and m.parcel_stats["zero"] == 1, "neutral settle scores nothing")
+	m.team_scores = [2, 0]
+	m.world.parcel["pos"] = Vector2(-200, 0)
+	for i in 8:
+		if m.phase == "over":
+			break
+		m.skip_turn()
+	check(m.phase == "over" and m.winners.size() == 2 and m.team_of(m.winners[0]) == 0, "red team wins at 3")

@@ -93,7 +93,7 @@ func _wire() -> void:
 	for ws in ["magic", "toon", "lab"]:
 		if OS.get_cmdline_user_args().has(ws):
 			host.settings["workshop"] = ws
-	for md in ["derby", "crown"]:
+	for md in ["derby", "crown", "parcel"]:
 		if OS.get_cmdline_user_args().has(md):
 			host.settings["mode"] = md
 	host.settings["cpu"] = [false, false, true, true, true, true, true, true]

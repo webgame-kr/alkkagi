@@ -4,6 +4,7 @@ extends RefCounted
 
 const PartsData = preload("res://scripts/sim/parts_data.gd")
 const Crown = preload("res://scripts/sim/crown.gd")
+const Parcel = preload("res://scripts/sim/parcel.gd")
 
 const POWERS := [0.45, 0.7, 0.95]
 const ANGLES_DEG := [-5.0, 0.0, 5.0]
@@ -31,9 +32,23 @@ func begin(m, player_id: int, seed_value: int) -> void:
 	var mine: Array = w.alive_stones_of(pid)
 	for s in mine:
 		var targets: Array = []
+		var my_team: int = m.team_of(pid) if m.mode == "parcel" else -1
 		for t in w.stones:
-			if t.alive and t.owner != pid:
+			if t.alive and t.owner != pid and (my_team < 0 or m.team_of(t.owner) != my_team):
 				targets.append(t)
+		# 택배 쟁탈전: 택배 뒤로 돌아가 우리 진영 쪽으로 미는 샷을 먼저 본다
+		if my_team >= 0 and w.parcel["state"] == "field":
+			var pp: Vector2 = w.parcel["pos"]
+			var home_dir := Vector2(-1.0 if my_team == 0 else 1.0, 0.0)
+			var push_dir: Vector2 = (home_dir - pp.normalized() * 0.15 * pp.length() / w.size).normalized()
+			var contact: Vector2 = pp - push_dir * (w.radius_of(s) + Parcel.R) * 0.95
+			for aim_pt in [contact, pp]:
+				var adir: Vector2 = (aim_pt - s.pos)
+				if adir.length() < 1.0:
+					continue
+				for ang1 in [-3.0, 0.0, 3.0]:
+					for pw1 in [0.45, 0.65, 0.85]:
+						candidates.append({"stone": s.id, "dir": adir.normalized().rotated(deg_to_rad(ang1)), "power": pw1, "h": -200.0 + adir.length() * 0.05 + absf(ang1)})
 		targets.sort_custom(func(a, b): return a.pos.distance_to(s.pos) < b.pos.distance_to(s.pos))
 		targets = targets.slice(0, MAX_TARGETS)
 		# 왕관 쟁탈전: 보유 알은 늘 후보에, 바닥 왕관은 직접 주우러 가는 샷을 먼저 본다
@@ -96,17 +111,20 @@ func evaluate(c: Dictionary) -> float:
 	w.run_until_settled(5.0)
 	w.end_shot()
 	var score := 0.0
-	var crown_mode: bool = not m.world.crown.is_empty()
-	if crown_mode:
+	var crown_mode: bool = not m.world.crown.is_empty() or m.mode == "parcel"
+	if not m.world.crown.is_empty():
 		score += _crown_value(m, w)
+	var my_team: int = m.team_of(pid) if m.mode == "parcel" else -1
+	if my_team >= 0:
+		score += _parcel_value(m, w, my_team)
 	var k_lose := 0.35 if crown_mode else 1.0   # 왕관 쟁탈전은 떨어져도 돌아오므로 덜 무겁게
 	for p in m.players:
 		if p.out:
 			continue
 		var after: int = w.alive_stones_of(p.id).size()
 		var lost: int = before[p.id] - after
-		if p.id == pid:
-			score -= lost * 140.0 * k_lose
+		if p.id == pid or (my_team >= 0 and m.team_of(p.id) == my_team):
+			score -= lost * 140.0 * k_lose * (1.0 if p.id == pid else 0.7)
 			if after == 0:
 				score -= 1000.0
 		else:
@@ -119,6 +137,25 @@ func evaluate(c: Dictionary) -> float:
 	for s in w.alive_stones_of(pid):
 		score += clampf(w.edge_distance(s.pos), 0.0, 120.0) * 0.08
 	return score + rng.randf() * 3.0
+
+
+## 택배 쟁탈전 판단: 택배가 우리 진영 깊이 있을수록 좋다. 정산이 가까울수록 크게 친다.
+## 상대 진영에 있던 택배를 판 밖으로 보내는 것도 정산 직전엔 쓸 만하다.
+func _parcel_value(m, w, team: int) -> float:
+	var sign := -1.0 if team == 0 else 1.0
+	var urgency := 1.0 + 2.0 / maxf(1.0, float(m.turns_to_settle()))
+	var before_x: float = (m.world.parcel["pos"] as Vector2).x * sign
+	if w.parcel["state"] != "field":
+		return (40.0 if before_x < -Parcel.NEUTRAL_HALF else -80.0) * urgency
+	var x: float = (w.parcel["pos"] as Vector2).x * sign
+	var v := clampf(x / Parcel.CELL, -6.0, 6.0) * 30.0
+	if x > Parcel.NEUTRAL_HALF:
+		v += 60.0
+	elif x < -Parcel.NEUTRAL_HALF:
+		v -= 60.0
+	# 가장자리에 붙은 택배는 떨어지기 쉽다
+	v -= clampf(1.5 * Parcel.CELL - w.edge_distance(w.parcel["pos"]), 0.0, 66.0) * 0.8
+	return v * urgency
 
 
 ## 왕관 쟁탈전 판단: 바닥 왕관은 줍고, 상대 왕관은 몸통으로 빼앗거나 (승리 직전이면) 떨어뜨리고, 내 왕관은 지킨다.
