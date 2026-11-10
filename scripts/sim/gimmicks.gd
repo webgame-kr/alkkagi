@@ -11,6 +11,7 @@ const BY_WORKSHOP := {
 	"junk": ["oil", "bolt", "belt"],
 	"magic": ["gwell", "twins", "meteor"],
 	"toon": ["cutline", "blocks", "nextch"],
+	"lab": ["zerog", "sizering", "turntable"],
 }
 
 const INFO := {
@@ -23,6 +24,9 @@ const INFO := {
 	"cutline": {"name": "컷 경계선", "desc": "집중선 쪽으로 넘으면 1.5배 빨라지고, 반대로 넘으면 0.7배로 느려져요"},
 	"blocks": {"name": "효과음 블록", "desc": "움직이지 않는 글자 블록. 두 번 맞으면 부서져요"},
 	"nextch": {"name": "다음 화 테두리", "desc": "이 구간으로 넘어간 알은 반대편에서 다시 들어와요 (알마다 한 번)"},
+	"zerog": {"name": "무중력 구역", "desc": "안에서는 마찰이 없어 속도가 줄지 않아요"},
+	"sizering": {"name": "크기 변환 링", "desc": "파란 링을 지나면 작아지고, 빨간 링을 지나면 커져요 (바퀴가 끝날 때까지)"},
+	"turntable": {"name": "회전 원판", "desc": "샷이 끝날 때마다 가운데 원판이 45도 돌고, 위의 알도 함께 돌아요"},
 }
 
 const OIL_R := 1.5 * CELL
@@ -110,6 +114,14 @@ static func _place(kind: String, w, rng: RandomNumberGenerator) -> Dictionary:
 			return {"kind": "blocks", "items": items5}
 		"nextch":
 			return {"kind": "nextch", "items": [{"ang": base, "half": NEXT_HALF}], "used": []}
+		"zerog":
+			var d6 := rng.randf_range(ring.x, ring.y)
+			return {"kind": "zerog", "items": [{"pos": Vector2.from_angle(base) * d6, "r": 2.0 * CELL}]}
+		"sizering":
+			var d7 := rng.randf_range(ring.x + 0.3 * CELL, ring.y + 0.3 * CELL)
+			return {"kind": "sizering", "items": [{"pos": Vector2.from_angle(base) * d7, "r": 0.8 * CELL, "big": false}, {"pos": Vector2.from_angle(base + PI) * d7, "r": 0.8 * CELL, "big": true}]}
+		"turntable":
+			return {"kind": "turntable", "items": [{"pos": Vector2.ZERO, "r": 3.0 * CELL, "ang": 0.0}]}
 	return {"kind": kind, "items": []}
 
 
@@ -123,6 +135,10 @@ static func has(w, kind: String) -> bool:
 ## 마찰 배율 (기름 웅덩이)
 static func friction_scale(w, p: Vector2) -> float:
 	for g in w.gimmicks:
+		if g["kind"] == "zerog":
+			for it in g["items"]:
+				if p.distance_to(it["pos"]) < it["r"]:
+					return 0.0
 		if g["kind"] == "oil":
 			for it in g["items"]:
 				if p.distance_to(it["pos"]) < it["r"]:
@@ -141,6 +157,15 @@ static func before_move(w, dt: float) -> void:
 		return
 	for g in w.gimmicks:
 		match g["kind"]:
+			"sizering":
+				for it in g["items"]:
+					for s in w.stones:
+						if s.alive and s.vel != Vector2.ZERO and s.pos.distance_to(it["pos"]) < float(it["r"]) * 0.6:
+							var key := "ring_big" if it["big"] else "ring_small"
+							if not s.mods.has(key):
+								s.mods.erase("ring_small" if it["big"] else "ring_big")
+								s.mods[key] = {"size": 1.3 if it["big"] else 0.7, "mass": 1.3 if it["big"] else 0.7, "until": w.round_no}
+								w.emit({"t": "part", "part": "gm_sizering", "pos": s.pos, "owner": s.owner, "text": "커졌다!" if it["big"] else "작아졌다!"})
 			"gwell":
 				for it in g["items"]:
 					for s in w.stones:
@@ -213,10 +238,10 @@ static func collide(w) -> void:
 			continue
 		for it in g["items"]:
 			var bp: Vector2 = it["pos"]
-			var rr: float = w.STONE_R + float(it["r"])
 			for s in w.stones:
 				if not s.alive:
 					continue
+				var rr: float = w.radius_of(s) + float(it["r"])
 				var d: Vector2 = s.pos - bp
 				var dist := d.length()
 				if dist >= rr or dist < 0.0001:
@@ -261,10 +286,10 @@ static func blocks(w, p: Vector2, margin := 0.5 * CELL) -> bool:
 static func _collide_blocks(w, g: Dictionary) -> void:
 	for it in g["items"].duplicate():
 		var bp: Vector2 = it["pos"]
-		var rr: float = w.STONE_R + float(it["r"])
 		for s in w.stones:
 			if not s.alive:
 				continue
+			var rr: float = w.radius_of(s) + float(it["r"])
 			var d: Vector2 = s.pos - bp
 			var dist := d.length()
 			if dist >= rr or dist < 0.0001:
@@ -330,3 +355,20 @@ static func meteor_fall(w, round_no: int) -> Array:
 			g["hits"] = [{"pos": c, "round": round_no}]
 			it["pos"] = _meteor_spot(w, int(g["seed"]) + round_no * 97)
 	return fallen
+
+
+
+## 샷이 끝날 때: 회전 원판이 45도 돌고 위의 알도 함께 돈다.
+static func after_shot(w) -> void:
+	for g in w.gimmicks:
+		if g["kind"] != "turntable":
+			continue
+		for it in g["items"]:
+			it["ang"] = float(it["ang"]) + PI / 4.0
+			for s in w.stones:
+				if s.alive and s.pos.distance_to(it["pos"]) < float(it["r"]):
+					s.pos = it["pos"] + (s.pos - it["pos"]).rotated(PI / 4.0)
+					s.facing += PI / 4.0
+			for d in w.devices:
+				if d.pos.distance_to(it["pos"]) < float(it["r"]):
+					d.pos = it["pos"] + (d.pos - it["pos"]).rotated(PI / 4.0)

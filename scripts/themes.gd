@@ -4,7 +4,7 @@ extends RefCounted
 
 ## "auto": 공방 따라가기 — 그날 공방의 경기장 (디자인 「오늘의 공방 프로토타입」).
 const ORDER := ["auto", "play", "workshop", "neon"]
-const WS_THEME := {"junk": "ws_junk", "magic": "ws_magic", "toon": "ws_toon"}
+const WS_THEME := {"junk": "ws_junk", "magic": "ws_magic", "toon": "ws_toon", "lab": "ws_lab"}
 
 const THEMES := {
 	"play": {
@@ -68,6 +68,17 @@ const THEMES := {
 		"panel": Color(24 / 255.0, 20 / 255.0, 58 / 255.0, 0.82), "text": Color("F1EEFF"), "sub": Color("B7B0DE"),
 		"line": Color(183 / 255.0, 200 / 255.0, 1.0, 0.25), "accent_bg": Color(183 / 255.0, 200 / 255.0, 1.0, 0.14),
 		"gauge": Color("B7C8FF"), "gold": Color("B7C8FF"), "dark": true, "accent": Color("B7C8FF"), "accent_ink": Color("17153A"),
+	},
+	"ws_lab": {
+		"name": "엉뚱한 발명 연구소", "deco": "lab", "panel_style": "lab",
+		"bg": Color("F2F4F2"), "grain": Color(0, 0, 0, 0), "bg_center": Color("F2F4F2"), "bg2": Color("E3E8E6"),
+		"rail_hi": Color("3A3F45"), "rail": Color("23272C"), "rail_lo": Color("101316"), "rail_glow": Color(0, 0, 0, 0),
+		"felt_c": Color("F7FAFA"), "felt_e": Color("D9E2E4"), "grid": false,
+		"danger": Color("9BE01F"), "danger_line": Color(80 / 255.0, 120 / 255.0, 20 / 255.0, 0.85),
+		"outline": Color("1A1D21"), "shadow": Color(0, 0, 0, 0.22), "spark": Color("B6F23C"), "light": 0.10,
+		"panel": Color(1.0, 1.0, 1.0, 0.94), "text": Color("16191C"), "sub": Color("5A6168"),
+		"line": Color(60 / 255.0, 90 / 255.0, 20 / 255.0, 0.30), "accent_bg": Color(182 / 255.0, 242 / 255.0, 60 / 255.0, 0.22),
+		"gauge": Color("8CCB16"), "gold": Color("5E8F0C"), "dark": false, "accent": Color("8CCB16"), "accent_ink": Color("16191C"),
 	},
 	"ws_toon": {
 		"name": "만화 소품 창고", "deco": "manga", "panel_style": "manga",

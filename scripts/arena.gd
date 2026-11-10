@@ -48,6 +48,24 @@ static func background(ci: CanvasItem, rect: Rect2, th: Dictionary, t := 0.0) ->
 				var sy := fposmod(sin(i * 78.233) * 12345.678, 1.0)
 				var sr := 0.3 + fposmod(sin(i * 3.1) * 999.0, 1.0) * 1.4
 				ci.draw_circle(rect.position + Vector2(sx, sy) * rect.size, sr, Color(220 / 255.0, 225 / 255.0, 1.0, 0.35))
+		"lab":
+			# 흰 실험실 타일과 비커·배선 장식
+			var ts := 48.0
+			var gx := rect.position.x
+			while gx < rect.end.x:
+				ci.draw_line(Vector2(gx, rect.position.y), Vector2(gx, rect.end.y), Color(0, 0, 0, 0.06), 1.0)
+				gx += ts
+			var gy := rect.position.y
+			while gy < rect.end.y:
+				ci.draw_line(Vector2(rect.position.x, gy), Vector2(rect.end.x, gy), Color(0, 0, 0, 0.06), 1.0)
+				gy += ts
+			for i in 6:
+				var bx := rect.position.x + fposmod(i * 263.0, maxf(1.0, rect.size.x))
+				var by := rect.position.y + fposmod(i * 157.0 + 40.0, maxf(1.0, rect.size.y))
+				var flask := PackedVector2Array([Vector2(bx - 6, by - 26), Vector2(bx + 6, by - 26), Vector2(bx + 6, by - 12), Vector2(bx + 20, by + 14), Vector2(bx - 20, by + 14), Vector2(bx - 6, by - 12)])
+				ci.draw_colored_polygon(flask, Color(182 / 255.0, 242 / 255.0, 60 / 255.0, 0.10))
+				flask.append(flask[0])
+				ci.draw_polyline(flask, Color(0, 0, 0, 0.10), 1.5, true)
 		"manga":
 			# 가장자리로 갈수록 커지는 망점
 			var ctr := rect.get_center()
@@ -83,6 +101,13 @@ static func board(ci: CanvasItem, c: Vector2, R: float, u: float, square: bool, 
 		_shape_line(ci, c, R + 0.3 * u, square, Color.WHITE, 0.08 * u)
 	else:
 		_rail(ci, c, rail_r, square, th)
+	if deco == "lab":
+		# 형광 연두·검정 경고 띠
+		if square:
+			_dashed_rect2(ci, c, R + 0.32 * u, 0.26 * u, Color("B6F23C"), Color("1A1A1A"), 48)
+		else:
+			for i in 48:
+				ci.draw_arc(c, R + 0.32 * u, TAU * i / 48.0, TAU * (i + 1) / 48.0, 4, Color("1A1A1A") if i % 2 == 1 else Color("B6F23C"), 0.26 * u, false)
 	if deco == "junk":
 		# 노랑·검정 경고 띠와 볼트 8개
 		if square:
@@ -147,6 +172,14 @@ static func board(ci: CanvasItem, c: Vector2, R: float, u: float, square: bool, 
 			var h := R if square else sqrt(maxf(0.0, R * R - k * k))
 			ci.draw_line(c + Vector2(-h, k), c + Vector2(h, k), Color(0, 0, 0, 0.12), maxf(1.0, 0.06 * u))
 			k += 0.6 * u
+	elif deco == "lab":
+		var tk := u
+		var k2 := -R
+		while k2 <= R:
+			var h2 := R if square else sqrt(maxf(0.0, R * R - k2 * k2))
+			ci.draw_line(c + Vector2(-h2, k2), c + Vector2(h2, k2), Color(0, 0, 0, 0.07), 1.0)
+			ci.draw_line(c + Vector2(k2, -h2), c + Vector2(k2, h2), Color(0, 0, 0, 0.07), 1.0)
+			k2 += tk
 	elif deco == "magic":
 		ci.draw_arc(c, R * 0.55, 0, TAU, 64, Color(201 / 255.0, 213 / 255.0, 1.0, 0.16), 1.5, true)
 		var star := PackedVector2Array()

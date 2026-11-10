@@ -875,6 +875,14 @@ func _consume_events() -> void:
 				fx.append({"k": "ring", "pos": e["pos"], "t": 0.0, "life": 0.5, "r": 28.0, "c": Color("B7C8FF")})
 			"cone":
 				fx.append({"k": "fan", "pos": e["pos"], "dir": e["dir"], "t": 0.0, "life": 0.45, "r": e["radius"], "c": Color("FF8A4A")})
+			"merge":
+				snd.play("puck_hit_heavy", 0.0, 0.7)
+				fx.append({"k": "ring", "pos": e["pos"], "t": 0.0, "life": 0.6, "r": 60.0, "c": Color("B6F23C")})
+				_log("%s 알 둘이 합체했어요" % m.players[int(e["owner"])].name, m.players[int(e["owner"])].color)
+			"split":
+				snd.play("puck_hit_light", 0.0, 1.4)
+				fx.append({"k": "ring", "pos": e["pos"], "t": 0.0, "life": 0.5, "r": 50.0, "c": Color("B6F23C")})
+				_log("%s 알이 둘로 갈라졌어요" % m.players[int(e["owner"])].name, m.players[int(e["owner"])].color)
 			"beam":
 				snd.play("fx_magic_cast", -2.0, 1.3)
 				fx.append({"k": "beam", "a": e["a"], "b": e["b"], "t": 0.0, "life": 0.5, "c": Color("7FD8FF")})
@@ -940,6 +948,11 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	if event.pressed:
 		var sid2 := _stone_at(wp2, m.current_player())
+		if sid2 < 0:
+			var other := _stone_at(wp2, -1)
+			if other >= 0 and m.remote_holder(m.current_player(), m.world.get_stone(other)) != null:
+				sid2 = other
+				_banner("리모컨!", ACCENT, "%s 알을 대신 쏴요" % m.players[m.world.get_stone(other).owner].name)
 		drag_cloud = false
 		if sid2 < 0:
 			sid2 = _cloud_at(wp2, m.current_player())
@@ -1341,6 +1354,8 @@ func _draw_stone(s) -> void:
 		Art.draw(self, s.parts, s.magnet_side, col, 0.3, s.owner)
 		draw_set_transform_matrix(Transform2D.IDENTITY)
 	var u := World.STONE_R * view_scale
+	if s.mods.has("repel"):
+		draw_arc(p, (World.STONE_R * m.world.size_of(s) + 5) * view_scale, 0, TAU, 32, Color("B6F23C", 0.8 + 0.2 * sin(time * 6.0)), 3.0, true)
 	# 지금 차례인 퍽: 숨 쉬는 주인 색 고리 (1.35u ± 0.12u, 초당 4라디안)
 	if m.phase == "aim" and s.owner == m.current_player() and drag_stone < 0:
 		var ph := sin(time * 4.0)
@@ -1466,7 +1481,19 @@ func _draw_manga_front(p: Vector2, f: Dictionary) -> void:
 
 
 func _draw_devices() -> void:
+	# 끈끈이로 붙은 알: 연두색 실
+	for g in m.world.glue:
+		var ga = m.world.get_stone(g["a"])
+		var gb = m.world.get_stone(g["b"])
+		if ga != null and gb != null and ga.alive and gb.alive:
+			draw_line(w2s(ga.pos), w2s(gb.pos), Color("B6F23C", 0.85), 5.0, true)
 	for d in m.world.devices:
+		if d.kind == "decoy":
+			# 미끼 풍선: 주인 알과 똑같이 생긴 풍선 (실이 달림)
+			var dp := w2s(d.pos)
+			draw_line(dp + Vector2(0, World.STONE_R * view_scale * d.scale), dp + Vector2(4, World.STONE_R * view_scale * d.scale + 14), Color(0, 0, 0, 0.5), 1.5, true)
+			_hud_icon(dp, World.STONE_R * 2.0 * view_scale * d.scale / 0.86, m.players[d.owner].color, d.owner, 0.92)
+			continue
 		var col: Color = m.players[d.owner].color
 		var p := w2s(d.pos)
 		var k := view_scale
@@ -3744,10 +3771,14 @@ func _workshop_row() -> Control:
 	head.add_child(link)
 	v.add_child(head)
 	var narrow_w := get_viewport_rect().size.x < 600.0
-	var row: BoxContainer = VBoxContainer.new() if narrow_w else HBoxContainer.new()
-	row.add_theme_constant_override("separation", 10)
-	for key in ["junk", "magic", "toon"]:
-		row.add_child(_workshop_card(key, cur == key))
+	var row := GridContainer.new()
+	row.columns = 1 if narrow_w else 2
+	row.add_theme_constant_override("h_separation", 10)
+	row.add_theme_constant_override("v_separation", 10)
+	for key in ["junk", "magic", "toon", "lab"]:
+		var card := _workshop_card(key, cur == key)
+		card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(card)
 	v.add_child(row)
 	if cur == "random":
 		v.add_child(_label("공방을 열 때 세 공방 중 하나가 정해집니다.", 13, SUB))
@@ -3772,7 +3803,7 @@ func _workshop_card(key: String, on: bool) -> Control:
 	var info: Dictionary = PartsData.WORKSHOPS[key]
 	var b := _button("", func(): _pick_workshop(key))
 	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	b.custom_minimum_size = Vector2(0, 214)
+	b.custom_minimum_size = Vector2(0, 176)
 	b.clip_contents = true
 	var nb := _sb(Color(FG, 0.05), ACCENT if on else Color(FG, 0.14), 12)
 	nb.set_border_width_all(3 if on else 2)
@@ -3811,6 +3842,11 @@ func _workshop_card(key: String, on: bool) -> Control:
 			ssb.border_color = Color("6A50B8")
 			ssb.set_border_width_all(2)
 			scol = Color("F1EEFF")
+		"lab":
+			ssb.bg_color = Color("FFFFFF")
+			ssb.border_color = Color("B6F23C")
+			ssb.set_border_width_all(4)
+			scol = Color("16191C")
 		"toon":
 			ssb.bg_color = Color("FFFDF6")
 			ssb.border_color = Color("111111")
@@ -3827,7 +3863,7 @@ func _workshop_card(key: String, on: bool) -> Control:
 	sign.add_child(sl)
 	box.add_child(sign)
 	var tag := _label(info.get("tag", ""), 12, SUB)
-	tag.custom_minimum_size = Vector2(0, 34)
+	tag.custom_minimum_size = Vector2(0, 18)
 	tag.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	box.add_child(tag)
 	# 대표 부품 셋
@@ -3841,17 +3877,21 @@ func _workshop_card(key: String, on: bool) -> Control:
 		cell.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		var demo := {"weapon": "", "aux": "", "prop": ""}
 		demo[PartsData.slot_of(pid)] = pid
-		var pic := _puck_pic(demo, Art.NEUTRAL, -1, Vector2(0, 52), 0.5)
+		var pic := _puck_pic(demo, Art.NEUTRAL, -1, Vector2(0, 40), 0.4)
 		cell.add_child(pic)
-		var nm := _label(PartsData.part_name(pid), 10, SUB)
+		var nm := _nw(_label(PartsData.part_name(pid), 10, SUB))
 		nm.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		nm.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		cell.add_child(nm)
 		reps.add_child(cell)
 	box.add_child(reps)
 	var set_id: String = info.get("set", "")
-	var line := _nw(_label(("세트: " + PartsData.SETS[set_id]["name"]) if set_id != "" else "단품끼리 조합", 12, ACCENT if not th["dark"] or true else BRASS, 2))
+	var gms: Array = []
+	for gk in World.Gm.BY_WORKSHOP.get(key, []):
+		gms.append(World.Gm.name_of(gk))
+	var line := _nw(_label((("세트 · " + PartsData.SETS[set_id]["name"]) if set_id != "" else "규칙 파괴 부품") + ("   기믹 · " + "·".join(gms) if not gms.is_empty() else ""), 11, ACCENT, 2))
 	line.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	line.clip_text = true
 	box.add_child(line)
 	b.add_child(box)
 	return b
@@ -3888,6 +3928,9 @@ func _update_shutter(delta: float) -> void:
 
 func _draw_shutter() -> void:
 	var vs := shutter.size
+	if m != null and m.workshop == "lab":
+		_draw_lab_doors(vs)
+		return
 	var k := 0.0
 	if shutter_t > 0.95:
 		var e := clampf((shutter_t - 0.95) / 0.6, 0.0, 1.0)
@@ -4031,6 +4074,8 @@ func _part_word(part: String) -> String:
 		return World.Gm.name_of(part.substr(3))
 	if part == "body":
 		return "몸통 충돌"
+	if part == "remote":
+		return "리모컨"
 	if part == "mecha":
 		return "물고 던지기"
 	if part == "moon_set":
@@ -4049,6 +4094,8 @@ func _cause_text(c: Dictionary, victim_owner: int) -> String:
 		att = "스스로"
 	if str(c["part"]).begins_with("gm_"):
 		return "%s · %s의 샷" % [_part_word(str(c["part"])), m.players[int(c["owner"])].name]
+	if str(c["part"]) == "remote" and int(c.get("of", -1)) >= 0:
+		return "%s · 리모컨(%s 알)" % [m.players[int(c["owner"])].name, m.players[int(c["of"])].name]
 	var t := "%s · %s" % [att, _part_word(str(c["part"]))]
 	if c.get("chain", false) and str(c["part"]) != "body":
 		t += " → 연쇄 충돌"
@@ -4181,6 +4228,12 @@ var win_t := -1.0
 ## 눌림·튐·떠오름은 여기서 한 번에 얹는다.
 func _draw_puck_at(p: Vector2, sid: int, parts: Dictionary, mside: int, col: Color, symbol: int, facing: float, alpha: float, extra := {}) -> void:
 	var u := World.STONE_R * view_scale
+	var size_k := 1.0
+	if sid >= 0 and m != null:
+		var stz = m.world.get_stone(sid)
+		if stz != null:
+			size_k = m.world.size_of(stz)
+	u *= size_k
 	var st: Dictionary = vis.get(sid, {})
 	var scl: float = extra.get("scale", 1.0)
 	var sq: float = extra.get("sq", 0.0)
@@ -4227,7 +4280,7 @@ func _draw_puck_at(p: Vector2, sid: int, parts: Dictionary, mside: int, col: Col
 	Art.draw_puck_shadow(self, p, u * scl, alpha)
 	var pc := p + Vector2(0, -lift)
 	var base := Transform2D(q.x, q.y, pc)
-	draw_set_transform_matrix(base * Transform2D(facing, Vector2.ONE * view_scale, 0.0, Vector2.ZERO))
+	draw_set_transform_matrix(base * Transform2D(facing, Vector2.ONE * view_scale * size_k, 0.0, Vector2.ZERO))
 	Art.skip_body = true
 	Art.draw(self, parts, mside, col, alpha, symbol)
 	Art.skip_body = false
@@ -5061,6 +5114,36 @@ func _draw_gimmicks() -> void:
 							draw_line(c0 + Vector2.from_angle(aa) * (Rn + 1.0), c0 + Vector2.from_angle(aa + 0.03) * (Rn + 11.0), Color.WHITE, 2.0, true)
 					var lp := c0 + Vector2.from_angle(float(it["ang"])) * (Rn - 26.0)
 					_text_outline(lp, "다음 화에 계속", 13, Color("E04E3A"), true)
+			"zerog":
+				for it in g["items"]:
+					var cz := w2s(it["pos"])
+					var rz: float = float(it["r"]) * k
+					draw_circle(cz, rz, Color("9BE7FF", 0.18))
+					draw_arc(cz, rz, 0, TAU, 48, Color("6BC8FF", 0.6), 2.0, true)
+					for i in 7:
+						var bp := cz + Vector2.from_angle(i * 2.4 + time * 0.4) * rz * (0.25 + 0.1 * i) + Vector2(0, -fmod(time * 12.0 + i * 9.0, 20.0))
+						draw_arc(bp, 3.0 + i % 3, 0, TAU, 10, Color("6BC8FF", 0.7), 1.2, true)
+			"sizering":
+				for it in g["items"]:
+					var cs := w2s(it["pos"])
+					var rs: float = float(it["r"]) * k
+					var rc: Color = Color("E0533D") if it["big"] else Color("3D6FD1")
+					draw_arc(cs, rs, 0, TAU, 32, rc, 6.0, true)
+					draw_arc(cs, rs * 0.7, 0, TAU, 32, Color(rc, 0.4), 2.0, true)
+					_text_outline(cs + Vector2(0, 6), "커짐" if it["big"] else "작아짐", 12, rc, true)
+			"turntable":
+				for it in g["items"]:
+					var ctt := w2s(it["pos"])
+					var rtt: float = float(it["r"]) * k
+					draw_circle(ctt, rtt, Color(0.85, 0.88, 0.9, 0.55))
+					var teeth := 24
+					for i in teeth:
+						var ta := float(it["ang"]) + TAU * i / teeth
+						draw_line(ctt + Vector2.from_angle(ta) * rtt, ctt + Vector2.from_angle(ta) * (rtt + 7.0), Color("3A3F45"), 3.0, true)
+					draw_arc(ctt, rtt, 0, TAU, 64, Color("3A3F45"), 2.0, true)
+					for i in 4:
+						var sa := float(it["ang"]) + PI / 2.0 * i
+						draw_line(ctt + Vector2.from_angle(sa) * rtt * 0.2, ctt + Vector2.from_angle(sa) * rtt * 0.85, Color(0, 0, 0, 0.12), 2.0, true)
 			"bolt":
 				for it in g["items"]:
 					var c2 := w2s(it["pos"])
@@ -5368,3 +5451,42 @@ func _draw_star(ci: CanvasItem, c: Vector2, r: float) -> void:
 	ci.draw_colored_polygon(pts, Color("F2C94C"))
 	pts.append(pts[0])
 	ci.draw_polyline(pts, Color("5A3A10"), maxf(1.0, r * 0.14), true)
+
+
+## 연구소: 셔터 대신 실험실 문이 좌우로 열린다.
+func _draw_lab_doors(vs: Vector2) -> void:
+	var k := 0.0
+	if shutter_t > 0.95:
+		var e := clampf((shutter_t - 0.95) / 0.6, 0.0, 1.0)
+		k = e * e * e * (e * (6.0 * e - 15.0) + 10.0)
+	var half := vs.x * 0.5
+	var off := half * 1.02 * k
+	for side in [-1, 1]:
+		var x0: float = (0.0 - off) if side < 0 else (half + off)
+		var r := Rect2(x0, 0, half, vs.y)
+		shutter.draw_rect(r, Color("EEF2F3"))
+		shutter.draw_rect(Rect2(r.position.x, vs.y * 0.18, half, 18), Color("B6F23C"))
+		shutter.draw_rect(Rect2(r.position.x, vs.y * 0.82, half, 18), Color("B6F23C"))
+		var edge: float = r.end.x - 6.0 if side < 0 else r.position.x
+		shutter.draw_rect(Rect2(edge, 0, 6, vs.y), Color("1A1D21"))
+		shutter.draw_circle(Vector2(edge + (-30.0 if side < 0 else 36.0), vs.y * 0.5), 10, Color("8A929C"))
+	if m == null:
+		return
+	var info: Dictionary = PartsData.WORKSHOPS["lab"]
+	var nm: String = info["name"]
+	var bw := font_display.get_string_size(nm, HORIZONTAL_ALIGNMENT_LEFT, -1, 44).x + 60.0
+	var box := Rect2(vs.x * 0.5 - bw * 0.5, vs.y * 0.5 - 60, bw, 120)
+	var a := 1.0 - k
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(1, 1, 1, a)
+	sb.border_color = Color(0.71, 0.95, 0.24, a)
+	sb.set_border_width_all(4)
+	sb.set_corner_radius_all(10)
+	sb.draw(shutter.get_canvas_item(), box)
+	shutter.draw_string(font_bold, Vector2(box.position.x, box.position.y + 30), "오늘의 공방 · 출입 주의", HORIZONTAL_ALIGNMENT_CENTER, box.size.x, 14, Color(0.37, 0.56, 0.05, a))
+	shutter.draw_string(font_display, Vector2(box.position.x, box.position.y + 82), nm, HORIZONTAL_ALIGNMENT_CENTER, box.size.x, 44, Color(0.09, 0.1, 0.11, a))
+	var gn: Array = []
+	for g in m.world.gimmicks:
+		gn.append(World.Gm.name_of(g["kind"]))
+	if not gn.is_empty():
+		shutter.draw_string(font_semi, Vector2(box.position.x, box.end.y + 30), "맵 기믹 · " + " · ".join(gn), HORIZONTAL_ALIGNMENT_CENTER, box.size.x, 16, Color(0.09, 0.1, 0.11, a))

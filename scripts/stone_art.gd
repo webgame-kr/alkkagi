@@ -293,6 +293,8 @@ static func _weapon(ci: CanvasItem, w: String, a: float) -> void:
 	if ArtData.SHAPES.has(w):
 		draw_data(ci, w, a, false)
 		return
+	if _lab(ci, w, a, false):
+		return
 	match w:
 		"pea":
 			rect(ci, 53.5, 14, 13, 28, STEEL, a)
@@ -379,6 +381,8 @@ static func _aux(ci: CanvasItem, x: String, a: float, m: bool) -> void:
 	if ArtData.SHAPES.has(x):
 		draw_data(ci, x, a, m)
 		return
+	if _lab(ci, x, a, m):
+		return
 	match x:
 		"magnet":
 			rect(ci, 82, 58, 14, 8, STEEL_D, a, m)
@@ -459,6 +463,8 @@ static func _aux(ci: CanvasItem, x: String, a: float, m: bool) -> void:
 static func _prop(ci: CanvasItem, p: String, a: float) -> void:
 	if ArtData.SHAPES.has(p):
 		draw_data(ci, p, a, false)
+		return
+	if _lab(ci, p, a, false):
 		return
 	match p:
 		"rocket":
@@ -667,3 +673,68 @@ static func draw_notch(ci: CanvasItem, c: Vector2, u: float, front: float, a := 
 	var fd := Vector2.from_angle(front)
 	var fp := fd.orthogonal()
 	ci.draw_colored_polygon(PackedVector2Array([c + fd * u + fp * 0.2 * u, c + fd * u - fp * 0.2 * u, c + fd * 0.7 * u]), _al(outline, a))
+
+
+
+# ── 엉뚱한 발명 연구소 부품 ─────────────────────────────
+const LIME := Color("B6F23C")
+const GLASS := Color("CFF3FF")
+
+
+static func _lab(ci: CanvasItem, id: String, a: float, m: bool) -> bool:
+	match id:
+		"shrink_ray":
+			rect(ci, 55, 18, 10, 24, STEEL, a)
+			poly(ci, [Vector2(48, 18), Vector2(72, 18), Vector2(66, 8), Vector2(54, 8)], LIME, a)
+			circ(ci, Vector2(60, 13), 3, Color.WHITE, a, false, 1.0)
+		"remote":
+			rect(ci, 52, 10, 16, 30, Color("2A2E35"), a)
+			circ(ci, Vector2(60, 18), 3.5, RED, a, false, 1.0)
+			rect(ci, 55, 26, 4, 4, LIME, a, false, 1.0)
+			rect(ci, 61, 26, 4, 4, LIME, a, false, 1.0)
+			line(ci, [Vector2(60, 10), Vector2(60, 3)], OUT, 2.0, a)
+		"sticky":
+			rect(ci, 54, 16, 12, 26, STEEL, a)
+			circ(ci, Vector2(60, 12), 7, LIME, a)
+			line(ci, [Vector2(56, 18), Vector2(55, 23)], Color("7FB81E"), 2.0, a)
+		"tilter":
+			rect(ci, 50, 30, 20, 12, STEEL_D, a)
+			poly(ci, [Vector2(46, 26), Vector2(74, 16), Vector2(74, 22), Vector2(46, 32)], LIME, a)
+			circ(ci, Vector2(60, 26), 3, BRASS, a, false, 1.0)
+		"merge_bolt":
+			rect(ci, 82, 56, 12, 12, STEEL_D, a, m)
+			poly(ci, [Vector2(94, 50), Vector2(110, 50), Vector2(110, 74), Vector2(94, 74)], STEEL, a, m)
+			line(ci, [Vector2(98, 56), Vector2(106, 62), Vector2(98, 68)], LIME, 3.0, a, m)
+		"decoy":
+			line(ci, [Vector2(84, 62), Vector2(96, 58)], OUT, 1.5, a, m)
+			circ(ci, Vector2(104, 54), 10, Color("FF8FB1"), a, m)
+			circ(ci, Vector2(100, 50), 2.5, Color.WHITE, a, m, 0.0)
+		"coupling":
+			circ(ci, Vector2(96, 62), 9, RED, a, m)
+			circ(ci, Vector2(96, 62), 4, CORE, a, m, 0.0)
+			dashed(ci, Vector2(105, 62), Vector2(116, 62), LIME, 2.0, 3.0, a, m)
+		"repel":
+			poly(ci, [Vector2(84, 46), Vector2(94, 42), Vector2(94, 82), Vector2(84, 78)], LIME, a, m)
+			line(ci, [Vector2(98, 50), Vector2(104, 46)], LIME, 2.0, a, m)
+			line(ci, [Vector2(98, 62), Vector2(106, 62)], LIME, 2.0, a, m)
+			line(ci, [Vector2(98, 74), Vector2(104, 78)], LIME, 2.0, a, m)
+		"split_capsule":
+			poly(ci, [Vector2(50, 86), Vector2(70, 86), Vector2(70, 104), Vector2(50, 104)], GLASS, a)
+			line(ci, [Vector2(60, 86), Vector2(57, 95), Vector2(63, 98), Vector2(60, 104)], OUT, 1.5, a)
+			circ(ci, Vector2(55, 99), 2.5, LIME, a, false, 0.0)
+			circ(ci, Vector2(65, 92), 2.5, LIME, a, false, 0.0)
+		"weight":
+			poly(ci, [Vector2(48, 106), Vector2(72, 106), Vector2(68, 86), Vector2(52, 86)], Color("4A4F57"), a)
+			rect(ci, 56, 82, 8, 5, STEEL_D, a, false, 1.5)
+			line(ci, [Vector2(55, 98), Vector2(65, 98)], STEEL, 2.0, a)
+		"ghost":
+			poly(ci, [Vector2(48, 108), Vector2(48, 92), Vector2(54, 85), Vector2(66, 85), Vector2(72, 92), Vector2(72, 108), Vector2(66, 103), Vector2(60, 108), Vector2(54, 103)], Color(1, 1, 1, 0.75), a, false, 1.5)
+			circ(ci, Vector2(56, 94), 1.8, OUT, a, false, 0.0)
+			circ(ci, Vector2(64, 94), 1.8, OUT, a, false, 0.0)
+		"inflate":
+			circ(ci, Vector2(60, 98), 11, Color("FFB347"), a)
+			line(ci, [Vector2(60, 86), Vector2(60, 82)], OUT, 2.0, a)
+			line(ci, [Vector2(54, 93), Vector2(57, 91)], Color.WHITE, 2.0, a)
+		_:
+			return false
+	return true

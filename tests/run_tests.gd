@@ -36,7 +36,7 @@ func _initialize() -> void:
 		"test_mushroom_and_wind", "test_second_step", "test_rebound_and_string", "test_at_field_and_beam",
 		"test_hero_band_and_shoes", "test_all_parts_have_art",
 		"test_workshop_pools", "test_offer_fits_empty_slots", "test_min_power_moves_one_cell",
-		"test_knockout_causes", "test_derby_mode", "test_gimmicks_junk", "test_start_placement", "test_upgrades", "test_gimmicks_magic_toon",
+		"test_knockout_causes", "test_derby_mode", "test_gimmicks_junk", "test_start_placement", "test_upgrades", "test_gimmicks_magic_toon", "test_lab_parts", "test_lab_gimmicks",
 	]
 	for t in tests:
 		var before := failures
@@ -1186,10 +1186,11 @@ func test_all_parts_have_art() -> void:
 	var AD = load("res://scripts/art_data.gd")
 	var hand := ["pea", "shotgun", "hook", "claw", "nose", "stamp", "copier", "magnet", "bumper", "flipper", "decal",
 		"umbrella", "spring", "carousel", "bubble", "mine", "rocket", "retro", "reel", "chute", "trex_head", "sucker",
-		"umbrella_gun", "roller", "trex_arm", "shield", "tambourine", "track", "trex_leg", "crab", "clockwork", "brake"]
+		"umbrella_gun", "roller", "trex_arm", "shield", "tambourine", "track", "trex_leg", "crab", "clockwork", "brake",
+		"merge_bolt", "decoy", "split_capsule", "weight", "shrink_ray", "remote", "sticky", "tilter", "coupling", "repel", "ghost", "inflate"]
 	for id in PartsData.ids():
 		check(hand.has(id) or AD.SHAPES.has(id), "art for " + id)
-	check(PartsData.ids().size() == 66, "66 parts: %d" % PartsData.ids().size())
+	check(PartsData.ids().size() == 78, "78 parts: %d" % PartsData.ids().size())
 
 
 # ── 오늘의 공방 ──────────────────────────────────────────
@@ -1482,3 +1483,102 @@ func test_gimmicks_magic_toon() -> void:
 	st.pos = Vector2(10, 0)
 	World.Gm.meteor_fall(m2.world, 1)
 	check(st.pos.x > 100.0 or not st.alive, "meteor pushed the puck out: %s" % st.pos)
+
+
+# ── 엉뚱한 발명 연구소 ───────────────────────────────────
+
+func test_lab_parts() -> void:
+	# 합체 볼트: 내 알과 부딪히면 하나로
+	var w := make_world("circle", 900.0)
+	var a := w.add_stone(0, Vector2(-200, 0), 0)
+	var b := w.add_stone(0, Vector2(-100, 0), 0)
+	a.parts["aux"] = "merge_bolt"
+	b.parts["weapon"] = "pea"
+	shoot(w, a.id, Vector2.RIGHT, 0.4)
+	check(not b.alive and a.alive and is_equal_approx(w.size_of(a), 1.4) and a.parts["weapon"] == "pea", "merged: size %.2f parts %s" % [w.size_of(a), a.parts])
+	check(w.alive_stones_of(0).size() == 1, "one stone left after merge")
+	# 분열 캡슐: 첫 충돌 직후 둘로
+	var w2 := make_world("circle", 900.0)
+	var c := w2.add_stone(0, Vector2(-200, 0), 0)
+	w2.add_stone(1, Vector2(-100, 0), 0)
+	c.parts["prop"] = "split_capsule"
+	shoot(w2, c.id, Vector2.RIGHT, 0.5)
+	check(w2.alive_stones_of(0).size() == 2, "split into two")
+	for st in w2.alive_stones_of(0):
+		check(is_equal_approx(w2.size_of(st), 0.75) and st.parts["prop"] == "", "pieces are small and bare")
+	# 무게추: 부딪힌 상대가 더 멀리
+	var w3 := make_world("circle", 900.0)
+	var d := w3.add_stone(0, Vector2(-200, 0), 0)
+	var t1 := w3.add_stone(1, Vector2(-100, 0), 0)
+	shoot(w3, d.id, Vector2.RIGHT, 0.6)
+	var plain: float = t1.pos.x
+	var w4 := make_world("circle", 900.0)
+	var e := w4.add_stone(0, Vector2(-200, 0), 0)
+	var t2 := w4.add_stone(1, Vector2(-100, 0), 0)
+	e.parts["prop"] = "weight"
+	shoot(w4, e.id, Vector2.RIGHT, 0.6)
+	check(t2.pos.x > plain, "weight pushes further: %.0f vs %.0f" % [t2.pos.x, plain])
+	# 축소 광선
+	var w5 := make_world("circle", 900.0)
+	var f := w5.add_stone(0, Vector2(-200, 0), 0)
+	var t3 := w5.add_stone(1, Vector2(100, 0), 0)
+	f.parts["weapon"] = "shrink_ray"
+	w5.launch(f.id, Vector2.RIGHT, 0.0)
+	check(is_equal_approx(w5.size_of(t3), 0.7) and is_equal_approx(w5.mass_of(t3), 0.5), "shrunk")
+	w5.round_no = 3
+	w5.expire_mods(3)
+	check(is_equal_approx(w5.size_of(t3), 1.0), "shrink wears off after the next round")
+	# 유령 장치: 상대 알을 통과
+	var w6 := make_world("circle", 900.0)
+	var g := w6.add_stone(0, Vector2(-200, 0), 0)
+	var t4 := w6.add_stone(1, Vector2(-100, 0), 0)
+	g.parts["prop"] = "ghost"
+	shoot(w6, g.id, Vector2.RIGHT, 0.5)
+	check(g.pos.x > -60.0, "ghost passed through: %.0f" % g.pos.x)
+	# 판 기울이개: 다른 알들이 흘러간다
+	var w7 := make_world("circle", 900.0)
+	var h := w7.add_stone(0, Vector2(-200, 200), 0)
+	var t5 := w7.add_stone(1, Vector2(200, -200), 0)
+	h.parts["weapon"] = "tilter"
+	shoot(w7, h.id, Vector2.RIGHT, 0.0)
+	check(t5.pos.x > 230.0, "tilt drifts other stones: %.0f" % t5.pos.x)
+	# 리모컨: 상대 알을 대신 쏜다
+	var m := Match.new()
+	m.setup(4, [], 401, false, {"workshop": "lab"})
+	_finish_draft(m)
+	var pid: int = m.current_player()
+	var mine = m.world.alive_stones_of(pid)[0]
+	mine.parts["weapon"] = "remote"
+	var victim = m.world.alive_stones_of((pid + 1) % 4)[0]
+	victim.pos = mine.pos + Vector2(80, 0)
+	check(m.shoot(victim.id, Vector2.RIGHT, 0.3), "remote shot accepted")
+	check(m.world.shot.owner == pid and mine.parts["weapon"] == "", "shot is mine and the remote is used up")
+
+
+func test_lab_gimmicks() -> void:
+	var m := Match.new()
+	m.setup(4, [], 402, false, {"workshop": "lab"})
+	check(m.world.gimmicks.size() == 1 and ["zerog", "sizering", "turntable"].has(m.world.gimmicks[0]["kind"]), "lab gimmick picked")
+	# 회전 원판: 샷이 끝나면 45도
+	var w := make_world("circle", 900.0)
+	w.gimmicks = [{"kind": "turntable", "items": [{"pos": Vector2.ZERO, "r": 132.0, "ang": 0.0}]}]
+	var on := w.add_stone(1, Vector2(100, 0), 0)
+	var s := w.add_stone(0, Vector2(-400, 300), 0)
+	shoot(w, s.id, Vector2.DOWN, 0.0)
+	check(on.pos.y > 60.0, "turntable rotated the puck: %s" % on.pos)
+	# 무중력: 안에서 감속 없음 → 더 멀리
+	var w2 := make_world("circle", 900.0)
+	var a := w2.add_stone(0, Vector2(-300, 0), 0)
+	shoot(w2, a.id, Vector2.RIGHT, 0.2)
+	var plain: float = a.pos.x
+	var w3 := make_world("circle", 900.0)
+	w3.gimmicks = [{"kind": "zerog", "items": [{"pos": Vector2(-150, 0), "r": 88.0}]}]
+	var b := w3.add_stone(0, Vector2(-300, 0), 0)
+	shoot(w3, b.id, Vector2.RIGHT, 0.2)
+	check(b.pos.x > plain + 30.0, "zero-g carries further: %.0f vs %.0f" % [b.pos.x, plain])
+	# 크기 링
+	var w4 := make_world("circle", 900.0)
+	w4.gimmicks = [{"kind": "sizering", "items": [{"pos": Vector2(-150, 0), "r": 35.2, "big": true}]}]
+	var c := w4.add_stone(0, Vector2(-300, 0), 0)
+	shoot(w4, c.id, Vector2.RIGHT, 0.3)
+	check(is_equal_approx(w4.size_of(c), 1.3), "red ring grows the puck: %.2f" % w4.size_of(c))

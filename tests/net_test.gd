@@ -90,6 +90,9 @@ func _wire() -> void:
 	guest.add_child(gn)
 	host.settings["speed"] = 2
 	host.settings["n"] = 4
+	for ws in ["magic", "toon", "lab"]:
+		if OS.get_cmdline_user_args().has(ws):
+			host.settings["workshop"] = ws
 	host.settings["cpu"] = [false, false, true, true, true, true, true, true]
 	host.settings["friend"] = [false, true, false, false, false, false, false, false]
 	host.online = "host"

@@ -7,6 +7,7 @@ const Parts = preload("res://scripts/sim/parts.gd")
 const PartsDataRef = preload("res://scripts/sim/parts_data.gd")
 const Ex = preload("res://scripts/sim/expansion.gd")
 const Gm = preload("res://scripts/sim/gimmicks.gd")
+const Lab = preload("res://scripts/sim/lab.gd")
 
 const STONE_R := 22.0
 const MAX_SPEED := Parts.LAUNCH_V
@@ -35,6 +36,9 @@ class Stone:
 	var status := {}          # 다음 발사까지 남는 상태: sealed(봉인된 슬롯), cursed(저주 건 플레이어)
 	var cause := {}           # 이번 샷에 이 알을 마지막으로 민 원인 {owner, part, chain} (탈락 원인 표시)
 	var ups := {}             # 강화(★)된 슬롯 {slot: true}. 그 슬롯 부품이 바뀌면 사라진다
+	var base_size := 1.0      # 지름 배율 (합체 1.4, 분열 조각 0.75)
+	var base_mass := 1.0      # 무게 배율
+	var mods := {}            # 잠시 붙는 변화 {이름: {size, mass, until(바퀴)}} (축소 광선, 팽창, 크기 링, 반발 코팅 …)
 
 	func copy() -> Stone:
 		var s := Stone.new()
@@ -49,6 +53,9 @@ class Stone:
 		s.prop_side = prop_side
 		s.status = status.duplicate()
 		s.ups = ups.duplicate()
+		s.base_size = base_size
+		s.base_mass = base_mass
+		s.mods = mods.duplicate(true)
 		return s
 
 
@@ -169,6 +176,7 @@ var stones: Array = []
 var projs: Array = []
 var devices: Array = []
 var gimmicks: Array = []      # 맵 기믹 (gimmicks.gd)
+var glue: Array = []          # 끈끈이 탄으로 붙은 알 [{a, b, off, owner, made}]
 var next_device_id := 1
 var round_no := 1
 var shot: ShotCtx = null
@@ -190,6 +198,7 @@ func clone():
 	for d in devices:
 		w.devices.append(d.copy())
 	w.gimmicks = gimmicks.duplicate(true)
+	w.glue = glue.duplicate(true)
 	w.next_device_id = next_device_id
 	w.round_no = round_no
 	w.shot_no = shot_no
@@ -242,6 +251,35 @@ func ray_to_edge(p: Vector2, dir: Vector2) -> float:
 
 
 # ── 조회 ─────────────────────────────────────────────────
+
+## 알의 지름 배율 · 반지름(px) · 무게 (연구소 부품과 크기 링이 바꾼다)
+func size_of(s) -> float:
+	var k: float = s.base_size
+	for key in s.mods:
+		k *= float(s.mods[key].get("size", 1.0))
+	return k
+
+
+func radius_of(s) -> float:
+	return STONE_R * size_of(s)
+
+
+func mass_of(s) -> float:
+	var k: float = s.base_mass
+	for key in s.mods:
+		k *= float(s.mods[key].get("mass", 1.0))
+	if s.parts.get("prop", "") == "weight":
+		k *= 2.0
+	return k
+
+
+## 바퀴가 바뀔 때: 기한이 지난 크기·무게 변화를 지운다.
+func expire_mods(round_now: int) -> void:
+	for s in stones:
+		for key in s.mods.keys():
+			if int(s.mods[key].get("until", 0)) < round_now:
+				s.mods.erase(key)
+
 
 func get_stone(id: int) -> Stone:
 	for s in stones:
@@ -418,6 +456,9 @@ func launch(stone_id: int, dir: Vector2, power: float, opts := {}) -> void:
 	shot = ShotCtx.new()
 	shot.stone_id = s.id
 	shot.owner = s.owner
+	if opts.has("remote_by"):
+		shot.owner = int(opts["remote_by"])
+		shot.ex["remote_of"] = s.owner
 	shot.start = s.pos
 	shot.dir = dir
 	shot.power = power
@@ -426,7 +467,7 @@ func launch(stone_id: int, dir: Vector2, power: float, opts := {}) -> void:
 	knockouts.clear()
 	for o in stones:
 		o.cause = {}
-	s.vel = dir * Parts.launch_speed(power) * (0.75 if int(s.status.get("slow", -1)) >= round_no else 1.0)
+	s.vel = dir * Parts.launch_speed(power) * (0.75 if int(s.status.get("slow", -1)) >= round_no else 1.0) * (0.8 if s.parts.get("prop", "") == "weight" else 1.0)
 	s.facing = dir.angle()
 	emit({"t": "launch", "pos": s.pos, "owner": s.owner, "power": power})
 	# 지뢰·방울은 다음 샷부터 작동한다. 지금 닿아 있는 알은 떠날 때까지 무시.
@@ -453,6 +494,7 @@ func launch(stone_id: int, dir: Vector2, power: float, opts := {}) -> void:
 			devices.erase(d)
 	Parts.on_launch(self, s)
 	Ex.on_launch(self, s)
+	Lab.on_launch(self, s)
 
 
 ## 구름 우편함: 표식 자리가 비어 있으면 그 알을 그리로 옮긴다 (발사 직전).
@@ -484,8 +526,11 @@ func end_shot() -> void:
 		return
 	var s := shooter()
 	if s != null and s.alive:
+		Lab.on_stop(self, s)
 		Parts.on_stop(self, s)
 	Ex.on_end(self, s)
+	Lab.end_shot(self)
+	Gm.after_shot(self)
 	shot = null
 
 
@@ -538,6 +583,7 @@ func step() -> void:
 	Ex.timers(self, dt)
 	Ex.before_move(self, dt)
 	Gm.before_move(self, dt)
+	Lab.before_move(self, dt)
 	for s in stones:
 		if not s.alive or Ex.is_frozen(self, s):
 			continue
@@ -551,12 +597,14 @@ func step() -> void:
 			else:
 				s.vel *= ns / sp
 				s.pos += s.vel * dt
+	Lab.after_move(self)
 	_hold_grip(dt)
 	_collide_stones()
 	Gm.collide(self)
 	_check_parachutes()
 	_update_projs(dt)
 	_check_devices()
+	Lab.check_decoys(self)
 	Ex.check_devices(self)
 	_check_out()
 	Ex.after_step(self)
@@ -656,7 +704,6 @@ func _is_grip_pair(a: Stone, b: Stone) -> bool:
 
 func _collide_stones() -> void:
 	var n := stones.size()
-	var min_d := STONE_R * 2.0
 	for i in n:
 		var a: Stone = stones[i]
 		if not a.alive:
@@ -667,8 +714,9 @@ func _collide_stones() -> void:
 				continue
 			if a.vel == Vector2.ZERO and b.vel == Vector2.ZERO:
 				continue
-			if _is_grip_pair(a, b) or Ex.is_frozen(self, a) or Ex.is_frozen(self, b):
+			if _is_grip_pair(a, b) or Ex.is_frozen(self, a) or Ex.is_frozen(self, b) or Lab.skip_pair(self, a, b):
 				continue
+			var min_d := radius_of(a) + radius_of(b)
 			var d := b.pos - a.pos
 			var dist := d.length()
 			if dist >= min_d:
@@ -677,22 +725,26 @@ func _collide_stones() -> void:
 			if (a.vel - b.vel).dot(nrm) > 0.0 and Ex.pre_collision(self, a, b, nrm):
 				continue
 			var overlap := min_d - dist
-			a.pos -= nrm * overlap * 0.5
-			b.pos += nrm * overlap * 0.5
+			var ma := mass_of(a)
+			var mb := mass_of(b)
+			a.pos -= nrm * overlap * mb / (ma + mb)
+			b.pos += nrm * overlap * ma / (ma + mb)
 			var rel := (a.vel - b.vel).dot(nrm)
 			if rel <= 0.0:
 				continue
 			var va := a.vel
 			var vb := b.vel
-			var imp := rel * (1.0 + RESTITUTION) * 0.5
-			a.vel -= nrm * imp
-			b.vel += nrm * imp
+			var imp := rel * (1.0 + RESTITUTION) / (1.0 / ma + 1.0 / mb)
+			a.vel -= nrm * imp / ma
+			b.vel += nrm * imp / mb
+			Lab.post_collision(self, a, b, nrm, imp)
 			emit({"t": "hit", "pos": a.pos + nrm * STONE_R, "strength": rel, "a": a.id, "b": b.id, "n": nrm})
 			if shot != null and record_events:
+				var body_part := "remote" if shot.ex.has("remote_of") else "body"
 				if a.id == shot.stone_id:
-					b.cause = {"owner": shot.owner, "part": "body"}
+					b.cause = {"owner": shot.owner, "part": body_part, "of": int(shot.ex.get("remote_of", -1))}
 				elif b.id == shot.stone_id:
-					a.cause = {"owner": shot.owner, "part": "body"}
+					a.cause = {"owner": shot.owner, "part": body_part, "of": int(shot.ex.get("remote_of", -1))}
 				else:
 					var src: Stone = a if va.length() >= vb.length() else b
 					var dst: Stone = b if src == a else a
@@ -700,9 +752,11 @@ func _collide_stones() -> void:
 						dst.cause = {"owner": src.cause["owner"], "part": src.cause["part"], "chain": true}
 			if shot != null:
 				if a.id == shot.stone_id:
-					Parts.on_contact(self, a, b, nrm, va, vb)
+					if not Lab.on_contact(self, a, b, nrm, not shot.contacted):
+						Parts.on_contact(self, a, b, nrm, va, vb)
 				elif b.id == shot.stone_id:
-					Parts.on_contact(self, b, a, -nrm, vb, va)
+					if not Lab.on_contact(self, b, a, -nrm, not shot.contacted):
+						Parts.on_contact(self, b, a, -nrm, vb, va)
 				Ex.post_collision(self, a, b, a.pos + nrm * STONE_R)
 
 
@@ -793,7 +847,8 @@ func _update_projs(dt: float) -> void:
 					break
 				if p.kind == "bullet" and _shield_deflect(s, p):
 					break
-				s.vel += p.vel.normalized() * p.power
+				Lab.on_bullet(self, s, p)
+				s.vel += p.vel.normalized() * p.power / mass_of(s)
 				p.alive = false
 				emit({"t": "bullet_hit", "pos": p.pos, "owner": p.owner, "target": s.owner, "source": p.source})
 				break

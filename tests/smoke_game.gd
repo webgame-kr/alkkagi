@@ -28,6 +28,8 @@ func _process(_delta: float) -> bool:
 			game.settings["workshop"] = "toon"
 		if OS.get_cmdline_user_args().has("magic"):
 			game.settings["workshop"] = "magic"
+		if OS.get_cmdline_user_args().has("lab"):
+			game.settings["workshop"] = "lab"
 		game._start_match()
 	if frames > 2:
 		# 빠르게: 한 프레임에 여러 번 진행

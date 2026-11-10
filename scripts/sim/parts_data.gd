@@ -7,6 +7,31 @@ const SLOTS := ["weapon", "aux", "prop"]
 
 ## power: 상대 알에 주는 속도 변화(px/s). range: 작동 거리(px).
 const CATALOG := {
+	# ── 엉뚱한 발명 연구소: 규칙 파괴 부품 ──
+	"merge_bolt": {"name": "합체 볼트", "slot": "aux", "when": "내 알과 부딪힐 때", "lab": true,
+		"desc": "발사한 알이 내 다른 알과 부딪히면 둘이 합쳐 큰 알 하나가 된다. 지름 1.4배, 무게 2배."},
+	"decoy": {"name": "미끼 풍선", "slot": "aux", "when": "알이 멈출 때", "lab": true,
+		"desc": "멈춘 자리 뒤에 내 알과 똑같이 생긴 풍선을 남긴다(1바퀴). 맞으면 터지며 주변 1.5칸의 알을 민다."},
+	"split_capsule": {"name": "분열 캡슐", "slot": "prop", "when": "첫 충돌 직후", "lab": true,
+		"desc": "첫 충돌 직후 내 알이 작은 알 둘로 갈라진다. 각각 지름 0.75배, 무게 0.5배, 부품 없음. 판마다 한 번."},
+	"weight": {"name": "무게추", "slot": "prop", "when": "늘", "lab": true,
+		"desc": "이 알의 무게가 2배. 발사 속도는 0.8배."},
+	"shrink_ray": {"name": "축소 광선", "slot": "weapon", "when": "발사 순간", "lab": true,
+		"desc": "정면으로 광선을 쏴 처음 맞힌 알을 다음 바퀴가 끝날 때까지 지름 0.7배, 무게 0.5배로 만든다."},
+	"remote": {"name": "리모컨", "slot": "weapon", "when": "내 차례", "lab": true,
+		"desc": "이 알에서 4칸 안의 상대 알 하나를 내가 조준해 쏜다. 한 번 쓰면 부품이 사라진다."},
+	"sticky": {"name": "끈끈이 탄", "slot": "weapon", "when": "발사 순간", "lab": true, "bullet": true, "power": 200.0,
+		"desc": "정면으로 쏜 탄에 맞은 상대 알이 내 알에 달라붙어, 다음 내 샷이 끝날 때까지 한 덩어리로 움직인다."},
+	"tilter": {"name": "판 기울이개", "slot": "weapon", "when": "발사 순간", "lab": true,
+		"desc": "조준 방향으로 판이 기운다. 이번 샷 동안 판 위의 모든 알이 그쪽으로 흘러간다."},
+	"coupling": {"name": "자석 커플링", "slot": "aux", "when": "늘", "lab": true,
+		"desc": "내 알 두 개를 보이지 않는 줄로 묶는다(최대 3칸). 한 알이 3칸 넘게 멀어지면 다른 알이 끌려온다."},
+	"repel": {"name": "반발 코팅", "slot": "aux", "when": "발사 순간", "lab": true,
+		"desc": "다음 바퀴가 끝날 때까지 이 알에 부딪힌 알은 2배로 튕겨 나간다."},
+	"ghost": {"name": "유령 장치", "slot": "prop", "when": "이번 샷 동안", "lab": true,
+		"desc": "이번 샷 동안 상대 알을 통과한다. 멈춘 자리에서 실체화하며 겹쳐 있던 알을 세게 밀쳐낸다."},
+	"inflate": {"name": "팽창 풍선", "slot": "prop", "when": "첫 충돌 직후", "lab": true,
+		"desc": "첫 충돌 직후 내 알이 다음 바퀴가 끝날 때까지 지름 1.6배로 부푼다."},
 	# ── 무기 ──────────────────────────────────────────────
 	"pea": {"name": "콩알총", "slot": "weapon", "when": "발사 순간",
 		"desc": "정면으로 탄환 한 발. 처음 맞힌 알을 밀고 사라진다.",
@@ -233,9 +258,13 @@ const WORKSHOPS := {
 		"parts": ["hero_band", "torn_cape", "awaken_shoes", "drift_tire", "flash_step", "log_sub", "trap_card", "rubber_fist", "charge_palm",
 			"at_field", "stopwatch", "rebound_shoes", "alchemy_glove", "nose", "flipper", "chute"],
 		"rep": ["hero_band", "flash_step", "rubber_fist"], "set": "hero"},
+	"lab": {"name": "엉뚱한 발명 연구소", "tag": "알의 크기·무게·개수·주인을 바꾸는 곳",
+		"desc": "알끼리 합치고, 쪼개고, 상대 알을 조종한다. 세트 대신 부품 하나하나가 규칙을 바꾼다.",
+		"parts": ["merge_bolt", "decoy", "split_capsule", "weight", "shrink_ray", "remote", "sticky", "tilter", "coupling", "repel", "ghost", "inflate", "bumper"],
+		"rep": ["merge_bolt", "split_capsule", "remote"], "set": ""},
 	"all": {"name": "잡동사니 창고", "tag": "모든 부품이 섞여 나오는 곳", "desc": "모든 부품 66종이 섞여 나온다.", "parts": [], "rep": ["pea", "moon_staff", "rubber_fist"], "set": ""},
 }
-const WORKSHOP_ORDER := ["junk", "magic", "toon", "all"]
+const WORKSHOP_ORDER := ["junk", "magic", "toon", "lab", "all"]
 
 
 ## 이 공방에서 나오는 부품 id 목록.

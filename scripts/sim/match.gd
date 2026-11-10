@@ -150,6 +150,7 @@ func _begin_round() -> void:
 	if mode == "derby" and round_no > 1:
 		_respawn()
 	world.round_no = round_no
+	world.expire_mods(round_no)
 	if round_no > 1:
 		World.Gm.on_round(world)
 		# 별똥별: 지난 바퀴가 끝났으니 떨어진다
@@ -357,8 +358,17 @@ func shoot(stone_id: int, dir: Vector2, power: float, opts := {}) -> bool:
 	if phase != "aim":
 		return false
 	var s = world.get_stone(stone_id)
-	if s == null or not s.alive or s.owner != current_player():
+	if s == null or not s.alive:
 		return false
+	if s.owner != current_player():
+		# 리모컨: 내 알 근처의 상대 알을 대신 쏜다 (한 번 쓰면 사라진다)
+		var holder = remote_holder(current_player(), s)
+		if holder == null:
+			return false
+		holder.parts["weapon"] = ""
+		holder.ups.erase("weapon")
+		opts = opts.duplicate()
+		opts["remote_by"] = current_player()
 	if opts.get("from_cloud", false):
 		world.move_to_cloud(stone_id)
 	world.launch(stone_id, dir, power, opts)
@@ -656,4 +666,21 @@ func _nearest_gimmick(p: Vector2) -> float:
 				best = minf(best, p.distance_to(it["pos"]))
 			elif it.has("ang"):
 				best = minf(best, p.distance_to(Vector2.from_angle(float(it["ang"])) * world.size))
+	return best
+
+
+
+## 리모컨: 상대 알 target 에서 4칸 안에 리모컨을 단 내 알이 있으면 그 알.
+const REMOTE_RANGE := 4.0
+func remote_holder(pid: int, target):
+	if target == null or not target.alive or target.owner == pid:
+		return null
+	var best = null
+	var bd := REMOTE_RANGE * CELL
+	for st in world.alive_stones_of(pid):
+		if st.parts["weapon"] == "remote":
+			var d: float = st.pos.distance_to(target.pos)
+			if d <= bd:
+				bd = d
+				best = st
 	return best
