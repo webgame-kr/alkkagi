@@ -486,6 +486,9 @@ static func aim_preview(w, s, dir: Vector2, power: float) -> Array:
 		out.append({"k": "umbrella", "a": p2, "b": p2 + dir * od, "r": D.num("umbrella_gun", "radius")})
 	if s.parts["prop"] == "clockwork" and power <= D.num("clockwork", "max_power"):
 		out.append({"k": "clock", "a": s.pos + dir * travel_after(launch_speed(power), D.num("clockwork", "delay"))})
+	if D.set_complete(s.parts, "hero") and int(s.status.get("grit", 0)) >= 3:
+		# 라스트 컷: 주황 돌진 경로가 판 끝까지
+		out.append({"k": "lastcut", "a": s.pos, "b": s.pos + dir * w.ray_to_edge(s.pos, dir)})
 	if D.set_complete(s.parts, "trex"):
 		out.append({"k": "mecha", "a": s.pos, "dir": dir, "edge": s.pos + dir * w.ray_to_edge(s.pos, dir)})
 	if s.parts["prop"] == "flash_step":

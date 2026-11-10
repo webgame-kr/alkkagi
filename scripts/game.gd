@@ -334,6 +334,12 @@ func _debug_args() -> void:
 					_pick_stone_for_part(0, mine3[0].id)
 				else:
 					hover_stone = mine3[0].id)
+	if args.has("--grit"):
+		var hs = m.world.alive_stones_of(0)
+		hs[0].parts = {"weapon": "hero_band", "aux": "torn_cape", "prop": "awaken_shoes"}
+		hs[0].status["grit"] = 3
+		hs[1].parts["aux"] = "torn_cape"
+		hs[1].status["grit"] = 1
 	if args.has("--sets"):
 		var all: Array = m.world.stones
 		all[0].parts = {"weapon": "moon_staff", "aux": "star_cloak", "prop": "moon_boots"}
@@ -833,6 +839,12 @@ func _consume_events() -> void:
 			"part":
 				var big: bool = e.get("big", false)
 				var part_id: String = e.get("part", "")
+				if part_id == "hero_set":
+					# 라스트 컷: 0.3초 만화 컷 정지
+					hitstop = maxf(hitstop, 0.3)
+					shake = maxf(shake, 6.0)
+					snd.play("fx_parody_stamp", 0.0)
+					fx.append({"k": "manga", "stone": int(e.get("stone", -1)), "pos": e["pos"], "t": 0.0, "life": 0.6, "text": "라스트 컷", "c": Color("F08A3C")})
 				var fd: Array = FxData.FX.get(part_id, [])
 				var fam: String = fd[0] if not fd.is_empty() else ("trex" if part_id == "mecha" else ("magic" if part_id == "moon_set" else ("awaken" if part_id == "hero_set" else "mech")))
 				if not PartsData.is_anime(part_id):
@@ -875,6 +887,9 @@ func _consume_events() -> void:
 				fx.append({"k": "ring", "pos": e["pos"], "t": 0.0, "life": 0.5, "r": 28.0, "c": Color("B7C8FF")})
 			"cone":
 				fx.append({"k": "fan", "pos": e["pos"], "dir": e["dir"], "t": 0.0, "life": 0.45, "r": e["radius"], "c": Color("FF8A4A")})
+			"grit":
+				snd.play("fx_awaken_flame", -6.0, 1.0 + 0.08 * int(e["grit"]))
+				fx.append({"k": "text", "pos": e["pos"] + Vector2(0, -48), "t": 0.0, "life": 1.2, "text": "투지 %d · %s" % [int(e["grit"]), e.get("text", "")], "c": Color("F08A3C"), "size": 16})
 			"merge":
 				snd.play("puck_hit_heavy", 0.0, 0.7)
 				fx.append({"k": "ring", "pos": e["pos"], "t": 0.0, "life": 0.6, "r": 60.0, "c": Color("B6F23C")})
@@ -1354,6 +1369,8 @@ func _draw_stone(s) -> void:
 		Art.draw(self, s.parts, s.magnet_side, col, 0.3, s.owner)
 		draw_set_transform_matrix(Transform2D.IDENTITY)
 	var u := World.STONE_R * view_scale
+	if World.Hero.is_hero(s):
+		_draw_grit(p + Vector2(0, -(World.STONE_R * m.world.size_of(s) + 16) * view_scale), World.Hero.grit(s), World.Hero.lastcut_ready(s), 1.0)
 	if s.mods.has("repel"):
 		draw_arc(p, (World.STONE_R * m.world.size_of(s) + 5) * view_scale, 0, TAU, 32, Color("B6F23C", 0.8 + 0.2 * sin(time * 6.0)), 3.0, true)
 	# 지금 차례인 퍽: 숨 쉬는 주인 색 고리 (1.35u ± 0.12u, 초당 4라디안)
@@ -1815,6 +1832,12 @@ func _draw_aim_over() -> void:
 				_text_outline(cp + Vector2(0, -(World.STONE_R + 8) * view_scale), "딸깍", 13, BRASS, true)
 			"mecha":
 				_draw_mecha_aim(s, item)
+			"lastcut":
+				var la := w2s(item["a"])
+				var lb := w2s(item["b"])
+				draw_line(la, lb, Color("F08A3C", 0.35), 18.0 * view_scale, true)
+				draw_dashed_line(la, lb, Color("F08A3C"), 4.0, 12.0)
+				_text_outline(lb + (la - lb).normalized() * 30.0 + Vector2(0, -16), "라스트 컷", 16, Color("F08A3C"), true)
 			"land":
 				var lp := w2s(item["a"])
 				var lc: Color = Color("4A5BD8").lightened(0.3) if item["ok"] else Art.RED
@@ -2227,6 +2250,12 @@ func _draw_order(r: Rect2) -> void:
 		_txt(Vector2(nx + name_w + 8, cy + 4), _seat_word(pid), 12, Color(SUB, a), font, 40)
 		if m.mode == "derby":
 			_txt(Vector2(row.end.x - 70, cy + 5), "%d점" % m.scores[pid], 14, POWER, font_bold, 40, HORIZONTAL_ALIGNMENT_RIGHT)
+		var gmax := -1
+		for hs in m.world.alive_stones_of(pid):
+			if World.Hero.is_hero(hs):
+				gmax = maxi(gmax, World.Hero.grit(hs))
+		if gmax >= 0 and not portrait:
+			_draw_grit(Vector2(nx + name_w + 54, cy - 1), gmax, false, 0.62)
 		var right := row.end.x - 8
 		if p.out:
 			_txt(Vector2(right, cy + 4), "탈락", 12, Color(SUB, 0.8), font, 50, HORIZONTAL_ALIGNMENT_RIGHT)
@@ -5490,3 +5519,22 @@ func _draw_lab_doors(vs: Vector2) -> void:
 		gn.append(World.Gm.name_of(g["kind"]))
 	if not gn.is_empty():
 		shutter.draw_string(font_semi, Vector2(box.position.x, box.end.y + 30), "맵 기믹 · " + " · ".join(gn), HORIZONTAL_ALIGNMENT_CENTER, box.size.x, 16, Color(0.09, 0.1, 0.11, a))
+
+
+## 투지 표시: 불꽃 세 칸. 다 차고 세트가 완성되면 빛나며 「라스트 컷 준비」.
+func _draw_grit(c: Vector2, g: int, ready: bool, k: float) -> void:
+	var gap := 14.0 * k
+	for i in 3:
+		var fc := c + Vector2((i - 1) * gap, 0)
+		var lit := i < g
+		var h := 9.0 * k
+		var pts := PackedVector2Array([fc + Vector2(0, -h), fc + Vector2(h * 0.55, -h * 0.1), fc + Vector2(h * 0.45, h * 0.55), fc + Vector2(0, h * 0.75), fc + Vector2(-h * 0.45, h * 0.55), fc + Vector2(-h * 0.55, -h * 0.1)])
+		if lit:
+			if ready:
+				draw_circle(fc, h * (1.1 + 0.15 * sin(time * 8.0)), Color("FFB347", 0.35))
+			draw_colored_polygon(pts, Color("F08A3C"))
+			draw_circle(fc + Vector2(0, h * 0.25), h * 0.28, Color("FFD27A"))
+		pts.append(pts[0])
+		draw_polyline(pts, Color("5A2A10") if lit else Color(0.5, 0.5, 0.5, 0.7), maxf(1.0, 1.4 * k), true)
+	if ready and k >= 1.0:
+		_text_outline(c + Vector2(0, -16), "라스트 컷 준비", 12, Color("F08A3C"), true)

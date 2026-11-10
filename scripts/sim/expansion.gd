@@ -94,17 +94,7 @@ static func on_launch(w, s) -> void:
 			if ex.get("charged", false):
 				ex["beam_timer"] = D.num("charge_palm", "delay")
 		"hero_band":
-			if ex["last_stone"] and w.shot.power <= D.num("hero_band", "max_power") and _use(w, "hero_band"):
-				var rr = D.num("hero_band", "range")
-				for o in w.stones:
-					if not o.alive or o.id == s.id:
-						continue
-					var off: Vector2 = o.pos - s.pos
-					var dist = off.length()
-					if dist < rr and dist > 1.0 and off.normalized().dot(dir) > 0.82:
-						o.vel += off.normalized() * D.num("hero_band", "power") * (1.0 - dist / rr * 0.5)
-				w.emit({"t": "cone", "pos": s.pos, "dir": dir, "radius": rr, "owner": s.owner})
-				_ev(w, s.owner, "hero_band", muzzle, {"text": "충격파"})
+			pass   # 투지 충격파는 hero.gd
 	if s.parts["aux"] == "at_field" and _use(w, "at_field"):
 		ex["barrier"] = 2 if _up(s, "at_field") else 1
 		_ev(w, s.owner, "at_field", muzzle, {"stone": s.id})
@@ -404,9 +394,7 @@ static func on_contact(w, s, t, n: Vector2, v_before: Vector2, t_before: Vector2
 				if _use(w, "moon_boots"):
 					_leap(w, s, false)
 			"awaken_shoes":
-				if ex.get("last_stone", false) and not D.set_complete(s.parts, "hero") and _use(w, "awaken_shoes"):
-					s.vel += dir * D.num("awaken_shoes", "power")
-					_ev(w, s.owner, "awaken_shoes", s.pos, {"text": "각성!"})
+				pass   # 투지 돌진은 hero.gd
 			"edge_sewer":
 				if _use(w, "edge_sewer"):
 					_place_net(w, s, contact)
@@ -692,15 +680,7 @@ static func on_out(w, s) -> void:
 	var me = w.shooter()
 	if me == null or not me.alive or s.owner == me.owner:
 		return
-	if me.parts["aux"] == "torn_cape" and not w.shot.used.has("torn_cape"):
-		w.shot.used["torn_cape"] = true
-		me.vel = Vector2.ZERO
-		w.shot.reel_timer = 0.0
-		if D.set_complete(me.parts, "hero") and _ex(w).get("last_stone", false):
-			me.vel = -w.shot.dir * D.num("awaken_shoes", "back")
-			w.emit({"t": "part", "part": "hero_set", "pos": me.pos, "owner": me.owner, "text": "라스트 컷", "big": true})
-		else:
-			w.emit({"t": "part", "part": "torn_cape", "pos": me.pos, "owner": me.owner, "text": "멈춤"})
+	# 찢어진 망토 · 라스트 컷은 hero.gd (투지)
 
 
 # ── 이동 뒤 ──────────────────────────────────────────────

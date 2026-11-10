@@ -143,13 +143,13 @@ const CATALOG := {
 		"desc": "첫 충돌 직후 조준 방향으로 짧게 도약한다. 다른 알을 넘어갈 수 있고, 착지할 자리가 비어 있을 때만 뛴다.",
 		"dist": 88.0, "speed": 220.0},
 	# ── 최후의 주인공 세트 ────────────────────────────────
-	"hero_band": {"name": "주인공 머리띠", "slot": "weapon", "when": "마지막 알의 약한 샷", "set": "hero",
-		"desc": "내 마지막 알을 힘 50% 이하로 쏘면, 몸통보다 먼저 정면으로 짧은 충격파를 보낸다.",
+	"hero_band": {"name": "주인공 머리띠", "slot": "weapon", "when": "투지 1칸 이상일 때 발사", "set": "hero",
+		"desc": "투지만큼 강해지는 정면 충격파. 1칸은 짧고 약하게, 3칸은 넓고 세게. 투지는 쓰지 않는다.",
 		"max_power": 0.5, "range": 160.0, "power": 330.0},
-	"torn_cape": {"name": "찢어진 망토", "slot": "aux", "when": "상대가 처음 떨어질 때", "set": "hero",
-		"desc": "내 샷에서 처음으로 상대 알이 떨어지면, 아직 판 위에 있는 발사 알을 즉시 멈춘다."},
-	"awaken_shoes": {"name": "각성 운동화", "slot": "prop", "when": "마지막 알의 첫 충돌 직후", "set": "hero",
-		"desc": "내 마지막 알을 쏘면 첫 충돌 직후 조준 방향으로 한 번 더 달려든다.",
+	"torn_cape": {"name": "찢어진 망토", "slot": "aux", "when": "판 밖으로 나갈 뻔할 때", "set": "hero",
+		"desc": "판 밖으로 나갈 뻔하면 가장자리에서 한 번 버틴다. 판마다 한 번, 누구의 샷이든. 버티면 투지 +1."},
+	"awaken_shoes": {"name": "각성 운동화", "slot": "prop", "when": "첫 충돌 직후 (투지 1칸)", "set": "hero",
+		"desc": "첫 충돌 직후 투지 1칸을 써서 조준 방향으로 한 번 더 돌진한다.",
 		"power": 600.0, "back": 420.0},
 	# ── 각성·시스템 단품 ──────────────────────────────────
 	"ice_fan": {"name": "빙결 부채", "slot": "weapon", "when": "첫 충돌",
@@ -242,7 +242,7 @@ const SETS := {
 		"move": "궤도 마법", "short": {"moon_staff": "지팡이", "star_cloak": "망토", "moon_boots": "장화"},
 		"power": 520.0},
 	"hero": {"name": "최후의 주인공", "parts": ["hero_band", "torn_cape", "awaken_shoes"],
-		"move": "라스트 컷", "short": {"hero_band": "머리띠", "torn_cape": "망토", "awaken_shoes": "운동화"}},
+		"move": "라스트 컷", "move_desc": "투지 3칸 + 세트 완성: 판 끝까지 관통 돌진, 부딪힌 알은 옆으로, 판 끝에서 망토로 반드시 멈춘다", "short": {"hero_band": "머리띠", "torn_cape": "망토", "awaken_shoes": "운동화"}},
 }
 
 ## 오늘의 공방: 매 판 하나의 공방이 열리고, 그 판의 부품은 공용 10종 + 공방 전용 6종.

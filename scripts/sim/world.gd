@@ -8,6 +8,7 @@ const PartsDataRef = preload("res://scripts/sim/parts_data.gd")
 const Ex = preload("res://scripts/sim/expansion.gd")
 const Gm = preload("res://scripts/sim/gimmicks.gd")
 const Lab = preload("res://scripts/sim/lab.gd")
+const Hero = preload("res://scripts/sim/hero.gd")
 
 const STONE_R := 22.0
 const MAX_SPEED := Parts.LAUNCH_V
@@ -495,6 +496,7 @@ func launch(stone_id: int, dir: Vector2, power: float, opts := {}) -> void:
 	Parts.on_launch(self, s)
 	Ex.on_launch(self, s)
 	Lab.on_launch(self, s)
+	Hero.on_launch(self, s)
 
 
 ## 구름 우편함: 표식 자리가 비어 있으면 그 알을 그리로 옮긴다 (발사 직전).
@@ -530,6 +532,7 @@ func end_shot() -> void:
 		Parts.on_stop(self, s)
 	Ex.on_end(self, s)
 	Lab.end_shot(self)
+	Hero.on_end(self)
 	Gm.after_shot(self)
 	shot = null
 
@@ -590,6 +593,8 @@ func step() -> void:
 		var sp: float = s.vel.length()
 		if sp > 0.0:
 			var gk := Gm.friction_scale(self, s.pos)
+			if shot != null and s.id == shot.stone_id and shot.ex.get("lastcut", false):
+				gk = 0.0   # 라스트 컷: 판 끝까지 줄지 않고 달린다
 			var fr := FRICTION * _friction_scale(s.pos) * Ex.friction_scale(self, s.pos) * gk
 			var ns := sp - fr * dt - sp * DRAG * gk * dt
 			if ns < STOP_SPEED:
@@ -598,6 +603,7 @@ func step() -> void:
 				s.vel *= ns / sp
 				s.pos += s.vel * dt
 	Lab.after_move(self)
+	Hero.lastcut_step(self)
 	_hold_grip(dt)
 	_collide_stones()
 	Gm.collide(self)
@@ -722,6 +728,8 @@ func _collide_stones() -> void:
 			if dist >= min_d:
 				continue
 			var nrm := d / dist if dist > 0.0001 else Vector2.RIGHT
+			if Hero.lastcut_collide(self, a, b, nrm):
+				continue
 			if (a.vel - b.vel).dot(nrm) > 0.0 and Ex.pre_collision(self, a, b, nrm):
 				continue
 			var overlap := min_d - dist
@@ -751,6 +759,8 @@ func _collide_stones() -> void:
 					if not src.cause.is_empty():
 						dst.cause = {"owner": src.cause["owner"], "part": src.cause["part"], "chain": true}
 			if shot != null:
+				if (a.id == shot.stone_id or b.id == shot.stone_id) and not shot.contacted:
+					Hero.on_first_contact(self, a if a.id == shot.stone_id else b)
 				if a.id == shot.stone_id:
 					if not Lab.on_contact(self, a, b, nrm, not shot.contacted):
 						Parts.on_contact(self, a, b, nrm, va, vb)
@@ -989,6 +999,8 @@ func _check_out() -> void:
 		if s.alive and not is_inside(s.pos) and Ex.save_from_edge(self, s):
 			continue
 		if s.alive and not is_inside(s.pos) and Gm.save_from_edge(self, s):
+			continue
+		if s.alive and not is_inside(s.pos) and Hero.save_from_edge(self, s):
 			continue
 		if s.alive and not is_inside(s.pos):
 			s.alive = false

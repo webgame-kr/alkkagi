@@ -907,14 +907,18 @@ func _hero(s) -> void:
 
 
 func test_hero_last_cut() -> void:
-	var w := make_world()
-	var a := w.add_stone(0, Vector2(100, 0), 0)
-	var b := w.add_stone(1, Vector2(250, 0), 0)
-	_hero(a)
-	shoot(w, a.id, Vector2.RIGHT, 0.9)
-	check(not b.alive, "target knocked out")
+	# 투지 3칸 + 세트 완성: 판 끝까지 관통 돌진하고, 끝에서 멈춘다
+	var w := make_world("circle", 340.0)
+	var a := w.add_stone(0, Vector2(-250, 0), 0)
+	var b := w.add_stone(1, Vector2(-100, 0), 0)
+	a.parts = {"weapon": "hero_band", "aux": "torn_cape", "prop": "awaken_shoes"}
+	a.status["grit"] = 3
+	a.status["last_given"] = true
+	shoot(w, a.id, Vector2.RIGHT, 0.3)
 	check(count_events(w, "part", "hero_set") == 1, "last cut fired")
-	check(a.alive and a.pos.x < 250.0, "hero stopped and stepped back")
+	check(a.alive and a.pos.x > 250.0, "dashed to the far edge and stopped: %s" % a.pos)
+	check(absf(b.pos.y) > 30.0 or not b.alive, "hit puck thrown sideways: %s" % b.pos)
+	check(int(a.status.get("grit", 0)) == 0, "grit spent")
 
 
 func test_relic_ribbon() -> void:
@@ -1164,21 +1168,43 @@ func test_at_field_and_beam() -> void:
 
 
 func test_hero_band_and_shoes() -> void:
-	var w := make_world()
+	# 머리띠: 투지만큼 충격파 (투지는 그대로)
+	var w := make_world("circle", 900.0)
 	var a := w.add_stone(0, Vector2(-200, 0), 0)
 	var b := w.add_stone(1, Vector2(-80, 0), 0)
 	a.parts["weapon"] = "hero_band"
-	w.launch(a.id, Vector2.RIGHT, 0.3)
-	check(b.vel.x > 100.0, "last-stone weak shot: shockwave first")
-	w.run_until_settled()
-	var w2 := make_world()
+	a.status["grit"] = 2
+	w.launch(a.id, Vector2.RIGHT, 0.1)
+	check(b.vel.x > 100.0 and int(a.status["grit"]) == 2, "shockwave scales with grit, grit kept")
+	var w0 := make_world("circle", 900.0)
+	var a0 := w0.add_stone(0, Vector2(-200, 0), 0)
+	var b0 := w0.add_stone(1, Vector2(-80, 0), 0)
+	a0.parts["weapon"] = "hero_band"
+	w0.launch(a0.id, Vector2.RIGHT, 0.1)
+	check(b0.vel == Vector2.ZERO, "no grit, no shockwave")
+	# 운동화: 첫 충돌 뒤 투지 1칸을 써서 돌진
+	var w2 := make_world("circle", 900.0)
 	var c := w2.add_stone(0, Vector2(-200, 0), 0)
-	w2.add_stone(0, Vector2(-200, 200), 0)
-	var e := w2.add_stone(1, Vector2(-80, 0), 0)
-	c.parts["weapon"] = "hero_band"
-	w2.launch(c.id, Vector2.RIGHT, 0.3)
-	check(e.vel == Vector2.ZERO, "not my last stone: no shockwave")
-	w2.run_until_settled()
+	w2.add_stone(1, Vector2(-100, 0), 0)
+	c.parts["prop"] = "awaken_shoes"
+	c.status["grit"] = 1
+	w2.add_stone(0, Vector2(0, 300), 0)
+	shoot(w2, c.id, Vector2.RIGHT, 0.5)
+	check(count_events(w2, "part", "awaken_shoes") == 1 and int(c.status["grit"]) == 0, "shoes spent one grit")
+	# 망토: 판 밖으로 나갈 뻔하면 한 번 버팀 + 투지 1
+	var w3 := make_world("circle", 340.0)
+	var d := w3.add_stone(0, Vector2(150, 0), 0)
+	d.parts["aux"] = "torn_cape"
+	w3.add_stone(0, Vector2(-150, -150), 0)
+	shoot(w3, d.id, Vector2.RIGHT, 1.0)
+	check(d.alive and int(d.status.get("grit", 0)) == 1, "cape held at the edge, grit +1")
+	# 투지 쌓기: 상대 샷에 밀림 +1
+	var w4 := make_world("circle", 900.0)
+	var h := w4.add_stone(1, Vector2(0, 0), 0)
+	h.parts["aux"] = "torn_cape"
+	var e := w4.add_stone(0, Vector2(-120, 0), 0)
+	shoot(w4, e.id, Vector2.RIGHT, 0.5)
+	check(int(h.status.get("grit", 0)) >= 1, "pushed by an opponent: grit +1")
 
 
 func test_all_parts_have_art() -> void:
