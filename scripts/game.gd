@@ -1137,6 +1137,16 @@ func _online_draft_ui() -> void:
 
 
 func _do_equip(pid: int, part: String, sid: int, side: int, reserve := "") -> void:
+	if part == "":
+		if m.equip(pid, "", -1):
+			var pl1: Dictionary = m.players[pid]
+			round_picks.append({"pid": pid, "part": "고르지 않음", "id": "", "round": m.round_no})
+			_log("%d바퀴 시작, %s 부품을 고르지 않고 넘겼어요" % [m.round_no, _j(pl1.name, "이", "가")], pl1.color)
+		if online == "":
+			draft_part = ""
+			draft_stone = -1
+			_clear_overlay()
+		return
 	var s = m.world.get_stone(sid)
 	if PartsData.is_up(part):
 		if m.equip(pid, part, sid, side, reserve):
@@ -3130,6 +3140,15 @@ func _show_draft_cards(pid: int) -> void:
 		card.mouse_exited.connect(func():
 			create_tween().tween_property(card, "position:y", 0.0, 0.15))
 		k += 1
+	# 고르지 않기: 지금 알 그대로 두고 넘긴다
+	var skip_row := HBoxContainer.new()
+	skip_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	var skip_b := _button("이번엔 고르지 않기", func(): _apply_equip(pid, "", -1, 1))
+	skip_b.custom_minimum_size = Vector2(220, 44)
+	skip_b.add_theme_font_size_override("font_size", 16)
+	skip_b.tooltip_text = "부품을 달지 않고 지금 알 그대로 이번 바퀴를 시작해요"
+	skip_row.add_child(skip_b)
+	v.add_child(skip_row)
 	snd.play("part_offer", -6.0)
 	root.add_child(_draft_status_bar(pid))
 	await get_tree().process_frame

@@ -313,6 +313,13 @@ func trex_missing(pid: int) -> Array:
 func equip(pid: int, part_id: String, stone_id: int, side := 1, reserve := "") -> bool:
 	if phase != "draft" or current_drafter() != pid:
 		return false
+	if part_id == "":
+		# 이번 바퀴는 고르지 않고 넘긴다
+		draft_queue.pop_front()
+		if draft_queue.is_empty():
+			phase = "aim"
+			_mark_relic_turn()
+		return true
 	if not offers.get(pid, []).has(part_id):
 		return false
 	var s = world.get_stone(stone_id)

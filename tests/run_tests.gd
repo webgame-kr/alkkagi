@@ -36,7 +36,7 @@ func _initialize() -> void:
 		"test_mushroom_and_wind", "test_second_step", "test_rebound_and_string", "test_at_field_and_beam",
 		"test_hero_band_and_shoes", "test_all_parts_have_art",
 		"test_workshop_pools", "test_offer_fits_empty_slots", "test_min_power_moves_one_cell",
-		"test_knockout_causes", "test_derby_mode", "test_gimmicks_junk", "test_start_placement", "test_upgrades", "test_gimmicks_magic_toon", "test_lab_parts", "test_lab_gimmicks",
+		"test_knockout_causes", "test_derby_mode", "test_gimmicks_junk", "test_start_placement", "test_upgrades", "test_gimmicks_magic_toon", "test_lab_parts", "test_lab_gimmicks", "test_draft_pass",
 	]
 	for t in tests:
 		var before := failures
@@ -1608,3 +1608,22 @@ func test_lab_gimmicks() -> void:
 	var c := w4.add_stone(0, Vector2(-300, 0), 0)
 	shoot(w4, c.id, Vector2.RIGHT, 0.3)
 	check(is_equal_approx(w4.size_of(c), 1.3), "red ring grows the puck: %.2f" % w4.size_of(c))
+
+
+func test_draft_pass() -> void:
+	# 부품을 고르지 않고 넘기기: 알은 그대로, 다음 사람 차례
+	var m := Match.new()
+	m.setup(2, [], 5, false, {"workshop": "junk"})
+	for pid in 2:
+		m.place(pid, m.preset(pid, "tri"))
+	var guard := 0
+	while m.phase != "draft" and guard < 50:
+		m.skip_turn()
+		guard += 1
+	check(m.phase == "draft", "reached draft")
+	var first := m.current_drafter()
+	var before := str(m.world.alive_stones_of(first).map(func(st): return st.parts))
+	check(m.equip(first, "", -1), "pass accepted")
+	check(str(m.world.alive_stones_of(first).map(func(st): return st.parts)) == before, "parts unchanged")
+	check(m.current_drafter() != first, "next drafter")
+	check(not m.equip(first, "", -1), "cannot pass out of turn")
