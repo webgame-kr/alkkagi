@@ -271,6 +271,10 @@ func _sb(bg: Color, border: Color, radius: int, margin := 10.0) -> StyleBoxFlat:
 func _debug_args() -> void:
 	var args := OS.get_cmdline_user_args()
 	_perf_on = args.has("--perf")
+	if args.has("--derby"):
+		settings["mode"] = "derby"
+	if args.has("--crown"):
+		settings["mode"] = "crown"
 	var wi := args.find("--ws")
 	if wi >= 0 and args.size() > wi + 1:
 		settings["workshop"] = args[wi + 1]
@@ -280,8 +284,6 @@ func _debug_args() -> void:
 	var mi := args.find("--map")
 	if mi >= 0 and args.size() > mi + 1:
 		_apply_map(args[mi + 1], false)
-	if args.has("--derby"):
-		settings["mode"] = "derby"
 	var i := args.find("--auto")
 	if i < 0:
 		return
@@ -468,6 +470,9 @@ func _start_match(seed_value := -1) -> void:
 	if online == "host" and seed_value < 0:
 		_host_start()
 		return
+	match_started_t = time
+	mode_alerts.clear()
+	crown_fly = {}
 	if seed_value < 0:
 		seed_value = randi()
 	if online == "":
@@ -593,6 +598,7 @@ func _update_play(delta: float) -> void:
 	# 개조가 끝나면 「골랐어요」 안내를 바로 닫는다 (온라인 동시 선택)
 	if overlay != null and m.phase != "draft" and overlay.has_meta("draft_wait"):
 		_clear_overlay()
+	_take_crown_scores()
 	if turn_hold > 0.0:
 		turn_hold -= delta
 		return
@@ -746,6 +752,7 @@ func _on_phase_changed() -> void:
 				turn_key = ""
 				return
 			aim_left = m.aim_limit
+			_consume_events()
 			bot = null
 			bot_wait = _sp("think") * (0.6 if m.n >= 6 else 1.0)
 			var p: Dictionary = m.players[m.current_player()]
@@ -882,7 +889,7 @@ func _consume_events() -> void:
 				fx.append({"k": "text", "pos": e["pos"], "t": 0.0, "life": 0.9, "text": "탈락!", "c": owner_col, "size": 30, "pop": true})
 				var why := _cause_text(e.get("cause", {}), int(e["owner"]))
 				var cc: Dictionary = e.get("cause", {})
-				ko_pills.append({"t": time, "text": "%s 알 탈락 · %s" % [m.players[int(e["owner"])].name, why],
+				ko_pills.append({"t": time, "text": "%s 알 %s · %s" % [m.players[int(e["owner"])].name, "탈락" if m.mode == "survival" else "추락", why],
 					"c": m.players[int(cc["owner"])].color if cc.has("owner") else SUB})
 				if ko_pills.size() > 3:
 					ko_pills.pop_front()
@@ -962,6 +969,8 @@ func _consume_events() -> void:
 				fx.append({"k": "line", "a": e["a"], "b": e["b"], "t": 0.0, "life": 0.6, "c": Color("E9DCC4") if e["t"] == "thread" else Color("9A86D8")})
 			"splat":
 				fx.append({"k": "ring", "pos": e["pos"], "t": 0.0, "life": 0.4, "r": 24.0, "c": Color("2A2F45")})
+			"crown":
+				_on_crown_event(e)
 			"respawn":
 				fx.append({"k": "text", "pos": e["pos"] + Vector2(0, -30), "t": 0.0, "life": 1.2, "text": "복귀", "c": owner_col.lightened(0.3), "size": 18})
 				fx.append({"k": "ring", "pos": e["pos"], "t": 0.0, "life": 0.6, "r": 40.0, "c": owner_col})
@@ -1287,6 +1296,7 @@ func _draw_inner() -> void:
 	_draw_board()
 	_draw_gimmicks()
 	_draw_devices()
+	_draw_crown_floor()
 	_draw_aim_under()
 	var _ts := Time.get_ticks_usec()
 	if m.phase == "place":
@@ -1294,6 +1304,7 @@ func _draw_inner() -> void:
 	for s in m.world.stones:
 		if s.alive and m.phase != "place":
 			_draw_stone(s)
+	_draw_crown_held()
 	_perf_sec["stones"] = _perf_sec.get("stones", 0.0) + float(Time.get_ticks_usec() - _ts)
 	_ts = Time.get_ticks_usec()
 	_draw_projs()
@@ -1330,7 +1341,8 @@ func _draw_lobby_preview(ci: Control) -> void:
 	var pr := Rect2(Vector2.ZERO, ci.size)
 	var half := minf(pr.size.x * 0.5 - 18.0, (pr.size.y - 150.0) * 0.5)
 	var c := Vector2(pr.get_center().x, 12.0 + half + 8.0)
-	var square := n == 2
+	var crown_mode: bool = settings.get("mode", "survival") == "crown"
+	var square := n == 2 and not crown_mode
 	var units := 16.0 if square else (18.0 if n <= 4 else 20.0)
 	var u := 2.0 * half / units
 	var r := u * 0.5
@@ -1349,7 +1361,10 @@ func _draw_lobby_preview(ci: Control) -> void:
 			var tg := rad.orthogonal()
 			pucks.append([i, c + rad * (R - 4.0) * u + tg * Match.SIDE_GAP * u])
 			pucks.append([i, c + rad * (R - 4.0) * u - tg * Match.SIDE_GAP * u])
-			pucks.append([i, c + rad * (R - 5.5) * u])
+			if not crown_mode:
+				pucks.append([i, c + rad * (R - 5.5) * u])
+	if crown_mode:
+		_draw_crown_icon(ci, c, u * 1.1, 1.0)
 	for pk in pucks:
 		var i: int = pk[0]
 		if not settings["cpu"][i]:
@@ -1359,8 +1374,8 @@ func _draw_lobby_preview(ci: Control) -> void:
 		Art.draw_puck_top(ci, pk[1], r, Match.COLORS[i], i, -PI / 2)
 	# 판 정보: 판 · 퍽 · 개조 · 조준
 	var timed: bool = settings["timed"]
-	var info := [["판", "정사각 16칸" if square else "지름 %d칸" % int(units)], ["퍽", "%d개씩" % (4 if square else 3)],
-		["개조", "2바퀴부터"], ["조준", "10초 제한" if timed else "제한 없음"]]
+	var info := [["판", "정사각 16칸" if square else "지름 %d칸" % int(units)], ["퍽", "%d개씩" % (2 if crown_mode else (4 if square else 3))],
+		["개조", "1·2·3바퀴" if crown_mode else "2바퀴부터"], ["조준", "10초 제한" if timed else "제한 없음"]]
 	var x0 := 24.0
 	var y0 := c.y + half + 52.0
 	var cw := (pr.size.x - 48.0) / 4.0
@@ -2190,7 +2205,11 @@ func _focus_stone():
 
 func _draw_hud(vs: Vector2) -> void:
 	if not portrait:
-		_draw_timeline(vs)
+		if m.mode == "crown":
+			_draw_crown_forecast(vs)
+		else:
+			_draw_timeline(vs)
+	_draw_mode_alerts(vs)
 	_draw_ko_pills(vs)
 	_draw_gimmick_chips(vs)
 	_draw_toast(vs)
@@ -2217,6 +2236,8 @@ func _draw_turn_card(r: Rect2) -> void:
 			else:
 				title = "내 차례"
 				sub = "알을 당겨 조준하세요" if m.phase == "aim" else "움직이는 중"
+				if m.mode == "crown" and m.phase == "aim":
+					sub = _crown_hint(pid)
 		"place":
 			pid = placing_pid
 			title = "자리 잡기"
@@ -2258,7 +2279,9 @@ func _draw_turn_card(r: Rect2) -> void:
 	# 바퀴 진행
 	var y := r.position.y + 96
 	_txt(Vector2(r.position.x + 18, y), "%d바퀴째" % m.round_no, 13, LABEL, font_semi)
-	if m.max_rounds > 0:
+	if m.mode == "crown":
+		_txt(Vector2(r.end.x - 18, y), "%d점 선취" % Match.CROWN_GOAL, 13, SUB, font, 120, HORIZONTAL_ALIGNMENT_RIGHT)
+	elif m.max_rounds > 0:
 		_txt(Vector2(r.end.x - 18, y), "%d바퀴까지" % m.max_rounds, 13, SUB, font, 120, HORIZONTAL_ALIGNMENT_RIGHT)
 	else:
 		_txt(Vector2(r.end.x - 18, y), "한 명 남을 때까지", 13, SUB, font, 150, HORIZONTAL_ALIGNMENT_RIGHT)
@@ -2266,6 +2289,12 @@ func _draw_turn_card(r: Rect2) -> void:
 	var seg_r := Rect2(r.position.x + 18, y + 8, r.size.x - 36, 5)
 	var n := m.max_rounds if m.max_rounds > 0 else m.n
 	var lit := m.round_no if m.max_rounds > 0 else m.alive_players().size()
+	if m.mode == "crown":
+		# 왕관 쟁탈전: 선두의 점수
+		n = Match.CROWN_GOAL
+		lit = 0
+		for sc0 in m.scores:
+			lit = maxi(lit, int(sc0))
 	var gap := 3.0
 	var w := (seg_r.size.x - gap * (n - 1)) / n
 	for i2 in n:
@@ -2322,6 +2351,8 @@ func _draw_order(r: Rect2) -> void:
 		hud["order_end"] = r.end.y
 	_panel(r)
 	_txt(r.position + Vector2(18, 27), "차례 순서", 13, SUB, font_semi)
+	if m.mode == "crown":
+		_txt(Vector2(r.end.x - 18, r.position.y + 27), "%d점 선취" % Match.CROWN_GOAL, 13, SUB, font, 100, HORIZONTAL_ALIGNMENT_RIGHT)
 	var y := r.position.y + 36
 	var i := 0
 	for pid in rows:
@@ -2335,6 +2366,11 @@ func _draw_order(r: Rect2) -> void:
 		var nx := row.position.x + 44
 		_txt(Vector2(nx, cy + fs * 0.36), p.name, fs, Color(TEXT, a), font_bold if pid == cur else font, 70)
 		var name_w := (font_bold if pid == cur else font).get_string_size(p.name, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
+		if m.mode == "crown":
+			_draw_crown_row(row, pid, nx + name_w + 8, cy, a, pid == cur, i)
+			y += row_h
+			i += 1
+			continue
 		if m.mode == "derby":
 			# 더비: 사람/CPU 대신 점수를 이름 옆 자기 칸에 (UI-01: 「지금」「다음」과 붙지 않게)
 			_txt(Vector2(nx + name_w + 8, cy + 5), "%d점" % m.scores[pid], 14, Color(POWER, a), font_bold, 40)
@@ -2715,7 +2751,7 @@ func _show_setup() -> void:
 	mv.size_flags_stretch_ratio = 0.85
 	mv.add_child(_label("모드", 14, LABEL, 1))
 	var cur_mode: String = settings.get("mode", "survival")
-	mv.add_child(_seg([["survival", "최후 생존전"], ["derby", "개조 더비"]], cur_mode, func(k):
+	mv.add_child(_seg([["survival", "생존전"], ["derby", "개조 더비"], ["crown", "왕관전"]], cur_mode, func(k):
 		settings["mode"] = k
 		if online == "host":
 			_host_broadcast_lobby()
@@ -2732,6 +2768,8 @@ func _show_setup() -> void:
 	nv.add_child(_seg(counts, settings["n"], func(k): _set_count(k)))
 	mr.add_child(nv)
 	col.add_child(mr)
+	if cur_mode == "crown":
+		col.add_child(_label("알 2개 · 왕관을 얻으면 1점, 남의 차례를 버틸 때마다 1점 · 5점 선취 · 떨어진 알은 다음 차례에 복귀", 12, SUB))
 	if cur_mode == "derby":
 		col.add_child(_label("정해진 %d바퀴 동안 모두 계속 둡니다. 떨어진 퍽은 다음 바퀴에 부품을 단 채 돌아오고, 상대 퍽을 떨어뜨리면 1점." % (Match.DERBY_ROUNDS_SMALL if settings["n"] <= 4 else Match.DERBY_ROUNDS_BIG), 12, SUB))
 	# 자리
@@ -3392,14 +3430,14 @@ func _show_result() -> void:
 	var score_line: Array = []
 	for pp in m.players:
 		score_line.append("%s %d" % [pp.name, m.scores[pp.id]])
-	var reason := {"score": "점수 " + " · ".join(score_line), "last": "마지막 생존", "limit": "최대 %d바퀴 도달 · 남은 퍽이 가장 많은 사람이 승리" % m.max_rounds, "draw": "한 발에 모두 떨어졌습니다"}
+	var reason := {"score": "점수 " + " · ".join(score_line), "last": "마지막 생존", "limit": "최대 %d바퀴 도달 · 남은 퍽이 가장 많은 사람이 승리" % m.max_rounds, "draw": "한 발에 모두 떨어졌습니다", "crown": "왕관 %d점 선취" % Match.CROWN_GOAL}
 	box.add_child(_label(reason.get(m.end_reason, ""), 15, SUB))
 	# 순위: 남은 퍽 많은 순, 그다음 늦게 탈락한 순
 	var rank: Array = []
 	for p in m.players:
 		if not p.out:
 			rank.append(p.id)
-	if m.mode == "derby":
+	if m.mode == "derby" or m.mode == "crown":
 		rank.sort_custom(func(a, b): return m.scores[a] > m.scores[b])
 	else:
 		rank.sort_custom(func(a, b): return m.stones_left(a) > m.stones_left(b))
@@ -3416,11 +3454,21 @@ func _show_result() -> void:
 		var nm := _label(p.name, 17, Color(TEXT, 1.0 if not p.out else 0.6), 1)
 		nm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		r.add_child(nm)
-		var right_txt: String = ("%d점" % m.scores[pid]) if m.mode == "derby" else (("퍽 %d개" % m.stones_left(pid)) if not p.out else "%d바퀴 탈락" % p.out_round)
+		if m.mode == "crown":
+			var cs: Dictionary = m.crown_stats[pid]
+			r.add_child(_nw(_label("획득 %d · 방어 %d" % [cs["gain"], cs["defend"]], 13, SUB)))
+		var right_txt: String = ("%d점" % m.scores[pid]) if (m.mode == "derby" or m.mode == "crown") else (("퍽 %d개" % m.stones_left(pid)) if not p.out else "%d바퀴 탈락" % p.out_round)
 		r.add_child(_nw(_label(right_txt, 15, SUB)))
 		box.add_child(r)
 		i += 1
-	box.add_child(_label("%d바퀴 · %d발" % [m.round_no, m.shots], 13, SUB))
+	var secs := int(time - match_started_t)
+	var tail := "%d바퀴 · %d발 · 시간 %d분 %02d초" % [m.round_no, m.shots, secs / 60, secs % 60]
+	if m.mode == "crown":
+		var steals := 0
+		for cs2 in m.crown_stats:
+			steals += int(cs2["steal"])
+		tail += " · 강탈 %d회" % steals
+	box.add_child(_label(tail, 13, SUB))
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 8)
 	if online == "guest":
@@ -3854,7 +3902,7 @@ func _show_guest_lobby() -> void:
 		col.add_child(_label("호스트가 시작하길 기다리고 있어요. 친구 %d인전." % int(guest_lobby["n"]), 16, SUB))
 		var ws_key: String = str(guest_lobby.get("workshop", "junk"))
 		var ws_name: String = "무작위 공방" if ws_key == "random" else PartsData.WORKSHOPS.get(ws_key, PartsData.WORKSHOPS["junk"])["name"]
-		col.add_child(_label("오늘의 공방: %s%s" % [ws_name, "  ·  개조 더비" if str(guest_lobby.get("mode", "")) == "derby" else ""], 15, HINT_GOLD, 1))
+		col.add_child(_label("오늘의 공방: %s%s" % [ws_name, {"derby": "  ·  개조 더비", "crown": "  ·  왕관 쟁탈전"}.get(str(guest_lobby.get("mode", "")), "")], 15, HINT_GOLD, 1))
 		col.add_child(_map_row(true))
 		var grid := GridContainer.new()
 		grid.columns = 2
@@ -3932,7 +3980,7 @@ func _workshop_card(key: String, on: bool) -> Control:
 	var b := _button("", func(): _pick_workshop(key))
 	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	# 5인 이상이면 자리 목록이 두 줄이 되므로 공방 카드를 낮춰 「공방 열기」가 화면 안에 (UI-05)
-	var compact_ws: bool = int(settings.get("n", 4)) > 4
+	var compact_ws: bool = int(settings.get("n", 4)) > 4 or settings.get("mode", "survival") != "survival"
 	b.custom_minimum_size = Vector2(0, 146 if compact_ws else 176)
 	b.clip_contents = true
 	var nb := _sb(Color(FG, 0.05), ACCENT if on else Color(FG, 0.14), 12)
@@ -4099,7 +4147,7 @@ func _draw_shutter() -> void:
 	sb.set_border_width_all(4)
 	sb.set_corner_radius_all(10)
 	sb.draw(shutter.get_canvas_item(), box)
-	var sub := "오늘의 공방" + ("  ·  개조 더비" if m.mode == "derby" else "")
+	var sub := "오늘의 공방" + _mode_suffix()
 	shutter.draw_string(font_bold, Vector2(box.position.x, box.position.y + 32), sub, HORIZONTAL_ALIGNMENT_CENTER, box.size.x, 14, Color("FFC23D"))
 	shutter.draw_string(font_display, Vector2(box.position.x, box.position.y + 86), nm, HORIZONTAL_ALIGNMENT_CENTER, box.size.x, big, Color("F2F4F1"))
 	shutter.draw_string(font, Vector2(box.position.x, box.position.y + 114), " · ".join(names), HORIZONTAL_ALIGNMENT_CENTER, box.size.x, 15, Color("C9CED6"))
@@ -4256,10 +4304,10 @@ func _mode_row() -> Control:
 	lbl.custom_minimum_size = Vector2(70, 0)
 	row.add_child(lbl)
 	var cur: String = settings.get("mode", "survival")
-	for key in ["survival", "derby"]:
+	for key in ["survival", "derby", "crown"]:
 		var on: bool = cur == key
 		var k: String = key
-		var b := _button("최후 생존전" if key == "survival" else "개조 더비", func():
+		var b := _button({"survival": "최후 생존전", "derby": "개조 더비", "crown": "왕관 쟁탈전"}[key], func():
 			snd.play("ui_toggle")
 			settings["mode"] = k
 			if online == "host":
@@ -4273,6 +4321,8 @@ func _mode_row() -> Control:
 			b.add_theme_color_override(c, INK if on else TEXT)
 		row.add_child(b)
 	v.add_child(row)
+	if cur == "crown":
+		v.add_child(_label("알 2개 · 왕관을 줍거나 빼앗아 살아남으면 1점, 다른 사람 차례를 버틸 때마다 1점. 5점 선취.", 12, SUB))
 	if cur == "derby":
 		v.add_child(_label("정해진 %d바퀴 동안 모두 계속 둡니다. 떨어진 퍽은 다음 바퀴에 부품을 단 채 돌아오고, 상대 퍽을 떨어뜨리면 1점." % (Match.DERBY_ROUNDS_SMALL if settings["n"] <= 4 else Match.DERBY_ROUNDS_BIG), 12, SUB))
 	return v
@@ -5777,7 +5827,7 @@ func _draw_magic_curtain(vs: Vector2) -> void:
 	sb.set_border_width_all(3)
 	sb.set_corner_radius_all(10)
 	sb.draw(shutter.get_canvas_item(), box)
-	var sub := "오늘의 공방" + ("  ·  개조 더비" if m.mode == "derby" else "")
+	var sub := "오늘의 공방" + _mode_suffix()
 	shutter.draw_string(font_bold, Vector2(box.position.x, box.position.y + 28), sub, HORIZONTAL_ALIGNMENT_CENTER, box.size.x, 13, Color(0.78, 0.7, 1.0, a))
 	shutter.draw_string(font_display, Vector2(box.position.x, box.position.y + 78), nm, HORIZONTAL_ALIGNMENT_CENTER, box.size.x, 44, Color(0.97, 0.96, 1.0, a))
 	shutter.draw_string(font, Vector2(box.position.x, box.position.y + 106), " · ".join(names), HORIZONTAL_ALIGNMENT_CENTER, box.size.x, 14, Color(0.8, 0.78, 0.92, a))
@@ -5828,8 +5878,8 @@ func _draw_manga_cover(vs: Vector2) -> void:
 		for pid in info["rep"]:
 			names.append(PartsData.part_name(pid))
 		var sub := "오늘의 공방 특별 연재 · " + " · ".join(names)
-		if m.mode == "derby":
-			sub = "개조 더비 · " + sub
+		if m.mode != "survival":
+			sub = _mode_suffix().trim_prefix("  ·  ") + " · " + sub
 		var bw := maxf(font_display.get_string_size(nm, HORIZONTAL_ALIGNMENT_LEFT, -1, 40).x, font.get_string_size(sub, HORIZONTAL_ALIGNMENT_LEFT, -1, 12).x) + 36.0
 		bw = minf(bw, maxf(vs.x * 0.5, 240.0))
 		var box := Rect2(maxf(24.0, vs.x * 0.08), vs.y * 0.5 - 70, bw, 132)
@@ -5913,3 +5963,239 @@ func _draw_remote_marks() -> void:
 					draw_arc(tp, rr, TAU * i / segs + time * 0.6, TAU * (i + 1) / segs + time * 0.6, 4, col, 2.5 if on else 1.8, true)
 			if on:
 				draw_dashed_line(hp, tp, Color(ACCENT, 0.7), 2.0, 8.0)
+
+
+# ── 왕관 쟁탈전 화면 (디자인 「왕관 쟁탈전 · 경기 화면」「택배·왕관 상태와 알림」) ──
+var match_started_t := 0.0
+var mode_alerts: Array = []    # 큰 점수 알림 카드 {title, sub, bg, border, ink, t0}
+var crown_fly := {}            # 왕관이 포물선을 그리며 날아가는 중 {from, to | stone, t0}
+var crown_drop_pos := Vector2.ZERO
+const CROWN_FLY_T := 0.45
+const ALERT_LIFE := 1.7
+const CROWN_GOLD := Color("F2C14E")
+
+
+func _mode_suffix() -> String:
+	if m == null:
+		return ""
+	return {"derby": "  ·  개조 더비", "crown": "  ·  왕관 쟁탈전"}.get(m.mode, "")
+
+
+## 왕관 아이콘: s = 반 폭
+func _draw_crown_icon(ci: CanvasItem, c: Vector2, s: float, a: float, gray := false) -> void:
+	var fill := Color("B9BEC6") if gray else CROWN_GOLD
+	var ol := Color(0.1, 0.11, 0.13, a)
+	var body := PackedVector2Array([c + Vector2(-s, 0.4 * s), c + Vector2(-s, -0.45 * s), c + Vector2(-0.5 * s, 0.02 * s),
+		c + Vector2(0, -0.62 * s), c + Vector2(0.5 * s, 0.02 * s), c + Vector2(s, -0.45 * s), c + Vector2(s, 0.4 * s)])
+	ci.draw_colored_polygon(PackedVector2Array([c + Vector2(-s, 0.4 * s), c + Vector2(s, 0.4 * s), c + Vector2(s, 0.62 * s), c + Vector2(-s, 0.62 * s)]), Color(fill.darkened(0.15), a))
+	ci.draw_colored_polygon(body, Color(fill, a))
+	var line := body.duplicate()
+	line.append(body[0])
+	var lw := maxf(1.2, 0.13 * s)
+	ci.draw_polyline(line, ol, lw, true)
+	ci.draw_rect(Rect2(c + Vector2(-s, 0.4 * s), Vector2(2 * s, 0.22 * s)), ol, false, lw)
+	for tip in [Vector2(-s, -0.45 * s), Vector2(0, -0.62 * s), Vector2(s, -0.45 * s)]:
+		ci.draw_circle(c + tip, 0.13 * s, Color(fill.lightened(0.2), a))
+		ci.draw_arc(c + tip, 0.13 * s, 0, TAU, 10, ol, maxf(1.0, lw * 0.7), true)
+	if not gray:
+		ci.draw_circle(c + Vector2(0, 0.12 * s), 0.14 * s, Color("D2452F", a))
+
+
+func _crown_flying() -> bool:
+	return not crown_fly.is_empty() and time - float(crown_fly["t0"]) < CROWN_FLY_T
+
+
+## 중앙 왕관 자리(금색 점선 원)와 바닥 왕관
+func _draw_crown_floor() -> void:
+	if m == null or m.world.crown.is_empty() or m.phase == "place":
+		return
+	var c: Dictionary = m.world.crown
+	var home := w2s(Vector2.ZERO)
+	var hr := World.Crown.CELL * 1.1 * view_scale
+	var segs := 24
+	for i in segs:
+		if i % 2 == 0:
+			draw_arc(home, hr, TAU * i / segs, TAU * (i + 1) / segs, 4, Color(CROWN_GOLD, 0.75), 2.0, true)
+	if _crown_flying():
+		return
+	var u := World.STONE_R * view_scale
+	match str(c["state"]):
+		"floor":
+			var p := w2s(c["pos"])
+			draw_circle(p + Vector2(0, u * 0.35), u * 0.75, Color(0, 0, 0, 0.18))
+			for k in 4:
+				var sp := p + Vector2.from_angle(time * 1.2 + TAU * k / 4.0) * u * 1.15
+				_draw_star(self, sp, u * 0.14)
+			_draw_crown_icon(self, p + Vector2(0, sin(time * 3.0) * u * 0.06), u * 0.62, 1.0)
+		"wait":
+			_draw_crown_icon(self, home, u * 0.55, 0.6, true)
+			_txt(home + Vector2(0, u * 1.1), "대기", 12, Color(SUB, 0.9), font_semi, 60, HORIZONTAL_ALIGNMENT_CENTER)
+
+
+## 왕관 보유 알: 금색 고리 + 머리 위 왕관. 빼앗기거나 중앙으로 돌아갈 때는 포물선으로 날아간다.
+func _draw_crown_held() -> void:
+	if m == null or m.world.crown.is_empty() or m.phase == "place":
+		return
+	var u := World.STONE_R * view_scale
+	if _crown_flying():
+		var k := clampf((time - float(crown_fly["t0"])) / CROWN_FLY_T, 0.0, 1.0)
+		var to: Vector2 = crown_fly.get("to", Vector2.ZERO)
+		if crown_fly.has("stone"):
+			var ts = m.world.get_stone(int(crown_fly["stone"]))
+			if ts != null:
+				to = ts.pos + Vector2(0, -(World.STONE_R + 14.0))
+		var a: Vector2 = w2s(crown_fly["from"])
+		var b: Vector2 = w2s(to)
+		var p := a.lerp(b, k) + Vector2(0, -sin(PI * k) * 70.0 * view_scale)
+		# 지나간 자리: 금색 점선
+		for j in 6:
+			var kj := k * j / 6.0
+			draw_circle(a.lerp(b, kj) + Vector2(0, -sin(PI * kj) * 70.0 * view_scale), 2.0, Color(CROWN_GOLD, 0.7))
+		_draw_crown_icon(self, p, u * 0.55, 1.0)
+		return
+	var h = World.Crown.holder_stone(m.world)
+	if h == null or not h.alive:
+		return
+	var p2 := w2s(h.pos)
+	var rr := (World.STONE_R * m.world.size_of(h) + 7.0) * view_scale
+	draw_arc(p2, rr + 1.5, 0, TAU, 40, Color(0, 0, 0, 0.3), 5.0, true)
+	draw_arc(p2, rr, 0, TAU, 40, CROWN_GOLD, 3.0, true)
+	var top := p2 + Vector2(0, -(World.STONE_R * m.world.size_of(h) + 12.0 + 2.0 * sin(time * 3.0)) * view_scale)
+	_draw_crown_icon(self, top, u * 0.5, 1.0)
+
+
+func _crown_hint(pid: int) -> String:
+	var c: Dictionary = m.world.crown
+	var h = World.Crown.holder_stone(m.world)
+	if h == null:
+		return "가운데 왕관에 직접 닿으면 획득 +1" if c["state"] == "floor" else "왕관이 가운데로 돌아가는 중이에요"
+	if h.owner == pid:
+		return "왕관을 지키세요 · 남의 차례가 끝날 때마다 +1"
+	return "%s의 왕관 알에 직접 부딪히면 강탈" % m.players[h.owner].name
+
+
+## 위쪽 가운데: 「이번 차례가 끝나면」 누가 몇 점을 얻는지 미리 보여 준다.
+func _draw_crown_forecast(vs: Vector2) -> void:
+	var c: Dictionary = m.world.crown
+	var cur := m.current_player() if m.phase != "draft" else -1
+	var h = World.Crown.holder_stone(m.world)
+	var title := "이번 차례가 끝나면"
+	var sub := ""
+	if m.phase == "draft":
+		title = "%d바퀴 개조" % m.round_no
+		sub = "개조가 끝나면 차례가 시작돼요 · %d점 선취" % Match.CROWN_GOAL
+	elif h == null:
+		sub = ("바닥 왕관 · %s 직접 닿고 살아남으면 +1" % _j(m.players[cur].name, "이", "가")) if c["state"] == "floor" and cur >= 0 else "왕관이 가운데로 돌아가요 · 점수 없음"
+	elif h.owner == cur:
+		var taken: bool = m.phase == "moving" and m.world.shot != null and int(m.world.shot.ex.get("crown_taker", -1)) == cur
+		sub = ("살아남으면 %s +1 (획득)" % m.players[cur].name) if taken else ("%s의 왕관 · 이번 차례엔 점수 없음" % m.players[cur].name)
+	else:
+		sub = "왕관이 그대로면 %s +1 (방어)" % m.players[h.owner].name
+	var w := maxf(font_bold.get_string_size(title, HORIZONTAL_ALIGNMENT_LEFT, -1, 15).x, font.get_string_size(sub, HORIZONTAL_ALIGNMENT_LEFT, -1, 12).x) + 84.0
+	var r := Rect2(vs.x * 0.5 - w * 0.5, 24, w, 60)
+	_panel(r)
+	_draw_crown_icon(self, r.position + Vector2(34, 31), 15.0, 1.0)
+	_txt(r.position + Vector2(62, 26), title, 15, TEXT, font_bold)
+	_txt(r.position + Vector2(62, 46), sub, 12, SUB, font)
+
+
+## 차례 목록 한 줄 (왕관 쟁탈전): 보유자는 금색으로, 오른쪽에 5칸 점수 막대와 점수.
+func _draw_crown_row(row: Rect2, pid: int, x: float, cy: float, a: float, is_cur: bool, i: int) -> void:
+	var p: Dictionary = m.players[pid]
+	var h = World.Crown.holder_stone(m.world)
+	if h != null and h.owner == pid:
+		_round_rect(row, Color(CROWN_GOLD, 0.16), 8)
+		_draw_crown_icon(self, Vector2(x + 10, cy - 1), 9.0, a)
+	var right := row.end.x - 8
+	var score: int = m.scores[pid]
+	_txt(Vector2(right, cy + 6), "%d" % score, 16, Color(TEXT, a), font_bold, 30, HORIZONTAL_ALIGNMENT_RIGHT)
+	var bw := 11.0
+	var x0 := right - 22.0 - Match.CROWN_GOAL * (bw + 3.0)
+	for k in Match.CROWN_GOAL:
+		var br := Rect2(x0 + k * (bw + 3.0), cy - bw * 0.5, bw, bw)
+		draw_rect(br, Color(p.color, a) if k < score else Color(FG, 0.12 * a))
+		draw_rect(br, Color(0.1, 0.1, 0.12, 0.7 * a), false, 1.2)
+	var tag := ""
+	if is_cur:
+		tag = "지금"
+	elif i == 1 and m.phase != "draft":
+		tag = "다음"
+	if tag != "" and not portrait:
+		_txt(Vector2(x0 - 6, cy + 4), tag, 12, HINT_GOLD if tag == "지금" else SUB, font_semi, 40, HORIZONTAL_ALIGNMENT_RIGHT)
+
+
+func _on_crown_event(e: Dictionary) -> void:
+	var u := World.STONE_R
+	match str(e.get("kind", "")):
+		"take":
+			fx.append({"k": "text", "pos": e["pos"] + Vector2(0, -44), "t": 0.0, "life": 1.0, "text": "왕관!", "c": CROWN_GOLD, "size": 22})
+			for k in 10:
+				fx.append({"k": "spark", "pos": e["pos"], "vel": Vector2.from_angle(TAU * k / 10.0) * randf_range(80.0, 140.0), "t": 0.0, "life": 0.4, "c": CROWN_GOLD})
+			snd.play("set_progress", -4.0, 1.3)
+		"steal":
+			# 강탈 순간엔 「강탈!」만. 점수는 샷이 끝나고 살아남은 걸 확인한 뒤에.
+			fx.append({"k": "text", "pos": e["pos"] + Vector2(0, -48), "t": 0.0, "life": 1.0, "text": "강탈!", "c": Color("E0533D"), "size": 26})
+			crown_fly = {"from": e["from"] + Vector2(0, -(u + 14.0)), "stone": int(e["stone"]), "t0": time}
+			snd.play("fx_parody_stamp", -3.0, 1.1)
+		"drop":
+			crown_drop_pos = e["pos"]
+			fx.append({"k": "text", "pos": e["pos"] + Vector2(0, -40), "t": 0.0, "life": 1.0, "text": "왕관 추락", "c": Color("B9BEC6"), "size": 18})
+		"home":
+			crown_fly = {"from": crown_drop_pos, "to": e["pos"], "t0": time}
+			_push_alert("왕관 추락", "중앙으로 복귀", Color("ECE7DD"), Color("8A8F96"), Color("4A4E55"))
+
+
+## 경기 관리가 쌓은 점수(획득·방어)를 큰 알림으로
+func _take_crown_scores() -> void:
+	if m == null or m.crown_events.is_empty():
+		return
+	for ev in m.crown_events:
+		var pl: Dictionary = m.players[int(ev["pid"])]
+		var sc: int = m.scores[pl.id]
+		if ev["kind"] == "gain":
+			_push_alert("왕관 획득!", "%s +1" % pl.name, Color("FFF1C2"), Color("E9B935"), Color("8A5A12"))
+			_log("%s 왕관 획득 +1 (%d점)" % [_j(pl.name, "이", "가"), sc], pl.color)
+		else:
+			_push_alert("왕관 방어!", "%s +1" % pl.name, pl.color.lerp(Color.WHITE, 0.8), pl.color, pl.color.darkened(0.35))
+			_log("%s 왕관을 지켜 +1 (%d점)" % [_j(pl.name, "이", "가"), sc], pl.color)
+		snd.play("set_progress", -3.0, 1.15)
+	m.crown_events.clear()
+
+
+func _push_alert(title: String, sub: String, bg: Color, border: Color, ink: Color) -> void:
+	var t0 := time
+	for al in mode_alerts:
+		t0 = maxf(t0, float(al["t0"]) + ALERT_LIFE * 0.7)
+	mode_alerts.append({"title": title, "sub": sub, "bg": bg, "border": border, "ink": ink, "t0": t0})
+
+
+## 큰 알림 카드: 살짝 기울어 튀어나왔다가 사라진다.
+func _draw_mode_alerts(vs: Vector2) -> void:
+	var keep: Array = []
+	for al in mode_alerts:
+		var age := time - float(al["t0"])
+		if age > ALERT_LIFE:
+			continue
+		keep.append(al)
+		if age < 0.0:
+			continue
+		var k := clampf(age / 0.18, 0.0, 1.0)
+		var sc := 1.0 if _reduced() else 0.7 + 0.3 * _ease_back(k)
+		var a := clampf((ALERT_LIFE - age) / 0.3, 0.0, 1.0)
+		var tw := font_display.get_string_size(al["title"], HORIZONTAL_ALIGNMENT_LEFT, -1, 30).x
+		var w := maxf(tw, 120.0) + 56.0
+		var c := Vector2(vs.x * 0.5, vs.y * 0.34)
+		draw_set_transform(c, -0.05, Vector2.ONE * sc)
+		var box := Rect2(-w * 0.5, -40, w, 80)
+		_round_rect(Rect2(box.position + Vector2(4, 6), box.size), Color(0, 0, 0, 0.25 * a), 12)
+		var sb := StyleBoxFlat.new()
+		sb.bg_color = Color(al["bg"], a)
+		sb.border_color = Color(al["border"], a)
+		sb.set_border_width_all(3)
+		sb.set_corner_radius_all(12)
+		sb.draw(get_canvas_item(), box)
+		var ink: Color = al["ink"]
+		draw_string(font_display, Vector2(-w * 0.5, 6), al["title"], HORIZONTAL_ALIGNMENT_CENTER, w, 30, Color(ink, a))
+		draw_string(font_bold, Vector2(-w * 0.5, 30), al["sub"], HORIZONTAL_ALIGNMENT_CENTER, w, 15, Color(ink, a))
+		draw_set_transform_matrix(Transform2D.IDENTITY)
+	mode_alerts = keep

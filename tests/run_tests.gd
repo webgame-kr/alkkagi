@@ -36,7 +36,7 @@ func _initialize() -> void:
 		"test_mushroom_and_wind", "test_second_step", "test_rebound_and_string", "test_at_field_and_beam",
 		"test_hero_band_and_shoes", "test_all_parts_have_art",
 		"test_workshop_pools", "test_offer_fits_empty_slots", "test_min_power_moves_one_cell",
-		"test_knockout_causes", "test_derby_mode", "test_gimmicks_junk", "test_start_placement", "test_upgrades", "test_gimmicks_magic_toon", "test_lab_parts", "test_lab_gimmicks", "test_draft_pass", "test_playtest_fixes",
+		"test_knockout_causes", "test_derby_mode", "test_gimmicks_junk", "test_start_placement", "test_upgrades", "test_gimmicks_magic_toon", "test_lab_parts", "test_lab_gimmicks", "test_draft_pass", "test_playtest_fixes", "test_crown_rules", "test_crown_match",
 	]
 	for t in tests:
 		var before := failures
@@ -1672,3 +1672,89 @@ func test_playtest_fixes() -> void:
 		picks[c["part"]] = int(picks.get(c["part"], 0)) + 1
 		m3.world.get_stone(c["stone"]).parts[PartsData.slot_of(c["part"])] = c["part"]
 	check(picks.size() >= 3, "CPU picks spread over offers: %s" % str(picks))
+
+
+func _crown_world() -> World:
+	var w := make_world("circle", 396.0)
+	w.crown = World.Crown.make(4)
+	return w
+
+
+func test_crown_rules() -> void:
+	# 바닥 왕관: 직접 쏜 알이 닿으면 줍는다
+	var w := _crown_world()
+	var a := w.add_stone(0, Vector2(-200, 0), 0)
+	var b := w.add_stone(1, Vector2(200, 120), 0)
+	w.add_stone(0, Vector2(0, 300), 0)
+	w.add_stone(1, Vector2(0, -300), 0)
+	shoot(w, a.id, Vector2.RIGHT, 0.35)
+	check(w.crown["state"] == "held" and int(w.crown["holder"]) == a.id, "picked up the floor crown: %s" % str(w.crown))
+	# 빼앗기: 직접 쏜 알의 몸통 충돌
+	b.pos = a.pos + Vector2(120, 0)
+	shoot(w, b.id, Vector2.LEFT, 0.4)
+	check(w.crown["state"] == "held" and int(w.crown["holder"]) == b.id, "stole by body hit: %s" % str(w.crown))
+	# 밀려서 닿은 알은 빼앗지 못한다 (간접)
+	var w2 := _crown_world()
+	var h := w2.add_stone(1, Vector2(0, 0), 0)
+	var mid := w2.add_stone(0, Vector2(-80, 0), 0)
+	var sh := w2.add_stone(0, Vector2(-200, 0), 0)
+	w2.add_stone(1, Vector2(0, 300), 0)
+	w2.crown["state"] = "held"
+	w2.crown["holder"] = h.id
+	shoot(w2, sh.id, Vector2.RIGHT, 0.5)
+	check(int(w2.crown["holder"]) == h.id or w2.crown["state"] != "held", "indirect hit does not steal")
+	# 보유 알이 떨어지면 샷이 끝난 뒤 중앙으로
+	var w3 := _crown_world()
+	var c := w3.add_stone(0, Vector2(330, 0), 0)
+	w3.add_stone(1, Vector2(0, 300), 0)
+	w3.add_stone(0, Vector2(0, -300), 0)
+	w3.add_stone(1, Vector2(-300, 0), 0)
+	w3.crown["state"] = "held"
+	w3.crown["holder"] = c.id
+	shoot(w3, c.id, Vector2.RIGHT, 1.0)
+	check(not c.alive and w3.crown["state"] == "floor" and (w3.crown["pos"] as Vector2).length() < 80.0, "crown back to center after its holder fell: %s" % str(w3.crown))
+
+
+func test_crown_match() -> void:
+	var m := Match.new()
+	m.setup(4, [], 21, false, {"workshop": "junk", "mode": "crown"})
+	check(m.world.stones.size() == 8 and m.world.shape == "circle", "crown: 2 stones each")
+	check(m.phase == "draft" and m.is_draft_round(1) and m.is_draft_round(3) and not m.is_draft_round(4), "crown drafts in rounds 1-3")
+	while m.phase == "draft":
+		m.equip(m.current_drafter(), "", -1)
+	# 차례 끝 점수: 다른 사람이 지킨 왕관 → 보유자 +1 (방어)
+	var cur := m.current_player()
+	var other := (cur + 1) % 4
+	var hs = m.world.alive_stones_of(other)[0]
+	m.world.crown["state"] = "held"
+	m.world.crown["holder"] = hs.id
+	m.skip_turn()
+	check(m.scores[other] == 1 and m.crown_stats[other]["defend"] == 1, "defend point on another player's turn")
+	# 내가 원래 가진 왕관은 내 차례에 점수 없음
+	var nxt := m.current_player()
+	check(nxt == other, "fixed order")
+	m.skip_turn()
+	check(m.scores[other] == 1, "no point on own turn")
+	# 떨어진 알은 다음 내 차례에 돌아온다, 탈락은 없다
+	var p2 := m.current_player()
+	for st in m.world.alive_stones_of(p2):
+		st.alive = false
+	m.skip_turn()
+	check(not m.players[p2].out, "nobody is eliminated")
+	var guard := 0
+	while m.current_player() != p2 and guard < 10:
+		if m.phase == "draft":
+			m.equip(m.current_drafter(), "", -1)
+		else:
+			m.skip_turn()
+		guard += 1
+	check(m.world.alive_stones_of(p2).size() == 2, "fallen stones return at the start of my turn")
+	# 5점이면 끝
+	m.scores[other] = 4
+	m.world.crown["state"] = "held"
+	m.world.crown["holder"] = hs.id
+	hs.alive = true
+	if m.current_player() == other:
+		m.skip_turn()
+	m.skip_turn()
+	check(m.phase == "over" and m.winners == [other], "first to 5 wins")

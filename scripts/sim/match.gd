@@ -34,11 +34,15 @@ var rng := RandomNumberGenerator.new()
 var workshop := "junk"        # 오늘의 공방 (parts_data WORKSHOPS)
 var match_parts: Array = []
 var gimmick_rng: RandomNumberGenerator   # 이번 판에 나오는 부품 (공용 4 + 전용 10)
-var mode := "survival"        # survival(최후 생존전) | derby(개조 더비)
+var mode := "survival"        # survival(최후 생존전) | derby(개조 더비) | crown(왕관 쟁탈전)
 var scores: Array = []        # 개조 더비: 상대 알을 떨어뜨린 점수
 var homes := {}               # 개조 더비: 알 id → 시작 자리 (떨어진 알이 돌아올 곳)
 const DERBY_ROUNDS_SMALL := 8 # 2~4인
 const DERBY_ROUNDS_BIG := 6   # 5~8인
+## 왕관 쟁탈전: 알 2개, 개조는 1·2·3바퀴, 5점 선취, 탈락 없음, 떨어진 알은 다음 내 차례에 돌아온다.
+const CROWN_GOAL := World.Crown.GOAL
+var crown_stats: Array = []   # pid → {gain, defend, steal}
+var crown_events: Array = []  # 화면이 읽고 비우는 점수 알림 {kind: gain|defend, pid}
 
 
 func setup(n_players: int, cpu_flags: Array, seed_value: int, timed: bool, opts := {}) -> void:
@@ -60,7 +64,7 @@ func setup(n_players: int, cpu_flags: Array, seed_value: int, timed: bool, opts 
 			"cpu": bool(cpu_flags[i]) if i < cpu_flags.size() else false, "out": false, "out_round": 0,
 			"reserved": "", "focus": -1, "relic": "", "relic_turn": false})
 	world = World.new()
-	if n == 2:
+	if n == 2 and mode != "crown":
 		world.shape = "square"
 		world.size = CELL * 8.0
 	elif n <= 4:
@@ -70,7 +74,18 @@ func setup(n_players: int, cpu_flags: Array, seed_value: int, timed: bool, opts 
 		world.shape = "circle"
 		world.size = CELL * 10.0
 	aim_limit = AIM_LIMIT if timed else 0.0
+	first_draft_round = 2
+	draft_rounds = []
+	crown_stats.clear()
+	crown_events.clear()
+	if mode == "crown":
+		first_draft_round = 1
+		draft_rounds = [1, 2, 3]
+		for i in n:
+			crown_stats.append({"gain": 0, "defend": 0, "steal": 0})
 	_place_stones()
+	if mode == "crown":
+		world.crown = World.Crown.make(world.stones.size())
 	world.gimmicks = World.Gm.generate(workshop, n, world, gimmick_rng)
 	homes.clear()
 	for st in world.stones:
@@ -98,6 +113,8 @@ const SIDE_GAP := 1.25        # 원형 앞줄 두 퍽의 좌우 간격 (칸, 중
 
 
 func stones_per_player() -> int:
+	if mode == "crown":
+		return 2
 	return 4 if n == 2 else 3
 
 
@@ -115,7 +132,8 @@ func _place_stones() -> void:
 		var front := radial * (world.size - CELL * 4.0)
 		world.add_stone(p, front + tang * CELL * SIDE_GAP, ang + PI)
 		world.add_stone(p, front - tang * CELL * SIDE_GAP, ang + PI)
-		world.add_stone(p, radial * (world.size - CELL * 5.5), ang + PI)
+		if stones_per_player() >= 3:
+			world.add_stone(p, radial * (world.size - CELL * 5.5), ang + PI)
 
 
 func stones_left(pid: int) -> int:
@@ -182,6 +200,8 @@ func _begin_round() -> void:
 		if not players[pid].out:
 			order.append(pid)
 	turn_pos = 0
+	if mode == "crown" and not order.is_empty():
+		_respawn_of(order[0])
 	if is_draft_round(round_no):
 		draft_queue = order.duplicate()
 		offers.clear()
@@ -398,6 +418,16 @@ func shoot(stone_id: int, dir: Vector2, power: float, opts := {}) -> bool:
 ## 모든 움직임이 끝난 뒤 부른다: 탈락 정리 → 승패 확인 → 다음 차례.
 func finish_shot() -> void:
 	# 개조 더비: 상대 알을 떨어뜨리면 쏜 사람에게 1점 (자멸·원인 불명은 0점)
+	if mode == "crown" and world.shot != null:
+		var start := int(world.shot.ex.get("crown_start", -1))
+		var taker := int(world.shot.ex.get("crown_taker", -1))
+		if world.shot.ex.get("crown_steal", false) and taker >= 0:
+			crown_stats[taker]["steal"] += 1
+		world.end_shot()
+		if _crown_score(start, taker):
+			return
+		_settle_turn()
+		return
 	if mode == "derby" and world.shot != null:
 		var shooter_owner: int = world.shot.owner
 		for k in world.knockouts:
@@ -412,7 +442,34 @@ func finish_shot() -> void:
 func skip_turn() -> void:
 	if phase != "aim":
 		return
+	if mode == "crown":
+		var h = World.Crown.holder_stone(world)
+		if _crown_score(h.id if h != null else -1, -1):
+			return
 	_settle_turn()
+
+
+## 왕관 쟁탈전 차례 끝 점수: 이번 샷에 왕관을 얻고 살아남았으면 +1 (획득),
+## 아니면 차례 시작부터 다른 사람이 지켜 낸 왕관의 보유자 +1 (방어). 한 차례에 둘 다는 없다. 5점이면 끝.
+func _crown_score(start_holder: int, taker: int) -> bool:
+	var cur := current_player()
+	var h = World.Crown.holder_stone(world)
+	var got := -1
+	if taker == cur and h != null and h.alive and h.owner == cur:
+		got = cur
+		crown_stats[cur]["gain"] += 1
+		crown_events.append({"kind": "gain", "pid": cur})
+	elif h != null and h.alive and h.owner != cur and h.id == start_holder:
+		got = h.owner
+		crown_stats[got]["defend"] += 1
+		crown_events.append({"kind": "defend", "pid": got})
+	if got < 0:
+		return false
+	scores[got] += 1
+	if scores[got] >= CROWN_GOAL:
+		_finish([got], "crown")
+		return true
+	return false
 
 
 func _settle_turn() -> void:
@@ -426,7 +483,7 @@ func _settle_turn() -> void:
 		if rp.relic == "":
 			rp.relic = r["part"]
 	world.relics.clear()
-	if mode != "derby":
+	if mode == "survival":
 		for p in players:
 			if not p.out and stones_left(p.id) == 0:
 				p.out = true
@@ -440,6 +497,8 @@ func _settle_turn() -> void:
 			_finish([], "draw")
 			return
 	turn_pos += 1
+	if mode == "crown" and turn_pos < order.size():
+		_respawn_of(order[turn_pos])   # 떨어진 알은 다음 내 차례 시작에 돌아온다
 	# 떨어진 자리는 건너뛴다 (더비에서는 이번 바퀴에 알이 하나도 없는 사람도)
 	while turn_pos < order.size() and (players[order[turn_pos]].out or stones_left(order[turn_pos]) == 0):
 		turn_pos += 1
@@ -455,7 +514,8 @@ func _settle_turn() -> void:
 		else:
 			_finish_by_count()
 		return
-	start_seat = (start_seat + 1) % n
+	if mode != "crown":
+		start_seat = (start_seat + 1) % n   # 왕관 쟁탈전은 차례 순서를 고정한다
 	_begin_round()
 
 
@@ -466,6 +526,20 @@ func _respawn() -> void:
 			continue
 		var home: Vector2 = homes.get(st.id, Vector2.ZERO)
 		var spot := _free_near(home)
+		st.alive = true
+		st.pos = spot
+		st.vel = Vector2.ZERO
+		st.status = {}
+		st.cause = {}
+		world.emit({"t": "respawn", "pos": spot, "owner": st.owner, "stone": st.id})
+
+
+## 왕관 쟁탈전: 이 사람의 떨어진 기본 알을 시작 자리(막혔으면 가까운 빈자리)로. 부품은 그대로.
+func _respawn_of(pid: int) -> void:
+	for st in world.stones:
+		if st.alive or st.owner != pid or not homes.has(st.id):
+			continue
+		var spot := _free_near(homes[st.id])
 		st.alive = true
 		st.pos = spot
 		st.vel = Vector2.ZERO
@@ -607,7 +681,8 @@ func preset(pid: int, kind: String, r: RandomNumberGenerator = null) -> Array:
 				pts.append(radial * center_d + tang * (i - (k - 1) * 0.5) * CELL * 2.1)
 		"tri":
 			var dd := center_d + CELL * 0.6
-			pts.append(radial * (dd - CELL * 1.8))
+			if k >= 3:
+				pts.append(radial * (dd - CELL * 1.8))
 			pts.append(radial * dd + tang * CELL * 1.1)
 			pts.append(radial * dd - tang * CELL * 1.1)
 			if k == 4:

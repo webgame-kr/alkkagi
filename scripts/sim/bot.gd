@@ -3,6 +3,7 @@ extends RefCounted
 ## 한 번에 한 후보씩 평가(think_step)하므로 화면이 멈추지 않는다.
 
 const PartsData = preload("res://scripts/sim/parts_data.gd")
+const Crown = preload("res://scripts/sim/crown.gd")
 
 const POWERS := [0.45, 0.7, 0.95]
 const ANGLES_DEG := [-5.0, 0.0, 5.0]
@@ -35,13 +36,26 @@ func begin(m, player_id: int, seed_value: int) -> void:
 				targets.append(t)
 		targets.sort_custom(func(a, b): return a.pos.distance_to(s.pos) < b.pos.distance_to(s.pos))
 		targets = targets.slice(0, MAX_TARGETS)
+		# 왕관 쟁탈전: 보유 알은 늘 후보에, 바닥 왕관은 직접 주우러 가는 샷을 먼저 본다
+		if not w.crown.is_empty():
+			var ch = Crown.holder_stone(w)
+			if ch != null and ch.owner != pid and not targets.has(ch):
+				targets.push_front(ch)
+			if w.crown["state"] == "floor" and Crown.is_base(w, s):
+				var cdir: Vector2 = (w.crown["pos"] - s.pos)
+				var dist := cdir.length()
+				for ang0 in [-4.0, 0.0, 4.0]:
+					for pw0 in [0.25, 0.4, 0.55]:
+						candidates.append({"stone": s.id, "dir": cdir.normalized().rotated(deg_to_rad(ang0)), "power": pw0, "h": -50.0 + dist * 0.05 + absf(ang0)})
+		var crown_h = Crown.holder_stone(w) if not w.crown.is_empty() else null
 		for t in targets:
 			var base: Vector2 = (t.pos - s.pos).normalized()
+			var bonus := -150.0 if (crown_h != null and t == crown_h and t.owner != pid) else 0.0
 			for ang in ANGLES_DEG:
 				for pw in POWERS:
 					# 유망도: 가까운 상대일수록, 그 상대가 판 끝에 가까울수록, 정면(0도)일수록 먼저 본다
 					var h: float = t.pos.distance_to(s.pos) + w.edge_distance(t.pos) * 1.5 + absf(ang) * 6.0 + absf(pw - 0.7) * 40.0
-					candidates.append({"stone": s.id, "dir": base.rotated(deg_to_rad(ang)), "power": pw, "h": h})
+					candidates.append({"stone": s.id, "dir": base.rotated(deg_to_rad(ang)), "power": pw, "h": h + bonus})
 		# 자석팔은 상대 옆을 스치는 샷이 핵심이라 옆으로 비껴 쏘는 후보를 더한다.
 		if s.parts["aux"] == "magnet" and not targets.is_empty():
 			var base2: Vector2 = (targets[0].pos - s.pos).normalized()
@@ -82,18 +96,22 @@ func evaluate(c: Dictionary) -> float:
 	w.run_until_settled(5.0)
 	w.end_shot()
 	var score := 0.0
+	var crown_mode: bool = not m.world.crown.is_empty()
+	if crown_mode:
+		score += _crown_value(m, w)
+	var k_lose := 0.35 if crown_mode else 1.0   # 왕관 쟁탈전은 떨어져도 돌아오므로 덜 무겁게
 	for p in m.players:
 		if p.out:
 			continue
 		var after: int = w.alive_stones_of(p.id).size()
 		var lost: int = before[p.id] - after
 		if p.id == pid:
-			score -= lost * 140.0
+			score -= lost * 140.0 * k_lose
 			if after == 0:
 				score -= 1000.0
 		else:
-			score += lost * 100.0
-			if after == 0 and before[p.id] > 0:
+			score += lost * 100.0 * k_lose
+			if after == 0 and before[p.id] > 0 and not crown_mode:
 				score += 60.0
 			# 상대 알을 가장자리로 몰아 둔 것도 약간 쳐준다.
 			for s in w.alive_stones_of(p.id):
@@ -101,6 +119,21 @@ func evaluate(c: Dictionary) -> float:
 	for s in w.alive_stones_of(pid):
 		score += clampf(w.edge_distance(s.pos), 0.0, 120.0) * 0.08
 	return score + rng.randf() * 3.0
+
+
+## 왕관 쟁탈전 판단: 바닥 왕관은 줍고, 상대 왕관은 몸통으로 빼앗거나 (승리 직전이면) 떨어뜨리고, 내 왕관은 지킨다.
+func _crown_value(m, w) -> float:
+	var before_h = Crown.holder_stone(m.world)
+	var after_h = Crown.holder_stone(w)
+	var v := 0.0
+	if after_h != null and after_h.owner == pid:
+		v += 320.0 if (before_h == null or before_h.owner != pid) else 140.0
+		v += clampf(w.edge_distance(after_h.pos), 0.0, 160.0) * 0.6   # 가장자리에서 멀리
+	elif before_h != null and before_h.owner == pid:
+		v -= 260.0
+	if before_h != null and before_h.owner != pid and (after_h == null or after_h.owner != before_h.owner):
+		v += 150.0 + (220.0 if int(m.scores[before_h.owner]) >= Crown.GOAL - 1 else 0.0)
+	return v
 
 
 ## 사람처럼 약간 빗나가게: 각도와 힘에 오차를 섞는다. aim_error = 0 이면 계산한 그대로.

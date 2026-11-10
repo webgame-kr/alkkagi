@@ -9,6 +9,7 @@ const Ex = preload("res://scripts/sim/expansion.gd")
 const Gm = preload("res://scripts/sim/gimmicks.gd")
 const Lab = preload("res://scripts/sim/lab.gd")
 const Hero = preload("res://scripts/sim/hero.gd")
+const Crown = preload("res://scripts/sim/crown.gd")
 
 const STONE_R := 22.0
 const MAX_SPEED := Parts.LAUNCH_V
@@ -186,6 +187,7 @@ var events: Array = []        # 화면 연출용 사건 목록. 화면이 읽고
 var knockouts: Array = []     # 이번 샷에 떨어진 알 {stone, owner}
 var shot_no := 0              # 지금까지 쏜 횟수 (샷 단위로 사라지는 장치용)
 var relics: Array = []        # 유품 리본으로 회수한 부품 {owner, part}. 경기 관리가 가져간다.
+var crown := {}               # 왕관 쟁탈전의 왕관 (crown.gd). 비어 있으면 다른 모드
 
 
 func clone():
@@ -200,6 +202,7 @@ func clone():
 		w.devices.append(d.copy())
 	w.gimmicks = gimmicks.duplicate(true)
 	w.glue = glue.duplicate(true)
+	w.crown = crown.duplicate(true)
 	w.next_device_id = next_device_id
 	w.round_no = round_no
 	w.shot_no = shot_no
@@ -497,6 +500,7 @@ func launch(stone_id: int, dir: Vector2, power: float, opts := {}) -> void:
 	Ex.on_launch(self, s)
 	Lab.on_launch(self, s)
 	Hero.on_launch(self, s)
+	Crown.on_launch(self, s)
 
 
 ## 구름 우편함: 표식 자리가 비어 있으면 그 알을 그리로 옮긴다 (발사 직전).
@@ -534,6 +538,7 @@ func end_shot() -> void:
 	Lab.end_shot(self)
 	Hero.on_end(self)
 	Gm.after_shot(self)
+	Crown.end_shot(self)
 	shot = null
 
 
@@ -614,6 +619,7 @@ func step() -> void:
 	Ex.check_devices(self)
 	_check_out()
 	Ex.after_step(self)
+	Crown.after_step(self)
 	_record_path(dt)
 
 
@@ -746,6 +752,7 @@ func _collide_stones() -> void:
 			a.vel -= nrm * imp / ma
 			b.vel += nrm * imp / mb
 			Lab.post_collision(self, a, b, nrm, imp)
+			Crown.on_hit(self, a, b)
 			emit({"t": "hit", "pos": a.pos + nrm * STONE_R, "strength": rel, "a": a.id, "b": b.id, "n": nrm})
 			if shot != null and record_events:
 				var body_part := "remote" if shot.ex.has("remote_of") else "body"

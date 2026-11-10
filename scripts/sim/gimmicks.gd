@@ -78,6 +78,12 @@ static func _keep_out_of_zones(g: Dictionary, w) -> Dictionary:
 		var lim: float = maxf(1.05 * CELL, w.size - 6.6 * CELL - r)   # 판 중심 1칸 안은 계속 피한다
 		if p.length() > lim:
 			it["pos"] = p.normalized() * lim if p.length() > 0.001 else p
+		# 왕관 쟁탈전: 가운데 왕관 자리는 비워 둔다
+		if not w.crown.is_empty():
+			var need: float = 2.0 * CELL + r * 0.6
+			var q: Vector2 = it["pos"]
+			if q.length() < need:
+				it["pos"] = (q.normalized() if q.length() > 0.001 else Vector2.RIGHT) * need
 	return g
 
 
