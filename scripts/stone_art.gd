@@ -19,6 +19,7 @@ const TICK := Color("F2F4F1")
 
 const C0 := Vector2(60, 62)     # 도면의 퍽 중심
 const ArtData = preload("res://scripts/art_data.gd")
+const ArtUp = preload("res://scripts/art_up_data.gd")
 
 ## 만화 연출 중인 알: 모든 색을 먹선 흑백으로 그린다.
 static var mono := false
@@ -32,7 +33,8 @@ static var shadow := Color(40 / 255.0, 25 / 255.0, 10 / 255.0, 0.32)
 
 
 ## 판 위의 퍽. symbol: 0~7 플레이어 각인. tick: 정면 눈금.
-static func draw(ci: CanvasItem, parts: Dictionary, magnet_side: int, col: Color, alpha := 1.0, symbol := -1, tick := true) -> void:
+## ups: 강화된 슬롯 {slot: true} → 디자인 「강화 외형」 모양으로 그린다.
+static func draw(ci: CanvasItem, parts: Dictionary, magnet_side: int, col: Color, alpha := 1.0, symbol := -1, tick := true, ups := {}) -> void:
 	var a := alpha
 	var w: String = parts.get("weapon", "")
 	var x: String = parts.get("aux", "")
@@ -47,12 +49,20 @@ static func draw(ci: CanvasItem, parts: Dictionary, magnet_side: int, col: Color
 		draw_set_form(ci, "set_hero", col, a, symbol)
 		return
 	var mirror := (x == "magnet" or x == "shield") and magnet_side < 0
+	# 만화 강화 부품의 충격 모양 판은 다른 부품보다 뒤에
+	for slot in ["prop", "weapon", "aux"]:
+		var id: String = parts.get(slot, "")
+		if ups.get(slot, false) and ArtUp.SHAPES.has(id):
+			_up_plate(ci, id, a)
 	if p != "":
-		_prop(ci, p, a)
+		if not _up(ci, p, a, false, ups.get("prop", false)):
+			_prop(ci, p, a)
 	if w != "":
-		_weapon(ci, w, a)
+		if not _up(ci, w, a, false, ups.get("weapon", false)):
+			_weapon(ci, w, a)
 	if x != "":
-		_aux(ci, x, a, mirror)
+		if not _up(ci, x, a, mirror, ups.get("aux", false)):
+			_aux(ci, x, a, mirror)
 	if not skip_body:
 		draw_puck_shadow(ci, Vector2.ZERO, R, a, view_rot)
 		draw_puck_top(ci, Vector2.ZERO, R, col, symbol, 0.0, a, view_rot)
@@ -635,9 +645,37 @@ static func _shape_color(tok: String, col: Color) -> Color:
 	return Color(tok)
 
 
-static func draw_data(ci: CanvasItem, id: String, a: float, mirror: bool, col := Color.WHITE) -> void:
-	var shapes: Array = ArtData.SHAPES[id]
-	for i in shapes.size():
+## 강화 외형: 충격 판(첫 도형, 퍽 중심의 큰 별 모양)은 _up_plate 가 먼저 그린다.
+static func _up(ci: CanvasItem, id: String, a: float, mirror: bool, on: bool) -> bool:
+	if not on or not ArtUp.SHAPES.has(id):
+		return false
+	draw_data(ci, id, a, mirror, Color.WHITE, ArtUp.SHAPES[id], "up:" + id, 1 if _has_plate(id) else 0)
+	return true
+
+
+static func _has_plate(id: String) -> bool:
+	var sh: Array = ArtUp.SHAPES[id]
+	return not sh.is_empty() and sh[0][1] == "#FFF3C4" and (sh[0][5] as Array).size() >= 40
+
+
+static func _up_plate(ci: CanvasItem, id: String, a: float) -> void:
+	if not _has_plate(id):
+		return
+	var sh: Array = ArtUp.SHAPES[id][0]
+	var flat: Array = sh[5]
+	var pts := PackedVector2Array()
+	for k in range(0, flat.size(), 2):
+		pts.append(T(Vector2(flat[k], flat[k + 1])))
+	ci.draw_colored_polygon(pts, _al(Color("FFF3C4"), a))
+	pts.append(pts[0])
+	ci.draw_polyline(pts, _al(Color("111111"), a), 2.0 * K, true)
+
+
+static func draw_data(ci: CanvasItem, id: String, a: float, mirror: bool, col := Color.WHITE, shapes_in = null, key_id := "", from := 0) -> void:
+	var shapes: Array = ArtData.SHAPES[id] if shapes_in == null else shapes_in
+	if key_id == "":
+		key_id = id
+	for i in range(from, shapes.size()):
 		var sh: Array = shapes[i]
 		var flat: Array = sh[5]
 		var pts := PackedVector2Array()
@@ -645,7 +683,7 @@ static func draw_data(ci: CanvasItem, id: String, a: float, mirror: bool, col :=
 			pts.append(T(Vector2(flat[k], flat[k + 1]), mirror))
 		var c := _al(_shape_color(sh[1], col), a * sh[2])
 		if sh[0] == "f":
-			var key := "%s:%d" % [id, i]
+			var key := "%s:%d" % [key_id, i]
 			if not _poly_ok.has(key):
 				_poly_ok[key] = not Geometry2D.triangulate_polygon(pts).is_empty()
 			if _poly_ok[key]:

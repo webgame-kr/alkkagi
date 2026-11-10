@@ -313,6 +313,21 @@ func _debug_args() -> void:
 		# 사람(빨강)이 먼저 고르도록 순서를 맞춘다
 		m.draft_queue.erase(0)
 		m.draft_queue.push_front(0)
+	if args.has("--upgallery"):
+		# 강화 외형 확인용: 모든 알에 강화 부품을 나눠 단다
+		var ids: Array = Art.ArtUp.SHAPES.keys()
+		var by_slot := {"weapon": [], "aux": [], "prop": []}
+		for id in ids:
+			by_slot[PartsData.slot_of(id)].append(id)
+		var k := 0
+		for st in m.world.stones:
+			for slot in PartsData.SLOTS:
+				var arr: Array = by_slot[slot]
+				if arr.is_empty():
+					continue
+				st.parts[slot] = arr[k % arr.size()]
+				st.ups[slot] = true
+			k += 1
 	if args.has("--upcard"):
 		get_tree().create_timer(2.5).timeout.connect(func():
 			var st0 = m.world.alive_stones_of(0)[0]
@@ -1366,7 +1381,7 @@ func _draw_stone(s) -> void:
 		_draw_manga_back(p, manga)
 	if drag_cloud and drag_stone == s.id:
 		draw_set_transform(w2s(s.pos), s.facing, Vector2.ONE * view_scale)
-		Art.draw(self, s.parts, s.magnet_side, col, 0.3, s.owner)
+		Art.draw(self, s.parts, s.magnet_side, col, 0.3, s.owner, true, s.ups)
 		draw_set_transform_matrix(Transform2D.IDENTITY)
 	var u := World.STONE_R * view_scale
 	if World.Hero.is_hero(s):
@@ -2010,7 +2025,9 @@ func _draw_draft_marks() -> void:
 		demo[slot] = PartsData.base_of(draft_part)
 		draw_set_transform(p, facing, Vector2.ONE * view_scale)
 		Art.skip_body = true
-		Art.draw(self, demo, s.magnet_side, col, 0.75, pid)
+		var demo_up: Dictionary = s.ups.duplicate()
+		demo_up[slot] = PartsData.is_up(draft_part)
+		Art.draw(self, demo, s.magnet_side, col, 0.75, pid, true, demo_up)
 		Art.skip_body = false
 		draw_set_transform_matrix(Transform2D.IDENTITY)
 		var cur: String = s.parts[slot]
@@ -2511,13 +2528,13 @@ func _panel_style(bg := PANEL_BG, border := PANEL_LINE) -> StyleBoxFlat:
 
 
 ## 퍽 그림 컨트롤. parts 가 비어 있으면 무늬만.
-func _puck_pic(parts: Dictionary, col: Color, symbol: int, size: Vector2, scale: float, mside := 1) -> Control:
+func _puck_pic(parts: Dictionary, col: Color, symbol: int, size: Vector2, scale: float, mside := 1, ups := {}) -> Control:
 	var pic := Control.new()
 	pic.custom_minimum_size = size
 	pic.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	pic.draw.connect(func():
 		pic.draw_set_transform(pic.size * 0.5 + Vector2(0, 2 * scale), -PI / 2.0, Vector2.ONE * scale)
-		Art.draw(pic, parts, mside, col, 1.0, symbol)
+		Art.draw(pic, parts, mside, col, 1.0, symbol, true, ups)
 		pic.draw_set_transform_matrix(Transform2D.IDENTITY))
 	return pic
 
@@ -2993,7 +3010,7 @@ func _part_card(pid: int, part: String, compact := false) -> Button:
 	v.add_child(badges)
 	var demo := {"weapon": "", "aux": "", "prop": ""}
 	demo[slot] = PartsData.base_of(part)
-	var pic := _puck_pic(demo, m.players[pid].color, pid, Vector2(0, 92 if compact else 104), 0.86 if compact else 0.98)
+	var pic := _puck_pic(demo, m.players[pid].color, pid, Vector2(0, 92 if compact else 104), 0.86 if compact else 0.98, 1, {slot: true} if is_up else {})
 	if is_up:
 		pic.draw.connect(func(): _draw_star(pic, Vector2(pic.size.x * 0.5 + 34, 18), 11.0))
 	pic_box.add_child(pic)
@@ -4311,7 +4328,8 @@ func _draw_puck_at(p: Vector2, sid: int, parts: Dictionary, mside: int, col: Col
 	var base := Transform2D(q.x, q.y, pc)
 	draw_set_transform_matrix(base * Transform2D(facing, Vector2.ONE * view_scale * size_k, 0.0, Vector2.ZERO))
 	Art.skip_body = true
-	Art.draw(self, parts, mside, col, alpha, symbol)
+	var stn0 = m.world.get_stone(sid) if (sid >= 0 and m != null) else null
+	Art.draw(self, parts, mside, col, alpha, symbol, true, stn0.ups if stn0 != null and stn0.parts == parts else extra.get("ups", {}))
 	Art.skip_body = false
 	draw_set_transform_matrix(base)
 	if sid >= 0:
