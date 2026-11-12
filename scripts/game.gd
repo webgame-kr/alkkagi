@@ -8807,6 +8807,7 @@ func _wk_cubby(i: int, st: Dictionary, editable: bool) -> Control:
 			add.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 			var sp := Control.new()
 			sp.custom_minimum_size = Vector2(0, 50)
+			sp.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			v.add_child(sp)
 			v.add_child(add)
 		b.add_child(v)
@@ -8864,6 +8865,7 @@ func _wk_settings(v: VBoxContainer, editable: bool) -> void:
 		var box := Control.new()
 		box.custom_minimum_size = Vector2(28, 28)
 		box.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		box.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		box.draw.connect(func():
 			box.draw_rect(Rect2(2, 2, 24, 24), Color.WHITE)
 			box.draw_rect(Rect2(2, 2, 24, 24), WK_INK, false, 2.5)
