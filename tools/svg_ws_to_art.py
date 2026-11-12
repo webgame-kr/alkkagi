@@ -1,4 +1,4 @@
-"""디자인 「공방 · 태엽 시계탑」「공방 · 해적 선착장」의 부품·세트 변신 도면과
+"""디자인 「공방 · 태엽 시계탑」「공방 · 해적 선착장」「공방 · 그랑 뮤제」의 부품·세트 변신 도면과
 「신규 공방 강화 외형」의 강화 후 도면을 게임 도형으로 바꾼다.
 
     python tools/svg_ws_to_art.py <project 폴더> scripts/art_ws_data.gd
@@ -17,6 +17,9 @@ CLOCK = ["hour_hammer", "late_key", "minute_spring", "time_spring", "reserve_bow
          "hourglass", "metronome", "alarm_clock", "wind_mouse", "shock_spring", "slow_spring", "replay_spring", "time_capsule", "tick_step"]
 PIRATE = ["parrot_hat", "hook_hand", "peg_leg", "hole_cannon", "spyglass", "bolas", "smoke_powder", "flag_signal",
           "rum_barrel", "water_pump", "plank_dock", "treasure_chest", "jump_board", "wind_sail", "lifeboat", "oar", "helm"]
+MUSEUM = ["megaphone", "director_chair", "clapper", "wave_print", "finger_touch", "venus_arms", "scream_bridge", "follow_eyes",
+          "gleaner_broom", "starry_brush", "pointill_spray", "rolling_boulder", "duel_holster", "laser_glove", "rain_umbrella",
+          "matrix_shades", "shark_fin"]
 
 
 def svgs_of(path):
@@ -51,7 +54,7 @@ def main(folder, dst):
     shapes = {}
     syms = {}
     ups = {}
-    for board, ids, set_id in [("WSClock.dc.html", CLOCK, "set_clock"), ("WSPirate.dc.html", PIRATE, "set_captain")]:
+    for board, ids, set_id in [("WSClock.dc.html", CLOCK, "set_clock"), ("WSPirate.dc.html", PIRATE, "set_captain"), ("WSMuseum.dc.html", MUSEUM, "set_director")]:
         svgs = svgs_of(os.path.join(folder, board))
         assert len(svgs) == 25, (board, len(svgs))
         # 세트 변신: 퍽(빨강 · 동그라미 기호)은 빼고 겉모습만. 퍽은 게임이 주인 색과 기호로 그린다

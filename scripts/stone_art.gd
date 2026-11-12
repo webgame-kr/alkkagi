@@ -22,7 +22,7 @@ const ArtData = preload("res://scripts/art_data.gd")
 const ArtUp = preload("res://scripts/art_up_data.gd")
 const ArtWs = preload("res://scripts/art_ws_data.gd")
 ## 세트 변신 겉모습 (퍽 위·아래 두 겹): 세트 id → 도형 이름
-const WS_SETS := {"clock": "set_clock", "captain": "set_captain"}
+const WS_SETS := {"clock": "set_clock", "captain": "set_captain", "director": "set_director"}
 const WS_SET_PARTS := {"clock": ["hour_hammer", "late_key", "minute_spring"], "captain": ["parrot_hat", "hook_hand", "peg_leg"]}
 
 ## 만화 연출 중인 알: 모든 색을 먹선 흑백으로 그린다.
@@ -1084,6 +1084,14 @@ static func _pirate(ci: CanvasItem, id: String, a: float, m: bool) -> bool:
 ## 공방 스킨: 주인 색 면적 · 기호 · 정면 표시는 그대로 두고 재질만 얹는다.
 static func _skin_overlay(ci: CanvasItem, c: Vector2, u: float, col: Color, a: float, rot: float, front: float) -> void:
 	match skin:
+		"museum":
+			# 금 액자 테를 두른 대리석
+			ci.draw_arc(c, 1.02 * u, 0, TAU, 40, _al(Color("B8902F"), a), 0.16 * u, true)
+			ci.draw_arc(c, 0.92 * u, 0, TAU, 40, _al(Color("F2D88A"), a), 0.03 * u, true)
+			for i in 16:
+				ci.draw_circle(c + Vector2.from_angle(TAU * i / 16.0 - rot) * 1.02 * u, 0.035 * u, _al(Color("E8C766"), a))
+			for v in [[Vector2(-0.5, -0.2), Vector2(0.1, 0.3)], [Vector2(0.2, -0.55), Vector2(0.45, 0.1)]]:
+				ci.draw_line(c + (v[0] as Vector2).rotated(-rot) * u, c + (v[1] as Vector2).rotated(-rot) * u, Color(0.73, 0.69, 0.64, 0.5 * a), 0.03 * u, true)
 		"junk":
 			# 육각 너트 각인과 리벳 네 개
 			var hx := PackedVector2Array()

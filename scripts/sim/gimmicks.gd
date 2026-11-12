@@ -3,6 +3,7 @@ extends RefCounted
 ## 기믹은 누구의 것도 아니다. 기믹 때문에 떨어진 알은 「기믹 이름 · 쏜 사람의 샷」으로 적는다.
 ## 모든 계산은 결정적이다 (온라인에서 같은 시드면 같은 판).
 
+const Mu = preload("res://scripts/sim/museum.gd")
 const CELL := 44.0
 const TIME_K := 2.5          # parts.gd 와 같은 시간 배율 (사양의 초당 값 × 2.5)
 
@@ -14,6 +15,7 @@ const BY_WORKSHOP := {
 	"lab": ["zerog", "sizering", "turntable"],
 	"clock": ["pendulum", "cuckoo", "clockhand"],
 	"pirate": ["tide", "whirlpool", "crates"],
+	"museum": ["paint", "velvet", "dolly"],
 }
 
 const INFO := {
@@ -34,6 +36,9 @@ const INFO := {
 	"tide": {"name": "밀물·썰물", "desc": "짝수 바퀴는 밀물: 판 가장자리 1칸이 잠겨요. 잠긴 칸에 있던 알은 바퀴 시작에 떨어져요. 한 바퀴 전부터 물결로 예고"},
 	"whirlpool": {"name": "소용돌이", "desc": "지름 4칸 안을 지나는 알이 중심 쪽으로 휘고, 중심 1칸 안에 멈춘 알은 다음 차례 시작에 바람 방향으로 2칸 튕겨 나가요"},
 	"crates": {"name": "떠다니는 나무 상자", "desc": "상자 2개가 차례가 끝날 때마다 바람 방향으로 1칸 떠가요. 판 끝에 닿으면 반대편에서 다시 들어와요"},
+	"paint": {"name": "복원실 물감", "desc": "물감 웅덩이 2개. 빨강은 마찰이 절반이라 미끄럽고, 파랑은 감속 2배로 끈적여요. 이삭 빗자루로 지울 수 있어요"},
+	"velvet": {"name": "벨벳 차단줄", "desc": "황동 기둥 셋과 벨벳 줄. 차례가 끝날 때마다 1칸씩 움직이고, 판 끝에 닿으면 방향을 바꿔요"},
+	"dolly": {"name": "촬영 레일", "desc": "곡선 레일 위 카메라 수레가 차례마다 3칸씩 오가며 부딪힌 알을 1칸 밀어요"},
 	"turntable": {"name": "회전 원판", "desc": "샷이 끝날 때마다 가운데 원판이 45도 돌고, 위의 알도 함께 돌아요"},
 }
 
@@ -85,6 +90,8 @@ static func _keep_out_of_zones(g: Dictionary, w) -> Dictionary:
 			continue
 		var p: Vector2 = it["pos"]
 		var r: float = float(it.get("r", 0.0))
+		if g["kind"] == "velvet":
+			r = 1.9 * CELL
 		if g["kind"] == "gwell" or g["kind"] == "whirlpool":
 			r = 0.6 * CELL   # 우물은 가운데 몸통만 (끌어당기는 범위는 넓게 걸쳐도 된다)
 		var lim: float = maxf(1.05 * CELL, w.size - 6.6 * CELL - r)   # 판 중심 1칸 안은 계속 피한다
@@ -172,6 +179,21 @@ static func _place(kind: String, w, rng: RandomNumberGenerator) -> Dictionary:
 		"crates":
 			var dc := rng.randf_range(ring.x + 0.4 * CELL, ring.y)
 			return {"kind": "crates", "items": [{"pos": Vector2.from_angle(base) * dc, "r": 0.6 * CELL}, {"pos": Vector2.from_angle(base + PI) * dc, "r": 0.6 * CELL}]}
+		"paint":
+			var pitems: Array = []
+			for i in 2:
+				var pa := base + PI * i + rng.randf_range(-0.4, 0.4)
+				var pd := rng.randf_range(ring.x + 0.3 * CELL, ring.y + 0.2 * CELL)
+				pitems.append({"pos": Vector2.from_angle(pa) * pd, "r": 1.3 * CELL, "color": "red" if i == 0 else "blue"})
+			return {"kind": "paint", "items": pitems}
+		"velvet":
+			var vax := Vector2.from_angle(base)
+			var vd := rng.randf_range(0.0, 0.8) * CELL
+			return {"kind": "velvet", "items": [{"pos": vax.orthogonal() * vd, "axis": vax, "move": vax.orthogonal() if rng.randf() < 0.5 else -vax.orthogonal(), "r": 1.9 * CELL}]}
+		"dolly":
+			var dax := Vector2.from_angle(base)
+			var reach := maxf(2.2 * CELL, w.size - 6.4 * CELL)
+			return {"kind": "dolly", "items": [{"a": -dax * reach, "b": dax * reach, "m": dax.orthogonal() * 1.6 * CELL, "t": 0.5, "dir": 1.0 if rng.randf() < 0.5 else -1.0}]}
 		"clockhand":
 			return {"kind": "clockhand", "items": [{"ang": base, "len": maxf(2.0 * CELL, w.size - 3.0 * CELL)}]}
 	return {"kind": kind, "items": []}
@@ -331,7 +353,7 @@ static func blocks(w, p: Vector2, margin := 0.5 * CELL) -> bool:
 			for it in g["items"]:
 				if p.distance_to(it["pos"]) < w.STONE_R + float(it["r"]) + margin:
 					return true
-	return false
+	return Mu.blocks(w, p, margin)
 
 
 

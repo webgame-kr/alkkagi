@@ -363,6 +363,16 @@ func _debug_args() -> void:
 			_shot_n += 1
 			get_viewport().get_texture().get_image().save_png("%s/s%03d.png" % [_shot_dir, _shot_n]))
 		add_child(t)
+	mu_force_cut = args.has("--cut")
+	if args.has("--mudemo") and m.workshop == "museum":
+		# 그랑 뮤제 연출 확인용: 처음부터 부품을 달아 둔다
+		var kits := [["megaphone", "director_chair", "clapper"], ["wave_print", "scream_bridge", "starry_brush"], ["rolling_boulder", "laser_glove", "shark_fin"],
+			["finger_touch", "follow_eyes", "pointill_spray"], ["duel_holster", "rain_umbrella", "matrix_shades"], ["venus_arms", "gleaner_broom", "clapper"]]
+		var ki := 0
+		for st in m.world.stones:
+			var kit: Array = kits[ki % kits.size()]
+			st.parts = {"weapon": kit[0], "aux": kit[1], "prop": kit[2]}
+			ki += 1
 	if args.has("--settings"):
 		_show_settings(false)
 	if args.has("--catalog"):
@@ -549,6 +559,11 @@ func _start_match(seed_value := -1) -> void:
 		_host_start()
 		return
 	match_started_t = time
+	mu_frame = {}
+	mu_film = {}
+	mu_rewind = {}
+	mu_rec.clear()
+	mu_retake_outs.clear()
 	ko_by.clear()
 	highlight = ""
 	_shot_ko = 0
@@ -572,7 +587,7 @@ func _start_match(seed_value := -1) -> void:
 	m = Match.new()
 	var ws: String = settings.get("workshop", "junk")
 	if ws == "random":
-		ws = ["junk", "magic", "toon", "lab", "clock", "pirate"][seed_value % 6]
+		ws = ["junk", "magic", "toon", "lab", "clock", "pirate", "museum"][seed_value % 7]
 	var md0: String = settings.get("mode", "survival")
 	m.setup(n_play, cpu_flags, seed_value, settings["timed"], {"workshop": ws, "mode": md0, "placement": true,
 		"teams": plan.get("teams", settings.get("teams", [])), "parcel_every": settings.get("parcel_every", 2), "parcel_goal": settings.get("parcel_goal", 3),
@@ -699,6 +714,7 @@ func _update_play(delta: float) -> void:
 	_take_crown_scores()
 	_take_parcel_events()
 	_take_order_log()
+	_museum_tick(delta)
 	if turn_hold > 0.0:
 		turn_hold -= delta
 		return
@@ -726,6 +742,8 @@ func _update_play(delta: float) -> void:
 			while accum >= World.DT and (m.phase == "moving" or m.phase == "fx") and hitstop <= 0.0:
 				accum -= World.DT
 				m.world.step()
+				if m.phase == "moving":
+					_museum_record()
 				_consume_events()
 				if m.world.is_settled():
 					if m.phase == "fx":
@@ -909,8 +927,17 @@ func _after_shot() -> void:
 	var shooter_owner: int = m.world.shot.owner if m.world.shot != null else -1
 	var outs: Array = m.world.knockouts.duplicate()
 	m.finish_shot()
+	if m.phase == "retake":
+		mu_retake_outs = outs
+		mu_retake_owner = shooter_owner
+		_consume_events()
+		return
 	turn_hold = _sp("hold") + (0.4 if not outs.is_empty() else 0.0)
 	_consume_events()
+	_after_shot_logs(outs, shooter_owner)
+
+
+func _after_shot_logs(outs: Array, shooter_owner: int) -> void:
 	if shooter_owner < 0:
 		return
 	for k in outs:
@@ -1010,6 +1037,8 @@ func _consume_events() -> void:
 			"part":
 				var big: bool = e.get("big", false)
 				var part_id: String = e.get("part", "")
+				if not m.world.museum.is_empty():
+					_on_museum_part(e)
 				if part_id == "hero_set":
 					# 라스트 컷: 0.3초 만화 컷 정지
 					hitstop = maxf(hitstop, 0.3)
@@ -1085,7 +1114,12 @@ func _consume_events() -> void:
 			"crown":
 				_on_crown_event(e)
 			"walker", "replay":
-				_on_clock_event(e)
+				if ["fin", "velvet", "dolly"].has(str(e.get("kind", ""))):
+					_on_museum_event(e)
+				else:
+					_on_clock_event(e)
+			"m_wave", "m_aimline", "m_dodge", "m_sweep":
+				_on_museum_event(e)
 			"shell", "cannonball", "swing", "jump":
 				_on_pirate_event(e)
 			"parcel":
@@ -1418,6 +1452,7 @@ func _draw_inner() -> void:
 	_draw_gimmicks()
 	_draw_devices()
 	_draw_pirate_board()
+	_draw_museum_board()
 	_draw_clock_things()
 	_draw_crown_floor()
 	_draw_parcel()
@@ -1433,11 +1468,14 @@ func _draw_inner() -> void:
 	_ts = Time.get_ticks_usec()
 	_draw_projs()
 	_draw_fx()
+	_draw_museum_over()
+	_draw_museum_frame()
 	_draw_aim_over()
 	_draw_remote_marks()
 	_draw_draft_marks()
 	_perf_sec["fx"] = _perf_sec.get("fx", 0.0) + float(Time.get_ticks_usec() - _ts)
 	_ts = Time.get_ticks_usec()
+	_draw_museum_screen(vs)
 	if banner_t > 0.0:
 		_draw_banner(vs)
 	_draw_hud(vs)
@@ -2385,6 +2423,10 @@ func _draw_turn_card(r: Rect2) -> void:
 					sub = _crown_hint(pid)
 				elif m.mode == "parcel" and m.phase == "aim":
 					sub = _parcel_hint(pid)
+		"retake":
+			pid = m.current_player()
+			title = "%s 감독" % m.players[pid].name
+			sub = "다시 찍을지 고르는 중이에요"
 		"fx":
 			pid = m.current_player()
 			title = _fx_title()
@@ -3616,6 +3658,8 @@ func _can_apply(a: Dictionary) -> bool:
 			return m.phase == "draft" and m.current_drafter() == pid
 		"place":
 			return m.phase == "place" and not m.placements.has(pid)
+		"retake":
+			return m.phase == "retake" and m.current_player() == pid
 		_:
 			return m.phase == "aim" and m.current_player() == pid
 
@@ -3653,6 +3697,8 @@ func _apply_action(a: Dictionary) -> void:
 			var power := float(a["power"])
 			snd.play("flick_release", lerpf(-8.0, 0.0, power))
 			cpu_aim = {}
+			mu_rec.clear()
+			mu_rec_n = 0
 			m.shoot(int(a["stone"]), dir, power, {"charged": bool(a.get("charged", false)), "from_cloud": bool(a.get("from_cloud", false))})
 		"equip":
 			_do_equip(pid, str(a["part"]), int(a["stone"]), int(a.get("side", 1)), str(a.get("reserve", "")))
@@ -3666,6 +3712,8 @@ func _apply_action(a: Dictionary) -> void:
 				place_sent.erase(pid)
 				if m.phase != "place":
 					_on_placed()
+		"retake":
+			_apply_retake(bool(a.get("take", false)))
 		"skip":
 			_log("%s 시간 초과, 차례를 넘겨요" % m.players[pid].name, m.players[pid].color)
 			_banner("시간 초과")
@@ -4111,13 +4159,13 @@ func _workshop_row() -> Control:
 	row.columns = 1 if narrow_w else 3
 	row.add_theme_constant_override("h_separation", 10)
 	row.add_theme_constant_override("v_separation", 10)
-	for key in ["junk", "magic", "toon", "lab", "clock", "pirate"]:
+	for key in ["junk", "magic", "toon", "lab", "clock", "pirate", "museum"]:
 		var card := _workshop_card(key, cur == key)
 		card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		row.add_child(card)
 	v.add_child(row)
 	if cur == "random":
-		v.add_child(_label("공방을 열 때 여섯 공방 중 하나가 정해집니다.", 13, SUB))
+		v.add_child(_label("공방을 열 때 일곱 공방 중 하나가 정해집니다.", 13, SUB))
 	elif cur == "all":
 		v.add_child(_label("전체 부품 섞기: " + PartsData.WORKSHOPS["all"]["desc"] + " (설정에서 끌 수 있어요)", 13, SUB))
 	return v
@@ -4186,6 +4234,11 @@ func _workshop_card(key: String, on: bool) -> Control:
 			ssb.border_color = Color("6B4523")
 			ssb.set_border_width_all(3)
 			scol = Color("2A1E12")
+		"museum":
+			ssb.bg_color = Color("6B1E2E")
+			ssb.border_color = Color("D4AF37")
+			ssb.set_border_width_all(3)
+			scol = Color("F2D88A")
 		"clock":
 			ssb.bg_color = Color("141A2E")
 			ssb.border_color = Color("E2C27A")
@@ -4294,6 +4347,9 @@ func _draw_shutter() -> void:
 		return
 	if m != null and m.workshop == "pirate":
 		_draw_pirate_intro(vs)
+		return
+	if m != null and m.workshop == "museum":
+		_draw_museum_intro(vs)
 		return
 	if m != null and m.workshop == "toon":
 		_draw_manga_cover(vs)
@@ -5944,6 +6000,9 @@ func _intro_sounds() -> void:
 			get_tree().create_timer(0.2 + 0.28 * i).timeout.connect(func(): snd.play("timer_tick", -8.0, 0.9))   # 째깍
 	elif ws == "pirate":
 		snd.play("puck_slide_loop", -10.0, 0.5)   # 파도
+	elif ws == "museum":
+		for i in 2:
+			get_tree().create_timer(0.15 + 0.55 * i).timeout.connect(func(): snd.play("set_complete", -6.0, 0.42))   # 낮은 종 두 번
 	get_tree().create_timer(INTRO_CLOSED).timeout.connect(_intro_open_sound)
 
 
@@ -5958,6 +6017,8 @@ func _intro_open_sound() -> void:
 			snd.play("set_complete", -2.0, 0.55)   # 댕
 		"pirate":
 			snd.play("flick_pull", -4.0, 0.6)   # 돛이 부풀고 날아감
+		"museum":
+			snd.play("flick_pull", -2.0, 0.35)   # 무거운 문 끼익
 		"toon":
 			snd.play("flick_release", -2.0, 0.6)  # 책장 넘기는 소리와 쿵
 			get_tree().create_timer(0.35).timeout.connect(func(): snd.play("fx_parody_stamp", -4.0, 0.8))
@@ -8282,8 +8343,9 @@ func _wk_line(title: String, value: String, editable: bool, cb: Callable) -> Con
 ## 공방 이름표 (각 공방 간판 색)
 const WK_SIGN := {"junk": [Color("1A1D20"), Color("FFC23D"), Color("FFC23D")], "magic": [Color("4A3A8E"), Color("8A78E0"), Color("F1EEFF")],
 	"toon": [Color("FFFDF6"), Color("111111"), Color("111111")], "lab": [Color("FFFFFF"), Color("B6F23C"), Color("3F7A0E")],
-	"clock": [Color("1B2148"), Color("C9A15A"), Color("F3EAD3")], "pirate": [Color("3A2618"), Color("C9A15A"), Color("F3EAD3")]}
-const WK_SIGN_NAME := {"junk": "정비소", "magic": "마법", "toon": "만화", "lab": "연구소", "clock": "시계탑", "pirate": "선착장"}
+	"clock": [Color("1B2148"), Color("C9A15A"), Color("F3EAD3")], "pirate": [Color("3A2618"), Color("C9A15A"), Color("F3EAD3")],
+	"museum": [Color("6B1E2E"), Color("D4AF37"), Color("F2D88A")]}
+const WK_SIGN_NAME := {"junk": "정비소", "magic": "마법", "toon": "만화", "lab": "연구소", "clock": "시계탑", "pirate": "선착장", "museum": "뮤제"}
 
 
 func _wk_sign(key: String, on := false, size := 16) -> PanelContainer:
@@ -8400,8 +8462,8 @@ func _show_home() -> void:
 		var signs := HBoxContainer.new()
 		signs.add_theme_constant_override("separation", 10)
 		signs.position = Vector2(vs.x * 0.52 + 4.0, 62)
-		for k in ["junk", "magic", "toon", "lab", "clock", "pirate"]:
-			signs.add_child(_wk_sign(k, false, 18))
+		for k in ["junk", "magic", "toon", "lab", "clock", "pirate", "museum"]:
+			signs.add_child(_wk_sign(k, false, 16))
 		root.add_child(signs)
 		var wall := Control.new()
 		wall.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -8891,7 +8953,7 @@ func _wk_settings(v: VBoxContainer, editable: bool) -> void:
 	_wk_btn_style(rnd, Color("D2452F") if cur_ws == "random" else Color.WHITE, WK_INK, Color.WHITE if cur_ws == "random" else WK_INK, 6)
 	rnd.add_theme_font_override("font", font_display)
 	stamps.add_child(rnd)
-	for k in ["junk", "magic", "toon", "lab", "clock", "pirate"]:
+	for k in ["junk", "magic", "toon", "lab", "clock", "pirate", "museum"]:
 		var wk: String = k
 		var sbn := _button("", func():
 			if editable:
@@ -9031,7 +9093,7 @@ func _build_picker() -> void:
 	skr.alignment = BoxContainer.ALIGNMENT_CENTER
 	skr.add_theme_constant_override("separation", 6)
 	skr.add_child(_nw(_label("공방 재질 미리보기", 13, Color("F3EAD3"))))
-	skr.add_child(_seg([["", "기본"], ["clock", "시계탑"], ["pirate", "선착장"], ["magic", "마법"]], picker_skin, func(k):
+	skr.add_child(_seg([["", "기본"], ["clock", "시계탑"], ["pirate", "선착장"], ["museum", "뮤제"], ["magic", "마법"]], picker_skin, func(k):
 		picker_skin = k
 		_build_picker()))
 	left.add_child(skr)
@@ -9404,3 +9466,559 @@ func _update_again_note(n0: int, of: int) -> void:
 	for ch in overlay.get_children():
 		if ch is Label and ch.has_meta("again_note"):
 			ch.text = "모두 「한 판 더」를 누르면 같은 설정으로 바로 시작 · %d/%d" % [n0, of]
+
+
+# ══ 그랑 뮤제 (기획서 「그랑 뮤제 공방 기획서」 · 모션 「그랑 뮤제 · 모션」 · 디자인 「공방 · 그랑 뮤제」「그랑 뮤제 발동 연출」) ══
+const MU_GOLD := Color("B8902F")
+const MU_GOLD_L := Color("F2D88A")
+const MU_WINE := Color("6B1E2E")
+const MU_MARBLE := Color("EDE8DF")
+var mu_frame := {}            # 명화 발동: {stone, pos, style, name, mat, year, t}
+var mu_film := {}             # 영화 발동: {text, t}
+var mu_fx_shot := -1          # 한 샷에 큰 연출은 처음 발동한 부품 하나만
+var mu_rec: Array = []        # 다시 찍기용: 샷 동안 알 위치 기록 [{id: [pos, alive]}]
+var mu_rec_n := 0
+var mu_rewind := {}           # 되감기 재생: {frames, t, dur, final}
+var mu_cut_t := -9.0          # 「컷!」 표시 시각
+var mu_clap_t := -9.0         # 「딱! 테이크 2」 표시 시각
+var mu_retake_t := 0.0        # 「다시 찍기」 남은 시간
+var mu_retake_outs: Array = []
+var mu_retake_owner := -1
+var mu_retake_btn: Button = null
+
+
+## 연출 길이 배율: 다인전 · 빠르게 설정은 절반
+func _mu_k() -> float:
+	return 0.5 if (m != null and m.n >= 5) or int(settings.get("speed", 1)) == 2 else 1.0
+
+
+## 부품 발동 사건: 명화는 금 액자와 화풍, 영화는 영화 비율과 자막
+func _on_museum_part(e: Dictionary) -> void:
+	var pid: String = str(e.get("part", ""))
+	var art: Array = World.Museum.ART.get(pid, [])
+	if art.is_empty() or not e.get("big", false):
+		return
+	if m.world.shot_no == mu_fx_shot and m.world.shot != null:
+		return   # 이어서 발동한 부품은 작은 글자만
+	mu_fx_shot = m.world.shot_no
+	if art[0] == "paint":
+		var sid := -1
+		var best := 9999.0
+		for s in m.world.stones:
+			if s.alive and s.pos.distance_to(e["pos"]) < best:
+				best = s.pos.distance_to(e["pos"])
+				sid = s.id
+		mu_frame = {"stone": sid, "pos": e["pos"], "style": art[1], "name": PartsData.part_name(pid), "mat": art[2], "year": art[3], "t": 0.0}
+		snd.play("rail_bump", -2.0, 0.7)   # 액자 탁
+		if not _reduced() and not _all_cpu():
+			slowmo = maxf(slowmo, 0.4 * _mu_k())
+	else:
+		mu_film = {"text": "제%d장 · %s" % [int(e.get("film", 1)), str(e.get("text", PartsData.part_name(pid)))], "t": 0.0}
+		snd.play("puck_slide_loop", -12.0, 1.8)   # 영사기 돌아가는 소리
+
+
+func _on_museum_event(e: Dictionary) -> void:
+	match str(e["t"]):
+		"m_wave":
+			var d: Vector2 = e["dir"]
+			for k in 4:
+				fx.append({"k": "line", "a": e["pos"] + d * (World.STONE_R + k * 30.0) + d.orthogonal() * CELL, "b": e["pos"] + d * (World.STONE_R + k * 30.0) - d.orthogonal() * CELL,
+					"t": -0.05 * k, "life": 0.5, "c": Color("2E5E9E")})
+			snd.play("puck_slide_loop", -6.0, 0.6)
+		"m_aimline":
+			fx.append({"k": "line", "a": e["a"], "b": e["b"], "t": 0.0, "life": 0.5, "c": Color("E0533D")})
+			snd.play("fx_mech_shot", -2.0, 1.1)
+		"m_dodge":
+			fx.append({"k": "line", "a": e["a"], "b": e["b"], "t": 0.0, "life": 0.6, "c": Color(0.1, 0.1, 0.1)})
+			for k in 3:
+				fx.append({"k": "ghost", "pos": (e["a"] as Vector2).lerp(e["b"], k / 3.0), "t": -0.05 * k, "life": 0.4, "c": m.players[int(e["owner"])].color})
+		"m_sweep":
+			fx.append({"k": "ring", "pos": e["pos"], "t": 0.0, "life": 0.6, "r": e["radius"], "c": Color("D9C27A")})
+			snd.play("flick_pull", -6.0, 1.4)
+		"walker":
+			var kind := str(e.get("kind", ""))
+			if kind == "fin" or kind == "velvet" or kind == "dolly":
+				fx.append({"k": "line", "a": e["a"], "b": e["b"], "t": 0.0, "life": 0.6, "c": MU_WINE if kind == "velvet" else Color("3A3F45")})
+				snd.play("fx_mech_spring", -8.0, 0.7)
+
+
+## 경기장 위 그랑 뮤제 물건: 물감 · 붓/점묘 자국 · 레이저 · 바위 · 지느러미 · 벨벳 차단줄 · 촬영 레일
+func _draw_museum_board() -> void:
+	if m == null or m.world.museum.is_empty():
+		return
+	var w = m.world
+	var k := view_scale
+	var ms: Dictionary = w.museum
+	for g in w.gimmicks:
+		match str(g["kind"]):
+			"paint":
+				for it in g["items"]:
+					var pc := w2s(it["pos"])
+					var col: Color = Color("D2452F") if it["color"] == "red" else Color("2E5E9E")
+					var blob := PackedVector2Array()
+					for q in 20:
+						var a := TAU * q / 20.0
+						blob.append(pc + Vector2.from_angle(a) * float(it["r"]) * k * (0.9 + 0.12 * sin(a * 3.0 + float(it["r"]))))
+					draw_colored_polygon(blob, Color(col, 0.55))
+					blob.append(blob[0])
+					draw_polyline(blob, Color(col.darkened(0.3), 0.8), 2.0, true)
+					draw_circle(pc + Vector2(-0.3, -0.3) * float(it["r"]) * k, float(it["r"]) * k * 0.2, Color(1, 1, 1, 0.25))
+					_text_outline(pc + Vector2(0, 5), "미끄럼" if it["color"] == "red" else "끈적", 12, Color.WHITE, true)
+			"velvet":
+				var it2: Dictionary = g["items"][0]
+				var posts: Array = World.Museum.velvet_posts(it2, it2["pos"])
+				for i in 2:
+					var pa := w2s(posts[i])
+					var pb := w2s(posts[i + 1])
+					var sag := PackedVector2Array()
+					for q2 in 9:
+						var t := q2 / 8.0
+						sag.append(pa.lerp(pb, t) + Vector2(0, sin(PI * t) * 6.0 * k))
+					draw_polyline(sag, MU_WINE, 6.0 * k, true)
+					draw_polyline(sag, Color(1, 1, 1, 0.18), 2.0 * k, true)
+				var mv: Vector2 = it2["move"]
+				draw_dashed_line(w2s(it2["pos"]), w2s(it2["pos"] + mv * CELL), Color(MU_WINE, 0.6), 2.0, 6.0)
+				for p in posts:
+					var pp := w2s(p)
+					draw_circle(pp + Vector2(2, 3), World.Museum.POST_R * k, Color(0, 0, 0, 0.25))
+					draw_circle(pp, World.Museum.POST_R * k, MU_GOLD)
+					draw_circle(pp, World.Museum.POST_R * k * 0.5, MU_GOLD_L)
+					draw_arc(pp, World.Museum.POST_R * k, 0, TAU, 16, Art.outline, 1.5, true)
+			"dolly":
+				var it3: Dictionary = g["items"][0]
+				var rail := PackedVector2Array()
+				for q3 in 25:
+					rail.append(w2s(World.Museum.dolly_point(it3, q3 / 24.0)))
+				draw_polyline(rail, Color("6F6658"), 10.0 * k, true)
+				for q4 in 25:
+					var tp: Vector2 = World.Museum.dolly_point(it3, q4 / 24.0)
+					var tn: Vector2 = (World.Museum.dolly_point(it3, minf(1.0, q4 / 24.0 + 0.02)) - World.Museum.dolly_point(it3, maxf(0.0, q4 / 24.0 - 0.02))).normalized().orthogonal()
+					draw_line(w2s(tp - tn * 9.0), w2s(tp + tn * 9.0), Color("8A6F3E"), 3.0 * k, true)
+				draw_polyline(rail, Color("C3C9D0"), 2.0 * k, true)
+				var cp := w2s(World.Museum.cart_pos(it3))
+				var cr := World.Museum.CART_R * k
+				var nt := clampf(float(it3["t"]) + float(it3["dir"]) * World.Museum.DOLLY_STEP / maxf(1.0, World.Museum.dolly_len(it3)), 0.0, 1.0)
+				draw_dashed_line(cp, w2s(World.Museum.dolly_point(it3, nt)), Color(0.2, 0.2, 0.2, 0.5), 2.0, 6.0)
+				draw_rect(Rect2(cp - Vector2(cr, cr * 0.7) + Vector2(2, 3), Vector2(cr * 2.0, cr * 1.4)), Color(0, 0, 0, 0.25))
+				draw_rect(Rect2(cp - Vector2(cr, cr * 0.7), Vector2(cr * 2.0, cr * 1.4)), Color("2A2E35"))
+				draw_circle(cp + Vector2(cr * 0.2, 0), cr * 0.45, Color("1A1D21"))
+				draw_circle(cp + Vector2(cr * 0.2, 0), cr * 0.28, Color("5BB8E0"))
+				draw_circle(cp + Vector2(-cr * 0.55, -cr * 0.55), cr * 0.32, Color("3A3F45"))
+				draw_rect(Rect2(cp - Vector2(cr, cr * 0.7), Vector2(cr * 2.0, cr * 1.4)), Art.outline, false, 1.5)
+	for mk in ms.get("marks", []):
+		var mp := w2s(mk["pos"])
+		var r := World.Museum.MARK_R * k
+		if mk["kind"] == "swirl":
+			for j in 2:
+				var sw := PackedVector2Array()
+				for q5 in 12:
+					var t2 := q5 / 11.0
+					sw.append(mp + Vector2.from_angle(t2 * 4.5 + j * PI + float(mk["pos"].x)) * r * (0.25 + 0.65 * t2))
+				draw_polyline(sw, Color("5BB8E0", 0.7) if j == 0 else Color("F2C14E", 0.7), 3.0 * k, true)
+		else:
+			for q6 in 9:
+				var dp := mp + Vector2.from_angle(q6 * 2.4 + float(mk["pos"].y)) * r * (0.2 + 0.08 * q6)
+				draw_circle(dp, 2.6 * k, [Color("E0533D"), Color("3D6FD1"), Color("E9B935")][q6 % 3])
+	for lz in ms.get("lasers", []):
+		var la := w2s(lz["a"])
+		var lb := w2s(lz["b"])
+		draw_line(la, lb, Color(1.0, 0.1, 0.15, 0.25 + 0.15 * sin(time * 8.0)), 9.0 * k, true)
+		draw_line(la, lb, Color("FF4A52"), 2.5 * k, true)
+		draw_circle(la, 4.0 * k, Color("2A2E35"))
+		draw_circle(lb, 4.0 * k, Color("2A2E35"))
+	for b in ms.get("boulders", []):
+		var bp := w2s(b["pos"])
+		var brr: float = float(b["r"]) * k
+		draw_circle(bp + Vector2(4, 6), brr, Color(0, 0, 0, 0.3))
+		draw_circle(bp, brr, Color("9C8E78"))
+		var rot: float = time * 9.0
+		for q7 in 3:
+			var a7: float = rot + q7 * 2.1
+			draw_arc(bp + Vector2.from_angle(a7) * brr * 0.35, brr * 0.3, a7, a7 + 2.0, 6, Color("6E6252"), 2.5, true)
+		draw_arc(bp, brr, 0, TAU, 28, Art.outline, 2.5, true)
+	for f in ms.get("fins", []):
+		var fp := w2s(f["pos"])
+		var fr := World.Museum.FIN_R * k
+		for q8 in 3:
+			draw_arc(fp + Vector2(0, fr * 0.5), fr * (1.0 + q8 * 0.4) + sin(time * 3.0 + q8) * 2.0, PI * 1.1, PI * 1.9, 8, Color(1, 1, 1, 0.45), 1.5, true)
+		var fin := PackedVector2Array([fp + Vector2(-fr, fr * 0.5), fp + Vector2(fr * 0.1, -fr * 1.2), fp + Vector2(fr * 0.9, fr * 0.5)])
+		draw_colored_polygon(fin, Color("5A6470"))
+		fin.append(fin[0])
+		draw_polyline(fin, Art.outline, 1.5, true)
+		_status_badge(fp + Vector2(fr * 1.2, -fr), int(f["left"]))
+
+
+## 알 위 표식: 봉인(쇠사슬) · 우산 · 의자
+func _draw_museum_over() -> void:
+	if m == null or m.world.museum.is_empty():
+		return
+	var k := view_scale
+	for s in m.world.stones:
+		if not s.alive:
+			continue
+		var sp := w2s(s.pos)
+		var u := World.STONE_R * k
+		if s.status.has("m_seal"):
+			for q in 6:
+				var a := TAU * q / 6.0 + 0.3
+				draw_arc(sp + Vector2.from_angle(a) * u * 1.05, u * 0.22, 0, TAU, 10, Color("8A9099"), 2.5, true)
+			_text_outline(sp + Vector2(0, -u * 1.5), "봉인", 12, Color("C3C9D0"), true)
+		if s.status.has("umbrella"):
+			var top := sp + Vector2(0, -u * 1.25)
+			var arc := PackedVector2Array()
+			for q2 in 9:
+				arc.append(top + Vector2.from_angle(PI + PI * q2 / 8.0) * u * 0.9)
+			draw_colored_polygon(arc, Color("1E2E6E", 0.85))
+			draw_line(top, top + Vector2(0, u * 0.9), Color("2A1E12"), 2.0, true)
+		if s.status.has("chair"):
+			draw_rect(Rect2(sp + Vector2(u * 0.7, -u * 0.2), Vector2(u * 0.7, u * 0.5)), Color("C9A15A"))
+			draw_rect(Rect2(sp + Vector2(u * 0.7, -u * 0.2), Vector2(u * 0.7, u * 0.5)), Art.outline, false, 1.2)
+
+
+## 명화 액자 (경기장 위, 발동한 알 둘레): 0.18초 튀어나왔다 맞춰지고, 0.4초 화풍, 설명 카드
+func _draw_museum_frame() -> void:
+	if mu_frame.is_empty():
+		return
+	var t: float = mu_frame["t"]
+	var hold := 0.4 * _mu_k()
+	var life := 0.18 + hold + 0.85 * _mu_k()
+	if t > life:
+		mu_frame = {}
+		return
+	var s = m.world.get_stone(int(mu_frame["stone"]))
+	var c := w2s(s.pos if s != null and s.alive else mu_frame["pos"])
+	var k := view_scale
+	var sc := 1.0
+	if t < 0.18:
+		sc = 1.15 * t / 0.18
+	elif t < 0.24:
+		sc = 1.15 - (t - 0.18) / 0.06 * 0.15
+	elif t > life - 0.2:
+		sc = maxf(0.0, (life - t) / 0.2)
+	var h := 62.0 * k * sc
+	if h < 1.0:
+		return
+	var rect := Rect2(c - Vector2(h, h), Vector2(h, h) * 2.0)
+	# 화풍 겹침 (움직임 줄이기 설정이면 생략)
+	if t > 0.05 and t < 0.18 + hold + 0.2 and not _reduced():
+		var a := 0.85
+		match str(mu_frame["style"]):
+			"star":
+				draw_rect(rect, Color("1E2E6E", a))
+				for q in 12:
+					var p := rect.position + Vector2(fposmod(q * 37.0, rect.size.x), fposmod(q * 53.0, rect.size.y))
+					draw_arc(p, 6.0 * k, time * 3.0 + q, time * 3.0 + q + 4.0, 8, [Color("5BB8E0"), Color("F2C14E"), Color("9FC8F0")][q % 3], 3.0 * k, true)
+			"wave":
+				draw_rect(rect, Color("EFE6CF", a))
+				var wv := PackedVector2Array([rect.position + Vector2(0, h * 1.6), rect.position + Vector2(h * 0.5, h * 0.6), rect.position + Vector2(h, h * 1.0),
+					rect.position + Vector2(h * 1.4, h * 0.4), rect.position + Vector2(h * 2.0, h * 0.8), rect.end, rect.position + Vector2(0, h * 2.0)])
+				draw_colored_polygon(wv, Color("2E5E9E", a))
+			"dots":
+				var st := 6.0 * k
+				var yy := rect.position.y
+				while yy < rect.end.y:
+					var xx := rect.position.x
+					while xx < rect.end.x:
+						var dd := Vector2(xx, yy).distance_to(c)
+						draw_circle(Vector2(xx, yy), 2.0 * k, Color("3D6FD1", a) if dd < 26.0 * k else Color("F2EDE2", a))
+						xx += st
+					yy += st
+			"scream":
+				draw_rect(rect, Color("E07B39", a))
+				for q2 in 8:
+					var y0 := rect.position.y + h * 2.0 * q2 / 8.0
+					var ln := PackedVector2Array()
+					for q3 in 9:
+						ln.append(Vector2(rect.position.x + h * 2.0 * q3 / 8.0, y0 + sin(q3 * 0.9 + q2 + time * 4.0) * 5.0 * k))
+					draw_polyline(ln, [Color("3D6FD1"), Color("F2C14E"), Color("E0533D")][q2 % 3], 4.0 * k, true)
+			"smile":
+				draw_rect(rect, Color("6B5A2E", a))
+				draw_circle(c, h * 0.55, Color("C9A15A", 0.6))
+			"field":
+				draw_rect(rect, Color("D9C27A", a))
+				draw_rect(Rect2(rect.position + Vector2(0, h * 1.3), Vector2(h * 2.0, h * 0.7)), Color("A8864A", a))
+			"fresco":
+				draw_rect(rect, Color("9FC8E8", a))
+				draw_rect(Rect2(rect.position + Vector2(0, h * 1.5), Vector2(h * 2.0, h * 0.5)), Color("D8B48A", a))
+			"marble":
+				draw_rect(rect, Color("EDE8DF", a))
+				for q4 in 4:
+					draw_line(rect.position + Vector2(q4 * h * 0.5, 0), rect.position + Vector2(q4 * h * 0.5 + h * 0.6, h * 2.0), Color("B9B1A3", 0.8), 1.5, true)
+		if s != null and s.alive:
+			Art.draw_puck_top(self, c, World.STONE_R * k, m.players[s.owner].color, s.owner, s.facing, 1.0)
+	draw_rect(rect.grow(6.0 * k * sc), MU_GOLD, false, 14.0 * k * sc)
+	draw_rect(rect.grow(6.0 * k * sc), MU_GOLD_L, false, 3.0 * k * sc)
+	# 작품 설명 카드
+	var ct := t - 0.18
+	if ct > 0.0:
+		var up := clampf(ct / 0.25, 0.0, 1.0)
+		var fade := clampf((life - t) / 0.2, 0.0, 1.0)
+		var cr := Rect2(c + Vector2(-96, h + 20.0 - 12.0 * up), Vector2(192, 42))
+		var al := up * fade
+		draw_rect(cr, Color("F7F1E3", al))
+		draw_rect(cr, Color("B9A57E", al), false, 1.5)
+		draw_string(font_bold, cr.position + Vector2(10, 17), str(mu_frame["name"]), HORIZONTAL_ALIGNMENT_LEFT, 176, 13, Color("2A1E12", al))
+		draw_string(font, cr.position + Vector2(10, 34), "%s, 알까기 · %s" % [mu_frame["mat"], mu_frame["year"]], HORIZONTAL_ALIGNMENT_LEFT, 176, 10, Color("6B5A45", al))
+
+
+## 화면 전체: 영화 비율 · 세피아 · 자막, 「컷!」 · 되감기 · 「딱! 테이크 2」
+func _draw_museum_screen(vs: Vector2) -> void:
+	if m == null:
+		return
+	if not mu_film.is_empty():
+		var t: float = mu_film["t"]
+		var txt: String = mu_film["text"]
+		var hold := 0.25 + txt.length() * 0.04 * _mu_k() + 0.9 * _mu_k()
+		if t > hold + 0.2:
+			mu_film = {}
+		else:
+			var inb := clampf(t / 0.2, 0.0, 1.0)
+			var outb := clampf((hold + 0.2 - t) / 0.2, 0.0, 1.0)
+			var bk := 1.0 - pow(1.0 - minf(inb, outb), 3.0)
+			var bar := vs.y * 0.11 * bk
+			if not _reduced():
+				draw_rect(Rect2(Vector2.ZERO, vs), Color(0.55, 0.4, 0.2, 0.22 * bk))
+				var rng := RandomNumberGenerator.new()
+				rng.seed = int(time * 24.0)
+				for q in 40:
+					draw_rect(Rect2(Vector2(rng.randf() * vs.x, rng.randf() * vs.y), Vector2(2, 2)), Color(0, 0, 0, 0.35 * bk))
+				draw_line(Vector2(rng.randf() * vs.x, 0), Vector2(rng.randf() * vs.x, vs.y), Color(0, 0, 0, 0.18 * bk), 1.0)
+			draw_rect(Rect2(0, 0, vs.x, bar), Color("0B0B0D"))
+			draw_rect(Rect2(0, vs.y - bar, vs.x, bar), Color("0B0B0D"))
+			var shown := clampi(int((t - 0.2) / (0.04 * _mu_k())), 0, txt.length())
+			if shown > 0:
+				draw_string(font_bold, Vector2(0, vs.y - bar * 0.4), txt.substr(0, shown), HORIZONTAL_ALIGNMENT_CENTER, vs.x, 22, Color("F2EDE2", outb))
+	# 컷! (0.3초 정지)
+	var ct := time - mu_cut_t
+	if ct >= 0.0 and ct < 0.55:
+		var s := clampf(0.4 + ct / 0.18 * 0.6, 0.4, 1.0) if ct < 0.18 else 1.0
+		_mu_big("컷!", vs * Vector2(0.46, 0.36), 72.0 * s, Color("E0533D"))
+	# 되감기: 주사선 + 「◀◀ 되감기」
+	if not mu_rewind.is_empty():
+		var off := fposmod(time * 36.0, 9.0)
+		var y := off
+		while y < vs.y:
+			draw_line(Vector2(0, y), Vector2(vs.x, y), Color(1, 1, 1, 0.12), 2.0)
+			y += 9.0
+		_mu_big("◀◀ 되감기", Vector2(vs.x * 0.04 + 110, vs.y * 0.12), 30.0, Color.WHITE)
+	# 딱! 테이크 2
+	var kt := time - mu_clap_t
+	if kt >= 0.0 and kt < 1.0:
+		var cc := Vector2(vs.x * 0.5, vs.y * 0.62)
+		var lid := clampf(kt / 0.15, 0.0, 1.0)
+		draw_rect(Rect2(cc + Vector2(-80, -12), Vector2(160, 92)), Color("1E1E24"))
+		draw_set_transform(cc + Vector2(-80, -12), deg_to_rad(-25.0 * (1.0 - lid)), Vector2.ONE)
+		draw_rect(Rect2(0, -24, 160, 24), Color("1E1E24"))
+		for q2 in 4:
+			draw_colored_polygon(PackedVector2Array([Vector2(12 + q2 * 40, -24), Vector2(28 + q2 * 40, -24), Vector2(16 + q2 * 40, 0), Vector2(0 + q2 * 40, 0)]), Color("F2EDE2"))
+		draw_set_transform_matrix(Transform2D.IDENTITY)
+		draw_string(font_bold, cc + Vector2(-80, 46), "테이크 2", HORIZONTAL_ALIGNMENT_CENTER, 160, 22, Color("F2EDE2"))
+		if lid >= 1.0:
+			_mu_big("딱!", cc + Vector2(120, -60), 58.0, Color("FFE08A"))
+	# 다시 찍기 남은 시간 (사람 차례)
+	if m.phase == "retake" and mu_retake_t > 0.0:
+		var p: Dictionary = m.players[m.current_player()]
+		var who := "다시 찍을까요?" if _is_mine(p.id) else "%s 감독이 다시 찍을지 고르는 중" % p.name
+		_text_outline(Vector2(vs.x * 0.5, vs.y * 0.3), who, 22, Color.WHITE, true)
+
+
+func _mu_big(t: String, p: Vector2, size: float, col: Color) -> void:
+	var sz := int(maxf(8.0, size))
+	for o in [Vector2(-3, 0), Vector2(3, 0), Vector2(0, -3), Vector2(0, 3), Vector2(-2, -2), Vector2(2, 2)]:
+		draw_string(font_display, p + o - Vector2(200, 0), t, HORIZONTAL_ALIGNMENT_CENTER, 400, sz, Color("1A1D21"))
+	draw_string(font_display, p - Vector2(200, 0), t, HORIZONTAL_ALIGNMENT_CENTER, 400, sz, col)
+
+
+## 매 프레임: 연출 시간 · 다시 찍기 버튼 · 되감기 재생
+func _museum_tick(delta: float) -> void:
+	if m == null:
+		return
+	if not mu_frame.is_empty():
+		mu_frame["t"] = float(mu_frame["t"]) + delta
+	if not mu_film.is_empty():
+		mu_film["t"] = float(mu_film["t"]) + delta
+	if not mu_rewind.is_empty():
+		mu_rewind["t"] = float(mu_rewind["t"]) + delta
+		var frames: Array = mu_rewind["frames"]
+		var u := clampf((float(mu_rewind["t"]) - 0.3) / float(mu_rewind["dur"]), 0.0, 1.0)
+		if not frames.is_empty() and float(mu_rewind["t"]) >= 0.3:
+			var fr: Dictionary = frames[clampi(int((1.0 - u) * (frames.size() - 1)), 0, frames.size() - 1)]
+			for s in m.world.stones:
+				if fr.has(s.id):
+					s.pos = fr[s.id][0]
+					s.alive = fr[s.id][1]
+		if u >= 1.0:
+			var fin: Dictionary = mu_rewind["final"]
+			for s2 in m.world.stones:
+				if fin.has(s2.id):
+					s2.pos = fin[s2.id][0]
+					s2.alive = fin[s2.id][1]
+			mu_rewind = {}
+			mu_clap_t = time
+			snd.play("fx_parody_stamp", 0.0, 1.2)   # 딱
+			_banner("테이크 2", POWER, "같은 알로 다시 조준하세요")
+	# 다시 찍기 결정
+	var need_btn := false
+	if m.phase == "retake" and state == "play":
+		var pid := m.current_player()
+		if mu_retake_t <= 0.0 and not mu_retake_btn_used:
+			mu_retake_t = 3.0
+		if m.players[pid].cpu:
+			if _drives_cpu() and not mu_retake_sent:
+				mu_retake_t -= delta
+				if mu_retake_t <= 2.4:
+					mu_retake_sent = true
+					_act({"k": "retake", "pid": pid, "take": _cpu_wants_retake(pid)})
+		elif _is_mine(pid):
+			need_btn = not mu_retake_sent
+			mu_retake_t -= delta
+			if mu_retake_t <= 0.0 and not mu_retake_sent:
+				mu_retake_sent = true
+				_act({"k": "retake", "pid": pid, "take": false})
+		elif online == "host":
+			# 손님 응답이 없으면 방장이 대신 넘긴다
+			mu_retake_t -= delta
+			if mu_retake_t <= -4.0 and not mu_retake_sent:
+				mu_retake_sent = true
+				_act({"k": "retake", "pid": pid, "take": false})
+	else:
+		mu_retake_t = 0.0
+		mu_retake_sent = false
+		mu_retake_btn_used = false
+	if need_btn and mu_retake_btn == null:
+		mu_retake_btn = _primary(_button("다시 찍기", func():
+			if not mu_retake_sent and m != null and m.phase == "retake":
+				mu_retake_sent = true
+				_act({"k": "retake", "pid": m.current_player(), "take": true})))
+		mu_retake_btn.custom_minimum_size = Vector2(220, 64)
+		mu_retake_btn.add_theme_font_override("font", font_display)
+		mu_retake_btn.add_theme_font_size_override("font_size", 28)
+		ui.add_child(mu_retake_btn)
+	if mu_retake_btn != null:
+		if not need_btn:
+			mu_retake_btn.queue_free()
+			mu_retake_btn = null
+		else:
+			var vs := get_viewport_rect().size
+			mu_retake_btn.position = Vector2(vs.x * 0.5 - 110.0, vs.y * 0.62)
+			mu_retake_btn.text = "다시 찍기 · %d" % int(ceil(maxf(0.0, mu_retake_t)))
+
+
+var mu_retake_sent := false
+var mu_force_cut := false     # 디버그 --cut: CPU가 늘 다시 찍는다
+var mu_retake_btn_used := false
+
+
+## CPU: 그 샷에서 내 알을 잃었는데 상대 알은 덜 떨어뜨렸으면 다시 찍는다
+func _cpu_wants_retake(pid: int) -> bool:
+	if mu_force_cut:
+		return true
+	var mine := 0
+	var theirs := 0
+	for k in mu_retake_outs:
+		if int(k["owner"]) == pid:
+			mine += 1
+		else:
+			theirs += 1
+	return mine > theirs or (mine > 0 and theirs == 0)
+
+
+## 샷 동안 알 위치를 기록한다 (되감기 재생용)
+func _museum_record() -> void:
+	if m.retake_snap == null:
+		return
+	mu_rec_n += 1
+	if mu_rec_n % 3 != 0 or mu_rec.size() > 900:
+		return
+	var fr := {}
+	for s in m.world.stones:
+		fr[s.id] = [s.pos, s.alive]
+	mu_rec.append(fr)
+
+
+## 「다시 찍기」 결정 적용
+func _apply_retake(take: bool) -> void:
+	if m.phase != "retake":
+		return
+	var outs := mu_retake_outs.duplicate()
+	var owner := mu_retake_owner
+	if take:
+		var frames := mu_rec.duplicate()
+		m.retake(true)
+		var fin := {}
+		for s in m.world.stones:
+			fin[s.id] = [s.pos, s.alive]
+		var dur := clampf(frames.size() * 3.0 * World.DT * 0.5, 0.5, 2.5)
+		if _reduced():
+			dur = 0.3
+		mu_rewind = {"frames": frames, "t": 0.0, "dur": dur, "final": fin}
+		ko_pills.clear()
+		mu_cut_t = time
+		hitstop = 0.0
+		fx.clear()
+		snd.play("fx_parody_stamp", 2.0, 0.7)   # 메가폰 「컷!」
+		get_tree().create_timer(0.3).timeout.connect(func(): snd.play("flick_pull", -2.0, 2.2))   # 테이프 되감기
+		turn_hold = 0.3 + dur + 0.6
+		turn_key = ""
+		_log("%s 감독: 컷! 다시 찍어!" % m.players[m.current_player()].name, m.players[m.current_player()].color)
+	else:
+		m.retake(false)
+		turn_hold = _sp("hold") + (0.4 if not outs.is_empty() else 0.0)
+		_consume_events()
+		_after_shot_logs(outs, owner)
+	mu_rec.clear()
+	mu_retake_outs.clear()
+
+
+## 입장: 청동 문 두 짝 위에 버건디 간판. 1.3초 뒤 문이 경첩 쪽으로 접히며 열리고 회랑의 빛이 한 번 번진다.
+func _draw_museum_intro(vs: Vector2) -> void:
+	var k := _intro_k()
+	var half := vs.x * 0.5
+	# 문 너머 회랑 빛
+	if k > 0.0:
+		var glow := sin(PI * minf(1.0, k * 1.2))
+		shutter.draw_rect(Rect2(Vector2.ZERO, vs), Color(1.0, 0.95, 0.77, 0.55 * glow * (1.0 - k)))
+	for side in [-1, 1]:
+		var w: float = half * (1.0 - k)
+		var x0: float = 0.0 if side < 0 else vs.x - w
+		var skew: float = vs.y * 0.06 * k * float(side)
+		var hinge_x: float = 0.0 if side < 0 else vs.x
+		var edge_x: float = x0 + w if side < 0 else x0
+		var poly := PackedVector2Array([Vector2(hinge_x, 0), Vector2(edge_x, skew), Vector2(edge_x, vs.y - skew), Vector2(hinge_x, vs.y)])
+		shutter.draw_colored_polygon(poly, Color("5A4530").lerp(Color("4E3B24"), 0.5))
+		poly.append(poly[0])
+		shutter.draw_polyline(poly, Color("2E2418"), 6.0, true)
+		if w < 8.0:
+			continue
+		# 문 판 두 개 (위·아래)
+		for row in 2:
+			var ry: float = vs.y * (0.08 + 0.46 * row)
+			var rh: float = vs.y * 0.38
+			var inset: float = w * 0.12
+			var pa := Vector2(minf(hinge_x, edge_x) + inset, ry)
+			var pr := Rect2(pa, Vector2(w - inset * 2.0, rh))
+			shutter.draw_rect(pr, Color("7A5C3A"))
+			shutter.draw_rect(pr, Color("3A2C1A"), false, 3.0)
+			shutter.draw_rect(pr.grow(-10), Color(0.95, 0.8, 0.45, 0.12), false, 2.0)
+		# 고리 손잡이
+		var kx: float = edge_x - 0.12 * w if side < 0 else edge_x + 0.12 * w
+		shutter.draw_arc(Vector2(kx, vs.y * 0.52), 18.0, 0, TAU, 24, Color("D4AF37"), 5.0, true)
+		shutter.draw_circle(Vector2(kx, vs.y * 0.52 - 18.0), 6.0, Color("8A6A2E"))
+	# 간판: 문이 열리기 시작하면 위로 사라진다
+	if m != null and k < 0.4:
+		var a := 1.0 - k / 0.4
+		var nm := "오늘의 공방 · " + str(PartsData.WORKSHOPS["museum"]["name"])
+		var bw := font_display.get_string_size(nm, HORIZONTAL_ALIGNMENT_LEFT, -1, 32).x + 64.0
+		var box := Rect2(vs.x * 0.5 - bw * 0.5, vs.y * 0.08 - 14.0 * k / 0.4, bw, 64)
+		var sb := StyleBoxFlat.new()
+		sb.bg_color = Color(MU_WINE, a)
+		sb.border_color = Color(0.83, 0.69, 0.22, a)
+		sb.set_border_width_all(3)
+		sb.set_corner_radius_all(6)
+		sb.draw(shutter.get_canvas_item(), box)
+		var gleam := clampf(1.0 - absf(shutter_t - 0.7) * 3.0, 0.0, 1.0)
+		shutter.draw_string(font_display, box.position + Vector2(0, 44), nm, HORIZONTAL_ALIGNMENT_CENTER, bw, 32, Color("F2D88A").lerp(Color.WHITE, gleam * 0.6) * Color(1, 1, 1, a))
+		if _mode_suffix() != "":
+			shutter.draw_string(font_bold, box.position + Vector2(0, 84), _mode_suffix().strip_edges(), HORIZONTAL_ALIGNMENT_CENTER, bw, 14, Color(0.95, 0.9, 0.8, a))
+		if a > 0.99:
+			_draw_intro_gimmicks(vs, vs.y * 0.86 - 40.0, MU_WINE, Color("F2D88A"))

@@ -125,6 +125,8 @@ func setup(n_players: int, cpu_flags: Array, seed_value: int, timed: bool, opts 
 		var wrng := RandomNumberGenerator.new()
 		wrng.seed = seed_value * 17 + 3
 		World.Pirate.setup(world, wrng)
+	if workshop == "museum":
+		World.Museum.setup(world)
 	world.gimmicks = World.Gm.generate(workshop, n, world, gimmick_rng)
 	homes.clear()
 	for st in world.stones:
@@ -469,6 +471,13 @@ func shoot(stone_id: int, dir: Vector2, power: float, opts := {}) -> bool:
 		opts["remote_by"] = current_player()
 	if opts.get("from_cloud", false):
 		world.move_to_cloud(stone_id)
+	if not retake_active.is_empty():
+		if stone_id != int(retake_active["stone"]):
+			return false
+		retake_active = {}
+	elif s.owner == current_player() and PartsData.set_complete(s.parts, "director") and int(retake_used.get(s.owner, 0)) != round_no and bonus_active.is_empty():
+		retake_snap = world.clone()
+		retake_stone = stone_id
 	world.launch(stone_id, dir, power, opts)
 	phase = "moving"
 	shots += 1
@@ -476,7 +485,12 @@ func shoot(stone_id: int, dir: Vector2, power: float, opts := {}) -> bool:
 
 
 ## 모든 움직임이 끝난 뒤 부른다: 탈락 정리 → 승패 확인 → 다음 차례.
+## 영화감독 세트로 쏜 샷이면 먼저 「다시 찍기」를 고른다 (phase = "retake", retake(true/false)).
 func finish_shot() -> void:
+	if retake_snap != null and phase == "moving":
+		phase = "retake"
+		return
+	retake_snap = null
 	if world.shot != null:
 		_after_shot_rules(world.shot.ex, world.shot.stone_id)
 	# 개조 더비: 상대 알을 떨어뜨리면 쏜 사람에게 1점 (자멸·원인 불명은 0점)
@@ -539,6 +553,7 @@ func _crown_score(start_holder: int, taker: int) -> bool:
 
 
 func _settle_turn() -> void:
+	retake_active = {}
 	# 차례 종료 이벤트 (태엽 시계탑): 움직임이 생기면 다 멈춘 뒤 이어서
 	if not turn_end_done:
 		turn_end_done = true
@@ -587,6 +602,7 @@ func _settle_turn() -> void:
 		return
 	# 바퀴 끝
 	var chest := World.Pirate.round_end(world, round_no)
+	World.Museum.round_end(world, round_no)
 	for cp in chest:
 		extra_offer[cp] = int(extra_offer.get(cp, 0)) + int(chest[cp])
 		order_log.append({"kind": "chest", "pid": cp})
@@ -958,6 +974,35 @@ func _parcel_settle() -> bool:
 	return false
 
 
+# ── 컷! 다시 찍어! (영화감독 세트, SYS-17) ─────────────────
+var retake_snap = null        # 샷 직전 판 (world.clone)
+var retake_stone := -1
+var retake_used := {}         # pid → 다시 찍기를 쓴 바퀴
+var retake_active := {}       # 다시 찍는 차례: 이 알만 쏠 수 있다 (다시 찍은 샷은 다시 찍을 수 없다)
+
+
+## 다시 찍기 결정. take = true 면 판 전체를 샷 직전으로 되돌리고 같은 알로 다시 조준한다.
+func retake(take: bool) -> bool:
+	if phase != "retake":
+		return false
+	if take and retake_snap != null:
+		var pid := current_player()
+		retake_used[pid] = round_no
+		world = retake_snap
+		world.record_events = true
+		world.events = []
+		world.knockouts.clear()
+		retake_active = {"stone": retake_stone, "pid": pid}
+		retake_snap = null
+		shots = maxi(0, shots - 1)
+		phase = "aim"
+		return true
+	retake_snap = null
+	phase = "moving"
+	finish_shot()
+	return true
+
+
 # ── 차례 이벤트 큐 (SYS-01) · 차례 순서 조작 (SYS-02) ─────────
 ## fx: 바퀴 시작 · 차례 시작 · 차례 종료에 터지는 효과가 알을 움직이면, 그 움직임이 다 멈출 때까지 phase = "fx".
 ## 화면(또는 테스트)이 판을 돌리다가 멈추면 finish_fx() 를 불러 경기를 이어 간다.
@@ -999,9 +1044,11 @@ func _start_fx(stage: String) -> bool:
 		"turn_start":
 			moved = World.Clock.turn_start(world, current_player())
 			moved = World.Pirate.turn_start(world, current_player()) or moved
+			moved = World.Museum.turn_start(world, current_player()) or moved
 		"turn_end":
 			moved = World.Clock.turn_end(world, current_player())
 			moved = World.Pirate.turn_end(world, current_player()) or moved
+			moved = World.Museum.turn_end(world, current_player()) or moved
 	if not moved:
 		return false
 	fx_stage = stage

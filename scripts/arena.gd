@@ -48,6 +48,14 @@ static func background(ci: CanvasItem, rect: Rect2, th: Dictionary, t := 0.0) ->
 				var sy := fposmod(sin(i * 78.233) * 12345.678, 1.0)
 				var sr := 0.3 + fposmod(sin(i * 3.1) * 999.0, 1.0) * 1.4
 				ci.draw_circle(rect.position + Vector2(sx, sy) * rect.size, sr, Color(220 / 255.0, 225 / 255.0, 1.0, 0.35))
+		"museum":
+			# 버건디 벨벳 벽과 금 액자들
+			for i in 6:
+				var fx0 := rect.position.x + fposmod(i * 331.0 + 40.0, maxf(1.0, rect.size.x))
+				var fy0 := rect.position.y + fposmod(i * 197.0 + 50.0, maxf(1.0, rect.size.y))
+				var fw := 70.0 + fposmod(i * 37.0, 50.0)
+				var fh := fw * (0.75 + 0.1 * float(i % 3))
+				ci.draw_rect(Rect2(fx0, fy0, fw, fh), Color(184 / 255.0, 144 / 255.0, 47 / 255.0, 0.10), false, 6.0)
 		"pirate":
 			# 바다 물결
 			var wy := rect.position.y + 20.0
@@ -127,6 +135,16 @@ static func board(ci: CanvasItem, c: Vector2, R: float, u: float, square: bool, 
 			var p1 := c + Vector2.from_angle(a0) * (R + 0.18 * u)
 			var p2 := c + Vector2.from_angle(a0 + TAU / twists * 0.9) * (R + 0.62 * u)
 			ci.draw_line(p1, p2, Color("8A6F3E"), maxf(1.5, 0.09 * u), true)
+	if deco == "museum":
+		# 금박 액자 테두리: 구슬 장식과 안쪽 버건디 선
+		_shape_line(ci, c, R + 0.08 * u, square, Color("6B1E2E"), maxf(1.5, 0.08 * u))
+		_shape_line(ci, c, R + 0.5 * u, square, Color("F2D88A"), maxf(1.0, 0.05 * u))
+		if not square:
+			var beads := 72
+			for i in beads:
+				var bp := c + Vector2.from_angle(TAU * i / beads) * (R + 0.32 * u)
+				ci.draw_circle(bp, maxf(1.2, 0.07 * u), Color("E8C766"))
+				ci.draw_arc(bp, maxf(1.2, 0.07 * u), 0, TAU, 8, Color("5E4520"), 1.0, true)
 	if deco == "clock" and not square:
 		# 황동 톱니 테두리
 		var teeth := 72
@@ -208,6 +226,23 @@ static func board(ci: CanvasItem, c: Vector2, R: float, u: float, square: bool, 
 			var h := R if square else sqrt(maxf(0.0, R * R - k * k))
 			ci.draw_line(c + Vector2(-h, k), c + Vector2(h, k), Color(0, 0, 0, 0.12), maxf(1.0, 0.06 * u))
 			k += 0.6 * u
+	elif deco == "museum":
+		# 흰 대리석: 옅은 회색 결
+		for i in 14:
+			var sx := fposmod(sin(i * 12.9898) * 43758.5453, 1.0) * 2.0 - 1.0
+			var sy := fposmod(sin(i * 78.233) * 12345.678, 1.0) * 2.0 - 1.0
+			var p0 := c + Vector2(sx, sy) * R * 0.85
+			var pts := PackedVector2Array([p0])
+			var ang := fposmod(i * 2.4, TAU)
+			for q in 5:
+				ang += sin(i * 3.1 + q) * 0.6
+				pts.append(pts[pts.size() - 1] + Vector2.from_angle(ang) * u * 0.9)
+			var ok := true
+			for q2 in pts:
+				if (q2 - c).length() > R * 0.97 and not square:
+					ok = false
+			if ok:
+				ci.draw_polyline(pts, Color(185 / 255.0, 177 / 255.0, 163 / 255.0, 0.45), maxf(1.0, 0.04 * u * (1.0 + float(i % 3))), true)
 	elif deco == "pirate":
 		# 갑판 널: 가로 판자와 못 자국
 		var py := -R

@@ -36,7 +36,7 @@ func _initialize() -> void:
 		"test_mushroom_and_wind", "test_second_step", "test_rebound_and_string", "test_at_field_and_beam",
 		"test_hero_band_and_shoes", "test_all_parts_have_art",
 		"test_workshop_pools", "test_offer_fits_empty_slots", "test_min_power_moves_one_cell",
-		"test_knockout_causes", "test_derby_mode", "test_gimmicks_junk", "test_start_placement", "test_upgrades", "test_gimmicks_magic_toon", "test_lab_parts", "test_lab_gimmicks", "test_draft_pass", "test_playtest_fixes", "test_crown_rules", "test_crown_match", "test_parcel_physics", "test_parcel_match", "test_clock_parts", "test_clock_flow", "test_pirate_board", "test_pirate_parts", "test_pirate_flow", "test_ws_upgrades",
+		"test_knockout_causes", "test_derby_mode", "test_gimmicks_junk", "test_start_placement", "test_upgrades", "test_gimmicks_magic_toon", "test_lab_parts", "test_lab_gimmicks", "test_draft_pass", "test_playtest_fixes", "test_crown_rules", "test_crown_match", "test_parcel_physics", "test_parcel_match", "test_clock_parts", "test_clock_flow", "test_pirate_board", "test_pirate_parts", "test_pirate_flow", "test_ws_upgrades", "test_museum_parts", "test_museum_board", "test_museum_retake", "test_museum_bot_match",
 	]
 	for t in tests:
 		var before := failures
@@ -1216,9 +1216,13 @@ func test_all_parts_have_art() -> void:
 		"merge_bolt", "decoy", "split_capsule", "weight", "shrink_ray", "remote", "sticky", "tilter", "coupling", "repel", "ghost", "inflate"]
 	hand.append_array(PartsData.WORKSHOPS["clock"]["parts"])
 	hand.append_array(PartsData.WORKSHOPS["pirate"]["parts"])
+	var WS = load("res://scripts/art_ws_data.gd")
+	for id in PartsData.WORKSHOPS["museum"]["parts"]:
+		check(WS.SHAPES.has(id), "museum art for " + id)
+		hand.append(id)
 	for id in PartsData.ids():
 		check(hand.has(id) or AD.SHAPES.has(id), "art for " + id)
-	check(PartsData.ids().size() == 112, "112 parts: %d" % PartsData.ids().size())
+	check(PartsData.ids().size() == 129, "129 parts: %d" % PartsData.ids().size())
 
 
 # ── 오늘의 공방 ──────────────────────────────────────────
@@ -2077,3 +2081,271 @@ func test_ws_upgrades() -> void:
 	b.ups["weapon"] = true
 	shoot(w3, b.id, Vector2.UP, 0.1)
 	check(int(w3.clock["walkers"][0]["left"]) == 3, "slow arrow flies three turns")
+
+
+# ── 그랑 뮤제 ────────────────────────────────────────────
+
+func _museum_world() -> World:
+	var w := make_world("circle", 400.0)
+	World.Museum.setup(w)
+	return w
+
+
+func test_museum_parts() -> void:
+	# 목판 파도: 앞의 두 알이 함께 밀린다
+	var w := _museum_world()
+	var a := w.add_stone(0, Vector2(-250, 0), 0)
+	var b := w.add_stone(1, Vector2(-130, 20), 0)
+	var c := w.add_stone(1, Vector2(-80, -20), 0)
+	a.parts["weapon"] = "wave_print"
+	shoot(w, a.id, Vector2.RIGHT, 0.05)
+	check(b.pos.x > -110.0 and c.pos.x > -60.0, "wave pushed both: %s %s" % [b.pos, c.pos])
+	# 닿을 듯 말 듯 손가락: 맞힌 알이 훨씬 멀리, 내 알은 거의 멈춤
+	var w2 := _museum_world()
+	var f := w2.add_stone(0, Vector2(-250, 0), 0)
+	var t := w2.add_stone(1, Vector2(-160, 0), 0)
+	var w2b := _museum_world()
+	var f2 := w2b.add_stone(0, Vector2(-250, 0), 0)
+	var t2 := w2b.add_stone(1, Vector2(-160, 0), 0)
+	f.parts["weapon"] = "finger_touch"
+	shoot(w2, f.id, Vector2.RIGHT, 0.35)
+	shoot(w2b, f2.id, Vector2.RIGHT, 0.35)
+	check(t.pos.x - t2.pos.x > 60.0 or not t.alive, "finger sends it further: %.0f vs %.0f" % [t.pos.x, t2.pos.x])
+	check(f.pos.x < f2.pos.x, "finger stops me")
+	# 잃어버린 두 팔 조각: 맞힌 알의 보조 부품 봉인 → 바퀴 끝에 돌아온다
+	var w3 := _museum_world()
+	var v := w3.add_stone(0, Vector2(-250, 0), 0)
+	var tg := w3.add_stone(1, Vector2(-60, 0), 0)
+	tg.parts["aux"] = "mine"
+	v.parts["weapon"] = "venus_arms"
+	shoot(w3, v.id, Vector2.RIGHT, 0.05)
+	check(tg.parts["aux"] == "" and tg.status.has("m_seal"), "aux sealed")
+	World.Museum.round_end(w3, 1)
+	check(tg.parts["aux"] == "", "still sealed after this round")
+	World.Museum.round_end(w3, 2)
+	check(tg.parts["aux"] == "mine" and not tg.status.has("m_seal"), "unsealed after one more round")
+	# 잠 못 드는 밤의 붓: 자국이 남고, 다음 샷에 지나는 알이 휜다
+	var w4 := _museum_world()
+	var br := w4.add_stone(0, Vector2(-250, 0), 0)
+	br.parts["prop"] = "starry_brush"
+	shoot(w4, br.id, Vector2.RIGHT, 0.45)
+	check(w4.museum["marks"].size() >= 3, "brush marks: %d" % w4.museum["marks"].size())
+	var o := w4.add_stone(1, Vector2(-250, 0), 0)
+	shoot(w4, o.id, Vector2.RIGHT, 0.4)
+	check(absf(o.pos.y) > 10.0, "swirl bent the path: %s" % o.pos)
+	# 점묘 분무기: 같은 힘이면 덜 간다
+	var w5 := _museum_world()
+	var sp := w5.add_stone(0, Vector2(-250, 60), 0)
+	sp.parts["prop"] = "pointill_spray"
+	shoot(w5, sp.id, Vector2.RIGHT, 0.6)
+	var o1 := w5.add_stone(1, Vector2(-250, 60), 0)
+	shoot(w5, o1.id, Vector2.RIGHT, 0.3)
+	var w5b := _museum_world()
+	var o2 := w5b.add_stone(1, Vector2(-250, 60), 0)
+	shoot(w5b, o2.id, Vector2.RIGHT, 0.3)
+	check(o1.pos.x < o2.pos.x - 10.0, "dots slow it: %.0f vs %.0f" % [o1.pos.x, o2.pos.x])
+	# 이삭 빗자루: 주변 지뢰와 자국을 지운다
+	var w6 := _museum_world()
+	var gb := w6.add_stone(0, Vector2(-100, 0), 0)
+	gb.parts["aux"] = "gleaner_broom"
+	w6.place_device("mine", 1, 99, Vector2(-40, 40), Vector2.RIGHT, 9)
+	w6.museum["marks"].append({"pos": Vector2(-30, -30), "kind": "dots", "k": 1.5, "until": 9, "owner": 1, "shot": -1})
+	shoot(w6, gb.id, Vector2.RIGHT, 0.05)
+	check(w6.devices.is_empty() and w6.museum["marks"].is_empty(), "broom swept: %d devices, %d marks" % [w6.devices.size(), w6.museum["marks"].size()])
+	# 굴러오는 신전 바위: 길 위의 알을 옆으로 민다
+	var w7 := _museum_world()
+	var rb := w7.add_stone(0, Vector2(-300, 0), 0)
+	var side := w7.add_stone(1, Vector2(0, 10), 0)
+	rb.parts["weapon"] = "rolling_boulder"
+	shoot(w7, rb.id, Vector2.RIGHT, 0.02)
+	check(absf(side.pos.y - 10.0) > 30.0 or not side.alive, "boulder shoved it aside: %s" % side.pos)
+	check(w7.museum["boulders"].is_empty(), "boulder rolled off")
+	# 정오의 결투: 가장 가까운 상대 알 쪽으로 자동 탄
+	var w8 := _museum_world()
+	var dh := w8.add_stone(0, Vector2(0, 0), 0)
+	var near := w8.add_stone(1, Vector2(0, 120), 0)
+	w8.add_stone(1, Vector2(250, 0), 0)
+	dh.parts["weapon"] = "duel_holster"
+	shoot(w8, dh.id, Vector2.LEFT, 0.02)
+	check(near.pos.y > 130.0, "duel hit the nearest: %s" % near.pos)
+	# 레이저 장갑: 선에 닿은 움직이는 알은 멈춘다
+	var w9 := _museum_world()
+	var lg := w9.add_stone(0, Vector2(0, 0), -PI / 2.0)
+	lg.parts["aux"] = "laser_glove"
+	lg.magnet_side = 1
+	shoot(w9, lg.id, Vector2.UP, 0.01)
+	check(w9.museum["lasers"].size() == 1, "laser placed")
+	var run := w9.add_stone(1, Vector2(-250, 0), 0)
+	if w9.museum["lasers"].size() == 1:
+		var mid: Vector2 = (w9.museum["lasers"][0]["a"] + w9.museum["lasers"][0]["b"]) * 0.5
+		run.pos = Vector2(mid.x - 200.0, mid.y) if absf(mid.x) < 300 else run.pos
+		var to: Vector2 = (mid - run.pos).normalized()
+		shoot(w9, run.id, to, 0.8)
+		check(run.pos.distance_to(mid) < 120.0, "stopped at the laser: %s vs %s" % [run.pos, mid])
+	# 빗속의 우산: 옆에서 오는 탄을 튕긴다
+	var w10 := _museum_world()
+	var ub := w10.add_stone(0, Vector2(0, 0), 0)
+	ub.status["umbrella"] = false
+	var gun := w10.add_stone(1, Vector2(0, 200), 0)
+	gun.parts["weapon"] = "pea"
+	shoot(w10, gun.id, Vector2.UP, 0.01)
+	check(ub.pos.length() < 5.0, "umbrella deflected the side bullet: %s" % ub.pos)
+	# 선글라스: 정면으로 오는 알을 한 번 피한다
+	var w11 := _museum_world()
+	var sg := w11.add_stone(0, Vector2(0, 0), 0)
+	sg.parts["prop"] = "matrix_shades"
+	var at := w11.add_stone(1, Vector2(-250, 0), 0)
+	shoot(w11, at.id, Vector2.RIGHT, 0.6)
+	check(int(sg.status.get("shades_n", 0)) == 1, "dodged once")
+	check(absf(sg.pos.y) > 30.0, "stepped aside: %s" % sg.pos)
+	# 등지느러미: 차례가 끝날 때마다 가까운 알에게 다가간다
+	var w12 := _museum_world()
+	var sf := w12.add_stone(0, Vector2(-200, 0), 0)
+	sf.parts["prop"] = "shark_fin"
+	var prey := w12.add_stone(1, Vector2(-200, 160), 0)
+	shoot(w12, sf.id, Vector2.RIGHT, 0.02)
+	check(w12.museum["fins"].size() == 1, "fin placed")
+	var py := prey.pos
+	for k in 4:
+		World.Museum.turn_end(w12, 0)
+		w12.run_until_settled(4.0)
+	check(w12.museum["fins"].is_empty(), "fin gone after three turns")
+	check(prey.pos != py or sf.pos.y != 0.0, "fin bumped someone")
+	# 클래퍼보드: 딱! 하고 멈췄다가 다시 간다
+	var w13 := _museum_world()
+	var cl := w13.add_stone(0, Vector2(-250, 0), 0)
+	var cb := w13.add_stone(1, Vector2(-150, 0), 0)
+	cl.parts["prop"] = "clapper"
+	shoot(w13, cl.id, Vector2.RIGHT, 0.5)
+	check(count_events(w13, "part", "clapper") == 1 and cb.pos.x > -100.0, "clap then resume: %s" % cb.pos)
+	# 다리 위의 비명: 충돌 지점 주변 알을 밀어낸다
+	var w14 := _museum_world()
+	var sc := w14.add_stone(0, Vector2(-250, 0), 0)
+	w14.add_stone(1, Vector2(-150, 0), 0)
+	var by := w14.add_stone(1, Vector2(-150, 70), 0)
+	sc.parts["aux"] = "scream_bridge"
+	shoot(w14, sc.id, Vector2.RIGHT, 0.4)
+	check(by.pos.y > 85.0, "scream pushed the bystander: %s" % by.pos)
+
+
+func test_museum_board() -> void:
+	var m := Match.new()
+	m.setup(6, [], 11, false, {"workshop": "museum"})
+	check(not m.world.museum.is_empty(), "museum state ready")
+	check(m.world.gimmicks.size() == 2, "two gimmicks for 6 players")
+	# 물감 웅덩이: 빨강은 미끄럽고 파랑은 끈적
+	var w := _museum_world()
+	w.gimmicks = [{"kind": "paint", "items": [{"pos": Vector2(0, -100), "r": 60.0, "color": "red"}, {"pos": Vector2(0, 100), "r": 60.0, "color": "blue"}]}]
+	var a := w.add_stone(0, Vector2(-250, -100), 0)
+	var b := w.add_stone(0, Vector2(-250, 100), 0)
+	shoot(w, a.id, Vector2.RIGHT, 0.4)
+	shoot(w, b.id, Vector2.RIGHT, 0.4)
+	check(a.pos.x > b.pos.x + 20.0, "red slides further than blue: %.0f vs %.0f" % [a.pos.x, b.pos.x])
+	# 벨벳 차단줄: 차례가 끝날 때마다 1칸, 줄은 벽
+	var w2 := _museum_world()
+	w2.gimmicks = [{"kind": "velvet", "items": [{"pos": Vector2(0, 0), "axis": Vector2.UP, "move": Vector2.RIGHT, "r": 80.0}]}]
+	World.Museum.turn_end(w2, 0)
+	check((w2.gimmicks[0]["items"][0]["pos"] as Vector2).distance_to(Vector2(44, 0)) < 1.0, "velvet moved one cell")
+	var s := w2.add_stone(0, Vector2(-150, 30), 0)
+	shoot(w2, s.id, Vector2.RIGHT, 0.6)
+	check(s.pos.x < 44.0, "rope blocked the stone: %s" % s.pos)
+	# 촬영 레일: 수레가 오가며 밀어낸다
+	var w3 := _museum_world()
+	w3.gimmicks = [{"kind": "dolly", "items": [{"a": Vector2(-150, 0), "b": Vector2(150, 0), "m": Vector2(0, 60), "t": 0.0, "dir": 1.0}]}]
+	var on_rail := w3.add_stone(1, Vector2(-60, 25), 0)
+	var before := on_rail.pos
+	World.Museum.turn_end(w3, 0)
+	w3.run_until_settled(4.0)
+	check(on_rail.pos.distance_to(before) > 20.0, "cart pushed it: %s" % on_rail.pos)
+	check(float(w3.gimmicks[0]["items"][0]["t"]) > 0.0, "cart moved along the rail")
+
+
+func test_museum_retake() -> void:
+	var m := Match.new()
+	m.setup(2, [], 5, false, {"workshop": "museum"})
+	while m.phase == "place":
+		for pid in 2:
+			if not m.placements.has(pid):
+				m.place(pid, m.preset(pid, "line"))
+	m.settle_fx()
+	var p := m.current_player()
+	var st = m.world.alive_stones_of(p)[0]
+	st.parts = {"weapon": "megaphone", "aux": "director_chair", "prop": "clapper"}
+	var before: Array = []
+	for s in m.world.stones:
+		before.append([s.pos, s.alive])
+	check(m.shoot(st.id, Vector2(0, -1) if p == 0 else Vector2(0, 1), 1.0), "director shot")
+	m.world.run_until_settled()
+	m.finish_shot()
+	check(m.phase == "retake", "retake offered: %s" % m.phase)
+	check(m.retake(true), "retake accepted")
+	var same := true
+	for i in m.world.stones.size():
+		var s2 = m.world.stones[i]
+		if s2.pos.distance_to(before[i][0]) > 0.01 or s2.alive != before[i][1]:
+			same = false
+	check(same and m.phase == "aim" and m.current_player() == p, "board rewound to before the shot")
+	var other = m.world.alive_stones_of(p)[1]
+	check(not m.shoot(other.id, Vector2.UP, 0.5), "only the same stone may retake")
+	check(m.shoot(st.id, Vector2(1, 0), 0.3), "take 2")
+	m.world.run_until_settled()
+	m.finish_shot()
+	m.settle_fx()
+	check(m.phase != "retake", "a retaken shot can't be retaken")
+	# 거절하면 그대로 이어 간다 (다음 바퀴 · 같은 사람)
+	m.retake_used.clear()
+	while m.phase != "aim" or m.current_player() != p:
+		if m.phase == "draft":
+			m.equip(m.current_drafter(), "", -1)
+		elif m.phase == "fx":
+			m.settle_fx()
+		elif m.phase == "retake":
+			m.retake(false)
+		else:
+			m.skip_turn()
+	var st2 = m.world.get_stone(st.id)
+	if st2 != null and st2.alive:
+		st2.parts = {"weapon": "megaphone", "aux": "director_chair", "prop": "clapper"}
+		m.shoot(st2.id, Vector2(1, 0), 0.2)
+		m.world.run_until_settled()
+		m.finish_shot()
+		check(m.phase == "retake", "offered again next round")
+		m.retake(false)
+		m.settle_fx()
+		check(m.phase != "retake", "declined: the match goes on")
+
+
+func test_museum_bot_match() -> void:
+	var m := Match.new()
+	var flags := [true, true, true, true]
+	m.setup(4, flags, 77, false, {"workshop": "museum"})
+	while m.phase == "place":
+		for pid in 4:
+			if not m.placements.has(pid):
+				m.place(pid, m.preset(pid, "line"))
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 4
+	var guard := 0
+	while m.phase != "over" and guard < 500:
+		guard += 1
+		if m.phase == "fx":
+			m.settle_fx()
+		elif m.phase == "retake":
+			m.retake(guard % 2 == 0)
+		elif m.phase == "draft":
+			var pid := m.current_drafter()
+			var c := Bot.choose_draft(m, pid, rng)
+			m.equip(pid, c["part"], c["stone"], c["side"])
+		elif m.phase == "aim":
+			var bot := Bot.new()
+			bot.begin(m, m.current_player(), guard)
+			while not bot.think_step(4):
+				pass
+			var r := bot.result()
+			if r.is_empty():
+				m.skip_turn()
+				continue
+			m.shoot(r["stone"], r["dir"], r["power"])
+			m.world.run_until_settled()
+			m.finish_shot()
+	check(m.phase == "over", "museum bot match finished (round %d, guard %d)" % [m.round_no, guard])

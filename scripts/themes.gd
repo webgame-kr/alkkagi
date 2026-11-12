@@ -4,7 +4,7 @@ extends RefCounted
 
 ## "auto": 공방 따라가기 — 그날 공방의 경기장 (디자인 「오늘의 공방 프로토타입」).
 const ORDER := ["auto", "play", "workshop", "neon"]
-const WS_THEME := {"junk": "ws_junk", "magic": "ws_magic", "toon": "ws_toon", "lab": "ws_lab", "clock": "ws_clock", "pirate": "ws_pirate"}
+const WS_THEME := {"junk": "ws_junk", "magic": "ws_magic", "toon": "ws_toon", "lab": "ws_lab", "clock": "ws_clock", "pirate": "ws_pirate", "museum": "ws_museum"}
 
 const THEMES := {
 	"play": {
@@ -101,6 +101,17 @@ const THEMES := {
 		"panel": Color(247 / 255.0, 238 / 255.0, 222 / 255.0, 0.95), "text": Color("2A1E12"), "sub": Color("6B5A45"),
 		"line": Color(42 / 255.0, 30 / 255.0, 18 / 255.0, 0.25), "accent_bg": Color(62 / 255.0, 143 / 255.0, 176 / 255.0, 0.18),
 		"gauge": Color("3E8FB0"), "gold": Color("B8732E"), "dark": false, "accent": Color("3E8FB0"), "accent_ink": Color.WHITE,
+	},
+	"ws_museum": {
+		"name": "그랑 뮤제", "deco": "museum", "panel_style": "",
+		"bg": Color("3A1A22"), "grain": Color(0, 0, 0, 0), "bg_center": Color("4A2230"), "bg2": Color("2A1018"),
+		"rail_hi": Color("F2D88A"), "rail": Color("B8902F"), "rail_lo": Color("5E4520"), "rail_glow": Color(242 / 255.0, 216 / 255.0, 138 / 255.0, 0.12),
+		"felt_c": Color("F7F3EC"), "felt_e": Color("DCD5C8"), "grid": false,
+		"danger": Color("6B1E2E"), "danger_line": Color(107 / 255.0, 30 / 255.0, 46 / 255.0, 0.85),
+		"outline": Color("1A1D21"), "shadow": Color(0, 0, 0, 0.35), "spark": Color("F2D88A"), "light": 0.10,
+		"panel": Color(251 / 255.0, 245 / 255.0, 232 / 255.0, 0.95), "text": Color("2A1E12"), "sub": Color("6B5A45"),
+		"line": Color(107 / 255.0, 30 / 255.0, 46 / 255.0, 0.25), "accent_bg": Color(184 / 255.0, 144 / 255.0, 47 / 255.0, 0.18),
+		"gauge": Color("B8902F"), "gold": Color("8A6A1E"), "dark": false, "accent": Color("6B1E2E"), "accent_ink": Color("F2D88A"),
 	},
 	"ws_toon": {
 		"name": "만화 소품 창고", "deco": "manga", "panel_style": "manga",

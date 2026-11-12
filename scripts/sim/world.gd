@@ -13,6 +13,7 @@ const Crown = preload("res://scripts/sim/crown.gd")
 const Parcel = preload("res://scripts/sim/parcel.gd")
 const Clock = preload("res://scripts/sim/clock.gd")
 const Pirate = preload("res://scripts/sim/pirate.gd")
+const Museum = preload("res://scripts/sim/museum.gd")
 
 const STONE_R := 22.0
 const MAX_SPEED := Parts.LAUNCH_V
@@ -194,6 +195,7 @@ var crown := {}               # 왕관 쟁탈전의 왕관 (crown.gd). 비어 �
 var parcel := {}              # 택배 쟁탈전의 택배 (parcel.gd). 비어 있으면 다른 모드
 var clock := {}               # 태엽 시계탑: 차례를 넘는 물체·잔상·자명종 (clock.gd)
 var pirate := {}              # 해적 선착장: 바람·밀물·널빤지·구멍·줄·술통 … (pirate.gd)
+var museum := {}              # 그랑 뮤제: 붓·점묘 자국 · 레이저 · 바위 · 등지느러미 (museum.gd)
 var turn_no := 0              # 지금까지 시작한 차례 수 (다음 차례 판정용)
 
 
@@ -213,6 +215,7 @@ func clone():
 	w.parcel = parcel.duplicate(true)
 	w.clock = clock.duplicate(true)
 	w.pirate = pirate.duplicate(true)
+	w.museum = museum.duplicate(true)
 	w.turn_no = turn_no
 	w.next_device_id = next_device_id
 	w.round_no = round_no
@@ -286,6 +289,7 @@ func radius_of(s) -> float:
 func mass_of(s) -> float:
 	var k: float = s.base_mass
 	k *= Pirate.mass_k(s)
+	k *= Museum.mass_k(s)
 	for key in s.mods:
 		k *= float(s.mods[key].get("mass", 1.0))
 	if s.parts.get("prop", "") == "weight":
@@ -519,6 +523,7 @@ func launch(stone_id: int, dir: Vector2, power: float, opts := {}) -> void:
 	Crown.on_launch(self, s)
 	Clock.on_launch(self, s)
 	Pirate.on_launch(self, s)
+	Museum.on_launch(self, s)
 
 
 ## 구름 우편함: 표식 자리가 비어 있으면 그 알을 그리로 옮긴다 (발사 직전).
@@ -553,11 +558,13 @@ func end_shot() -> void:
 		Lab.on_stop(self, s)
 		Clock.on_stop(self, s)
 		Pirate.on_stop(self, s)
+		Museum.on_stop(self, s)
 		Parts.on_stop(self, s)
 	Ex.on_end(self, s)
 	Lab.end_shot(self)
 	Clock.end_shot(self)
 	Pirate.end_shot(self)
+	Museum.end_shot(self)
 	Hero.on_end(self)
 	Gm.after_shot(self)
 	Crown.end_shot(self)
@@ -574,7 +581,7 @@ func end_fx() -> void:
 func is_settled() -> bool:
 	if not projs.is_empty():
 		return false
-	if Parcel.moving(self) or Clock.busy(self) or Pirate.busy(self):
+	if Parcel.moving(self) or Clock.busy(self) or Pirate.busy(self) or Museum.busy(self):
 		return false
 	if shot != null and (shot.grip_timer > 0.0 or shot.reel_timer > 0.0 or shot.clock_timer > 0.0):
 		return false
@@ -627,6 +634,7 @@ func step() -> void:
 	Lab.before_move(self, dt)
 	Clock.before_move(self, dt)
 	Pirate.before_move(self, dt)
+	Museum.before_move(self, dt)
 	for s in stones:
 		if not s.alive or Ex.is_frozen(self, s):
 			continue
@@ -636,6 +644,7 @@ func step() -> void:
 			if shot != null and s.id == shot.stone_id and shot.ex.get("lastcut", false):
 				gk = 0.0   # 라스트 컷: 판 끝까지 줄지 않고 달린다
 			gk *= Clock.friction_k(self, s)
+			gk *= Museum.friction_k(self, s)
 			var fr := FRICTION * _friction_scale(s.pos) * Ex.friction_scale(self, s.pos) * gk
 			var ns := sp - fr * dt - sp * DRAG * gk * dt
 			if ns < STOP_SPEED:
@@ -646,11 +655,13 @@ func step() -> void:
 	Parcel.move(self, dt)
 	Lab.after_move(self)
 	Pirate.after_move(self, dt)
+	Museum.after_move(self, dt)
 	Hero.lastcut_step(self)
 	_hold_grip(dt)
 	_collide_stones()
 	Clock.collide(self)
 	Pirate.collide(self)
+	Museum.collide(self)
 	Parcel.collide(self)
 	Gm.collide(self)
 	_check_parachutes()
@@ -797,6 +808,7 @@ func _collide_stones() -> void:
 			Crown.on_hit(self, a, b)
 			Clock.post_collision(self, a, b, imp)
 			Pirate.post_collision(self, a, b, imp)
+			Museum.post_collision(self, a, b, imp)
 			emit({"t": "hit", "pos": a.pos + nrm * STONE_R, "strength": rel, "a": a.id, "b": b.id, "n": nrm})
 			if shot != null and record_events:
 				var body_part := "remote" if shot.ex.has("remote_of") else "body"
@@ -815,11 +827,13 @@ func _collide_stones() -> void:
 				if a.id == shot.stone_id:
 					Clock.on_contact(self, a, b, nrm)
 					Pirate.on_contact(self, a, b, nrm)
+					Museum.on_contact(self, a, b, nrm)
 					if not Lab.on_contact(self, a, b, nrm, not shot.contacted):
 						Parts.on_contact(self, a, b, nrm, va, vb)
 				elif b.id == shot.stone_id:
 					Clock.on_contact(self, b, a, -nrm)
 					Pirate.on_contact(self, b, a, -nrm)
+					Museum.on_contact(self, b, a, -nrm)
 					if not Lab.on_contact(self, b, a, -nrm, not shot.contacted):
 						Parts.on_contact(self, b, a, -nrm, vb, va)
 				Ex.post_collision(self, a, b, a.pos + nrm * STONE_R)
@@ -911,6 +925,8 @@ func _update_projs(dt: float) -> void:
 						emit({"t": "part", "part": "sucker", "pos": s.pos, "owner": p.owner, "text": "빨판"})
 					break
 				if p.kind == "bullet" and _shield_deflect(s, p):
+					break
+				if p.kind == "bullet" and Museum.on_bullet(self, s, p):
 					break
 				Lab.on_bullet(self, s, p)
 				s.vel += p.vel.normalized() * p.power / mass_of(s)

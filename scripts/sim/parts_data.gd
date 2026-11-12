@@ -78,6 +78,41 @@ const CATALOG := {
 		"desc": "첫 충돌 직후 바람 방향으로 1.5칸 미끄러진다."},
 	"helm": {"name": "타륜", "slot": "prop", "when": "알이 멈출 때", "pirate": true,
 		"desc": "멈출 때 제자리에서 반 바퀴 돌며 1칸 안의 알을 회전 방향으로 쓸어낸다."},
+	# ── 그랑 뮤제 (세트 「영화감독」 + 명화 8 + 영화 6) ──
+	"megaphone": {"name": "메가폰", "slot": "weapon", "when": "발사 순간", "set": "director", "museum": true,
+		"desc": "발사 순간 정면 부채꼴로 「액션!」 소리 파동. 가장 가까운 첫 알을 0.6칸 민다."},
+	"director_chair": {"name": "감독 의자", "slot": "aux", "when": "알이 멈출 때", "set": "director", "museum": true,
+		"desc": "멈추면 접이식 의자를 펼쳐 다음 내 차례까지 충돌 한 번을 단단히 버틴다."},
+	"clapper": {"name": "클래퍼보드", "slot": "prop", "when": "첫 충돌 직후", "set": "director", "museum": true,
+		"desc": "첫 충돌 직후 「딱!」 소리와 함께 0.3초 모든 알이 멈췄다가 다시 움직인다."},
+	"wave_print": {"name": "목판 파도 한 장", "slot": "weapon", "when": "발사 순간", "museum": true,
+		"desc": "정면 폭 2칸, 길이 4칸의 파도가 앞의 알들을 함께 1.5칸 민다."},
+	"finger_touch": {"name": "닿을 듯 말 듯 손가락", "slot": "weapon", "when": "첫 정면 충돌", "museum": true,
+		"desc": "처음 정면으로 맞힌 알에 내 힘의 1.5배를 넘겨주고, 내 알은 거의 멈춘다."},
+	"venus_arms": {"name": "잃어버린 두 팔 조각", "slot": "weapon", "when": "정면 탄 적중", "museum": true,
+		"desc": "정면으로 조각을 던진다. 맞힌 알의 보조 부품을 한 바퀴 동안 봉인한다(작동 안 함)."},
+	"scream_bridge": {"name": "다리 위의 비명", "slot": "aux", "when": "첫 충돌", "museum": true,
+		"desc": "첫 충돌 지점에서 반지름 2.5칸 물결 충격파. 주변 알을 바깥으로 0.8칸 민다."},
+	"follow_eyes": {"name": "따라오는 눈빛 액자", "slot": "aux", "when": "상대 샷 중", "museum": true,
+		"desc": "상대 샷에서 다가오는 알 쪽으로 몸을 돌려 정면으로 맞이한다. 맞이한 알은 1칸 튕겨 나간다(차례마다 1회)."},
+	"gleaner_broom": {"name": "허리 숙인 이삭 빗자루", "slot": "aux", "when": "알이 멈출 때", "museum": true,
+		"desc": "멈춘 자리 반지름 2칸 안의 설치물(지뢰, 함정, 자국, 물감, 구멍, 레이저)을 모두 쓸어 낸다."},
+	"starry_brush": {"name": "잠 못 드는 밤의 붓", "slot": "prop", "when": "움직이는 동안", "museum": true,
+		"desc": "지나간 길에 소용돌이 붓 자국(1바퀴). 그 위를 지나는 알은 시계 방향으로 휜다."},
+	"pointill_spray": {"name": "일요일 오후 점묘 분무기", "slot": "prop", "when": "움직이는 동안", "museum": true,
+		"desc": "지나간 길에 점묘 자국(1바퀴). 그 위의 알은 감속이 1.5배."},
+	"rolling_boulder": {"name": "굴러오는 신전 바위", "slot": "weapon", "when": "발사 순간", "museum": true,
+		"desc": "지름 2칸 바위가 정면으로 판 끝까지 굴러가며 길 위의 알을 옆으로 민다."},
+	"duel_holster": {"name": "정오의 결투 권총집", "slot": "weapon", "when": "발사 순간", "museum": true,
+		"desc": "가장 가까운 상대 알을 향해 자동으로 조준된 탄을 한 발 쏜다."},
+	"laser_glove": {"name": "금고털이 레이저 장갑", "slot": "aux", "when": "알이 멈출 때", "museum": true, "side": true,
+		"desc": "멈추면 장착한 쪽으로 길이 4칸 레이저 선(1바퀴). 처음 닿은 움직이는 알은 그 자리에 멈춘다."},
+	"rain_umbrella": {"name": "빗속의 빙글 우산", "slot": "aux", "when": "알이 멈출 때", "museum": true,
+		"desc": "멈추면 우산을 펴 다음 내 차례까지 옆에서 오는 탄을 튕겨 낸다."},
+	"matrix_shades": {"name": "젖혀 피하기 선글라스", "slot": "prop", "when": "상대 샷 중", "museum": true,
+		"desc": "정면으로 오는 탄이나 알을 옆으로 젖혀 한 번 피한다(판당 2회)."},
+	"shark_fin": {"name": "다가오는 등지느러미", "slot": "prop", "when": "알이 멈출 때", "museum": true,
+		"desc": "멈춘 자리에 등지느러미를 띄운다. 다음 세 차례 동안 차례가 끝날 때마다 가장 가까운 상대 알에게 1칸씩 다가가 부딪힌다."},
 	"merge_bolt": {"name": "합체 볼트", "slot": "aux", "when": "내 알과 부딪힐 때", "lab": true,
 		"desc": "발사한 알이 내 다른 알과 부딪히면 둘이 합쳐 큰 알 하나가 된다. 지름 1.4배, 무게 2배."},
 	"decoy": {"name": "미끼 풍선", "slot": "aux", "when": "알이 멈출 때", "lab": true,
@@ -317,6 +352,9 @@ const SETS := {
 	"captain": {"name": "선장", "parts": ["parrot_hat", "hook_hand", "peg_leg"],
 		"move": "포격 명령", "move_desc": "바퀴마다 한 번, 내 샷이 끝나면 판 바깥에서 대포알이 그 샷 방향으로 판을 가로지르며 길 위의 알을 민다",
 		"short": {"parrot_hat": "모자", "hook_hand": "갈고리", "peg_leg": "의족"}},
+	"director": {"name": "영화감독", "parts": ["megaphone", "director_chair", "clapper"],
+		"move": "컷! 다시 찍어!", "move_desc": "바퀴마다 한 번, 이 알로 쏜 샷이 끝나면 3초 안에 「다시 찍기」를 눌러 판 전체를 그 샷 직전으로 되감고 다시 쏜다",
+		"short": {"megaphone": "메가폰", "director_chair": "의자", "clapper": "클래퍼"}},
 	"hero": {"name": "최후의 주인공", "parts": ["hero_band", "torn_cape", "awaken_shoes"],
 		"move": "라스트 컷", "move_desc": "투지 3칸 + 세트 완성: 판 끝까지 관통 돌진, 부딪힌 알은 옆으로, 판 끝에서 망토로 반드시 멈춘다", "short": {"hero_band": "머리띠", "torn_cape": "망토", "awaken_shoes": "운동화"}},
 }
@@ -348,9 +386,14 @@ const WORKSHOPS := {
 		"parts": ["parrot_hat", "hook_hand", "peg_leg", "hole_cannon", "spyglass", "bolas", "smoke_powder", "flag_signal",
 			"rum_barrel", "water_pump", "plank_dock", "treasure_chest", "jump_board", "wind_sail", "lifeboat", "oar", "helm"],
 		"rep": ["parrot_hat", "hole_cannon", "wind_sail"], "set": "captain"},
+	"museum": {"name": "그랑 뮤제", "tag": "명화와 영화 명장면을 비튼 미술관",
+		"desc": "바닥에 붓 자국을 남기고, 상대 부품을 봉인하고, 세트로 샷을 통째로 다시 찍는다.",
+		"parts": ["megaphone", "director_chair", "clapper", "wave_print", "finger_touch", "venus_arms", "scream_bridge", "follow_eyes",
+			"gleaner_broom", "starry_brush", "pointill_spray", "rolling_boulder", "duel_holster", "laser_glove", "rain_umbrella", "matrix_shades", "shark_fin"],
+		"rep": ["wave_print", "rolling_boulder", "starry_brush"], "set": "director"},
 	"all": {"name": "잡동사니 창고", "tag": "모든 부품이 섞여 나오는 곳", "desc": "모든 부품 66종이 섞여 나온다.", "parts": [], "rep": ["pea", "moon_staff", "rubber_fist"], "set": ""},
 }
-const WORKSHOP_ORDER := ["junk", "magic", "toon", "lab", "clock", "pirate", "all"]
+const WORKSHOP_ORDER := ["junk", "magic", "toon", "lab", "clock", "pirate", "museum", "all"]
 
 
 ## 이 공방에서 나오는 부품 id 목록.
@@ -395,7 +438,7 @@ static func match_pool(ws: String, rng: RandomNumberGenerator) -> Array:
 
 
 ## 장착할 때 좌우를 고르는 부품. 보조는 Stone.magnet_side, 추진은 Stone.prop_side 에 저장.
-const SIDE_PARTS := ["magnet", "shield", "crab", "side_scroll", "water_pump"]
+const SIDE_PARTS := ["magnet", "shield", "crab", "side_scroll", "water_pump", "laser_glove"]
 
 ## 탄환을 쏘는 무기(데칼코마니 포신의 조건).
 const BULLET_WEAPONS := ["pea", "shotgun"]
@@ -519,6 +562,10 @@ const UPGRADES := {
 	"flag_signal": "바람에 2칸씩", "rum_barrel": "통 두 개", "water_pump": "양쪽 두 줄기", "plank_dock": "판 경계 2칸 연장",
 	"treasure_chest": "상자 주변 2칸까지 보상", "jump_board": "두 번 튀어 넘어감", "wind_sail": "휘는 정도 1.5배", "lifeboat": "복귀해도 차례를 쉬지 않음",
 	"oar": "노를 두 번 저음", "helm": "한 바퀴 돌며 범위 1.5칸",
+	"wave_print": "파도 길이 6칸", "finger_touch": "힘 1.85배, 손가락 끝이 빛남", "venus_arms": "무기 부품까지 봉인, 조각이 둘",
+	"scream_bridge": "충격파 반지름 3.5칸", "follow_eyes": "차례마다 두 번까지", "gleaner_broom": "청소 반지름 3칸",
+	"starry_brush": "휘는 정도 1.5배", "pointill_spray": "감속 2배", "rolling_boulder": "바위 지름 2.5칸", "duel_holster": "가까운 두 알에 두 발",
+	"laser_glove": "레이저 두 줄(X자)", "rain_umbrella": "정면 탄까지 튕김", "matrix_shades": "판당 세 번", "shark_fin": "다섯 차례, 지느러미 둘",
 	"pea": "정면 두 발 연사", "shotgun": "부채꼴 다섯 발", "claw": "붙잡은 뒤 조준 방향으로 던지기",
 	"nose": "정면 충돌 두 번까지 세게", "magnet": "범위 4.5칸, 가까운 두 알", "bumper": "측면 충돌 두 번까지",
 	"flipper": "양옆으로 한 번씩", "rocket": "가속 1.5배", "retro": "후퇴 1.5배", "chute": "두 번 급제동",
