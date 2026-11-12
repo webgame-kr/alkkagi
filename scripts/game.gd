@@ -577,6 +577,7 @@ func _start_match(seed_value := -1) -> void:
 	match_started_t = time
 	_mo_reset()
 	_mo2_reset()
+	_mo3_reset()
 	mu_frame = {}
 	mu_film = {}
 	mu_rewind = {}
@@ -735,6 +736,7 @@ func _update_play(delta: float) -> void:
 	_museum_tick(delta)
 	_mo_tick(delta)
 	_mo2_tick(delta)
+	_mo3_tick(delta)
 	if turn_hold > 0.0:
 		turn_hold -= delta
 		return
@@ -1016,7 +1018,7 @@ var _banner_col := TEXT
 
 func _consume_events() -> void:
 	for e in m.world.events:
-		if _mo_on_event(e) or _mo2_on_event(e):
+		if _mo3_on_event(e) or _mo_on_event(e) or _mo2_on_event(e):
 			continue
 		var owner_col: Color = m.players[e["owner"]].color if e.has("owner") and e["owner"] >= 0 and e["owner"] < m.players.size() else TEXT
 		if e["t"] == "out" and str(e.get("cause", {}).get("part", "")) == "gm_tide":
@@ -1066,6 +1068,7 @@ func _consume_events() -> void:
 					_on_museum_part(e)
 				_mo_on_part(e)
 				_mo2_on_part(e)
+				_mo3_on_part(e)
 				if part_id == "hero_set":
 					# 라스트 컷: 0.3초 만화 컷 정지
 					hitstop = maxf(hitstop, 0.3)
@@ -1502,6 +1505,7 @@ func _draw_inner() -> void:
 	_draw_fx()
 	_draw_museum_over()
 	_draw_mo2_over()
+	_draw_mo3_over()
 	_draw_museum_frame()
 	_draw_aim_over()
 	_draw_remote_marks()
@@ -2023,6 +2027,9 @@ func _draw_fx() -> void:
 			continue
 		if str(f["k"]).begins_with("mo2_"):
 			_draw_mo2_fx(f, minf(u, 1.0))
+			continue
+		if str(f["k"]).begins_with("mo3_"):
+			_draw_mo3_fx(f, minf(u, 1.0))
 			continue
 		match f["k"]:
 			"spark":
@@ -7105,10 +7112,10 @@ func _draw_clock_things() -> void:
 		var x0 := p2 + Vector2(u * 0.75, -u * 0.9)
 		for ic in shown:
 			if ["hand", "bomb", "bow"].has(ic["kind"]):
-				_mo_draw_cd(x0, s.id, ic, u * 0.4)
+				_mo_draw_cd(x0, s.id, ic, u * 0.4 * _mo3_icon_scale(s.id, ic["kind"]))
 				x0 += Vector2(u * 0.82, 0)
 				continue
-			_draw_status_icon(x0, ic["kind"], u * 0.4)
+			_draw_status_icon(x0, ic["kind"], u * 0.4 * _mo3_icon_scale(s.id, ic["kind"]))
 			if int(ic.get("n", 0)) > 0:
 				_status_badge(x0 + Vector2(-u * 1.5, 0), int(ic["n"]))
 			x0 += Vector2(u * 0.82, 0)
@@ -9610,10 +9617,6 @@ func _on_museum_part(e: Dictionary) -> void:
 func _on_museum_event(e: Dictionary) -> void:
 	match str(e["t"]):
 		"m_wave":
-			var d: Vector2 = e["dir"]
-			for k in 4:
-				fx.append({"k": "line", "a": e["pos"] + d * (World.STONE_R + k * 30.0) + d.orthogonal() * CELL, "b": e["pos"] + d * (World.STONE_R + k * 30.0) - d.orthogonal() * CELL,
-					"t": -0.05 * k, "life": 0.5, "c": Color("2E5E9E")})
 			snd.play("puck_slide_loop", -6.0, 0.6)
 		"m_aimline":
 			fx.append({"k": "line", "a": e["a"], "b": e["b"], "t": 0.0, "life": 0.5, "c": Color("E0533D")})
@@ -9881,6 +9884,11 @@ func _draw_museum_screen(vs: Vector2) -> void:
 	if ct >= 0.0 and ct < 0.55:
 		var s := clampf(0.4 + ct / 0.18 * 0.6, 0.4, 1.0) if ct < 0.18 else 1.0
 		_mu_big("컷!", vs * Vector2(0.46, 0.36), 72.0 * s, Color("E0533D"))
+		var mp := vs * Vector2(0.46, 0.36) + Vector2(-120, -24)
+		draw_colored_polygon(PackedVector2Array([mp + Vector2(0, -10), mp + Vector2(0, 10), mp + Vector2(54, 30) * s, mp + Vector2(54, -30) * s]), Color("F2EDE2"))
+		draw_polyline(PackedVector2Array([mp + Vector2(0, -10), mp + Vector2(0, 10), mp + Vector2(54, 30) * s, mp + Vector2(54, -30) * s, mp + Vector2(0, -10)]), Color("0E1013"), 3.0, true)
+		draw_rect(Rect2(mp + Vector2(-14, -7), Vector2(14, 14)), Color("6F7782"))
+		draw_line(mp + Vector2(10, -12), mp + Vector2(50, -26) * s, Color("D2452F"), 4.0, true)
 	# 되감기: 주사선 + 「◀◀ 되감기」
 	if not mu_rewind.is_empty():
 		var off := fposmod(time * 36.0, 9.0)
@@ -10905,3 +10913,249 @@ func _draw_mo2_over() -> void:
 	for i in 3:
 		var q := fmod(time * 1.6 + i / 3.0, 1.0)
 		draw_arc(p, (World.STONE_R + 4.0 + q * 30.0) * view_scale, 0, TAU, 28, Color("8BE04E", 1.0 - q), 2.0, true)
+
+
+# ══ 모션 「부품 모션 · 공통 틀과 고유 모션」 ══
+## 공통 틀 9가지(탄 · 충격파 · 설치물 · 바닥 · 묶음 선 · 경로 변형 · 막기 · 상태 · 따로 움직이는 물체)와 신규 공방 고유 12종.
+var mo3_icon := {}            # "id:kind" → 처음 보인 시각 (상태 아이콘 「뿅」)
+var mo3_proj := {}            # 이미 섬광을 낸 탄
+var mo3_tick_n := {}          # 샷마다 똑딱 걸음 횟수
+var mo3_boulder_t := 0.0
+
+const MO3_TETHER := ["hook", "magnet", "hook_hand", "bolas", "string_doll", "trex_arm", "rubber_fist"]
+const MO3_TURN := ["oar", "side_scroll", "gm_whirlpool", "track", "wind_knot", "gm_gwell", "wind_sail"]
+
+
+func _mo3_reset() -> void:
+	mo3_icon.clear()
+	mo3_proj.clear()
+	mo3_tick_n.clear()
+
+
+func _mo3_on_part(e: Dictionary) -> void:
+	var pid: String = str(e.get("part", ""))
+	var pos: Vector2 = e["pos"]
+	var sh = m.world.shooter()
+	if MO3_TETHER.has(pid) and sh != null:
+		fx.append({"k": "mo3_tether", "a": sh.pos, "b": pos, "t": 0.0, "life": 0.6, "c": Color("C3C9D0")})
+		snd.play("rail_bump", -10.0, 2.0)   # 팅
+	if MO3_TURN.has(pid):
+		var st = _near_stone(pos)
+		if st != null and st.vel.length() > 10.0:
+			fx.append({"k": "mo3_arrow", "pos": st.pos, "dir": st.vel.normalized(), "t": 0.0, "life": 0.45, "c": Color("FFE08A")})
+	match pid:
+		"tick_step":
+			var n := int(mo3_tick_n.get(m.world.shot_no, 0))
+			mo3_tick_n = {m.world.shot_no: n + 1}
+			fx.append({"k": "mo_pop", "pos": pos + Vector2(0, -36), "t": 0.0, "life": 0.4, "text": ["똑", "딱"][n % 2], "c": Color("FFE08A"), "size": 18})
+			fx.append({"k": "mo2_puff", "pos": pos + Vector2(0, World.STONE_R), "t": 0.0, "life": 0.35, "c": Color("C9D5FF")})
+			snd.play("timer_tick", -6.0, 1.3 if n % 2 == 0 else 1.0)
+		"metronome":
+			var st2 = _near_stone(pos)
+			fx.append({"k": "mo3_metro", "pos": st2.pos if st2 != null else pos, "to": pos, "t": 0.0, "life": 0.5, "c": Color("C08E5C")})
+		"helm":
+			fx.append({"k": "mo3_wheel", "pos": pos, "t": 0.0, "life": 0.8, "c": Color("7A4E2C")})
+			snd.play("fx_mech_spring", -6.0, 0.6)   # 촤르륵
+		"peg_leg":
+			if str(e.get("text", "")).contains("박힘"):
+				fx.append({"k": "mo3_crack", "pos": pos, "t": 0.0, "life": 1.2, "c": Color("3A2A1A")})
+				fx.append({"k": "mo2_puff", "pos": pos + Vector2(0, World.STONE_R), "t": 0.0, "life": 0.5, "c": Color("E9DFC6")})
+				shake = maxf(shake, 4.0)
+		"finger_touch":
+			for i in 8:
+				fx.append({"k": "spark", "pos": pos, "vel": Vector2.from_angle(TAU * i / 8.0) * 120.0, "t": 0.0, "life": 0.35, "c": Color("FFF3C4")})
+			fx.append({"k": "text", "pos": pos + Vector2(0, -50), "t": 0.0, "life": 0.6, "text": "찌릿", "c": Color("FFF3C4"), "size": 18})
+		"follow_eyes":
+			if str(e.get("text", "")).contains("따라온다"):
+				fx.append({"k": "mo3_eyes", "pos": pos, "t": 0.0, "life": 0.9, "c": Color("D4AF37")})
+		"gleaner_broom":
+			fx.append({"k": "mo3_broom", "pos": pos, "t": 0.0, "life": 1.0, "c": Color("E3C27A")})
+			snd.play("flick_pull", -8.0, 1.2)   # 쓱싹
+		"wave_print":
+			var dir: Vector2 = (pos - sh.pos).normalized() if sh != null and pos.distance_to(sh.pos) > 1.0 else Vector2.RIGHT
+			fx.append({"k": "mo3_wave", "pos": sh.pos if sh != null else pos, "dir": dir, "t": 0.0, "life": 1.1, "c": Color("2E5E9E")})
+
+
+func _mo3_on_event(e: Dictionary) -> bool:
+	match str(e["t"]):
+		"bullet_hit":
+			for i in 6:
+				fx.append({"k": "spark", "pos": e["pos"], "vel": Vector2.from_angle(TAU * i / 6.0 + 0.3) * 150.0, "t": 0.0, "life": 0.3, "c": Color.WHITE})
+		"device":
+			fx.append({"k": "mo3_drop", "pos": e["pos"], "t": 0.0, "life": 0.5, "c": m.players[int(e["owner"])].color if int(e.get("owner", -1)) >= 0 else Color.WHITE})
+		"expire":
+			fx.append({"k": "mo3_dots", "pos": e["pos"], "t": 0.0, "life": 0.4, "c": Color("C3C9D0")})
+		"reflect":
+			fx.append({"k": "mo3_shield", "pos": e["pos"], "t": 0.0, "life": 0.6, "c": Color("5BB8E0")})
+		"cone":
+			if e.get("smoke", false):
+				fx.append({"k": "mo3_smoke", "pos": e["pos"], "dir": e["dir"], "t": 0.0, "life": 2.0, "r": e["radius"], "c": Color("E9ECEF")})
+		"m_dodge":
+			fx.append({"k": "mo3_lean", "pos": e["b"], "t": 0.0, "life": 0.9, "c": Color.WHITE, "stone": int(e.get("stone", -1))})
+	return false
+
+
+## 매 프레임: 총구 섬광 · 바위가 구르는 동안 판 흔들림과 먼지
+func _mo3_tick(delta: float) -> void:
+	if m == null:
+		return
+	for p in m.world.projs:
+		if p.kind == "bullet" and p.age < 0.05:
+			var key: int = p.get_instance_id()
+			if not mo3_proj.has(key):
+				mo3_proj[key] = time
+				fx.append({"k": "mo3_flash", "pos": p.pos, "t": 0.0, "life": 0.06, "c": Color("FFE08A")})
+	if mo3_proj.size() > 60:
+		mo3_proj.clear()
+	if not m.world.museum.is_empty() and not m.world.museum.get("boulders", []).is_empty():
+		shake = maxf(shake, 2.0)
+		mo3_boulder_t += delta
+		if mo3_boulder_t > 0.12:
+			mo3_boulder_t = 0.0
+			for b in m.world.museum["boulders"]:
+				fx.append({"k": "mo2_puff", "pos": (b["pos"] as Vector2) - (b["dir"] as Vector2) * float(b["r"]) + Vector2(0, float(b["r"]) * 0.6), "t": 0.0, "life": 0.5, "c": Color("D9CFC0")})
+
+
+## 상태 아이콘이 처음 붙을 때 크기 (0.2초 튕김)
+func _mo3_icon_scale(sid: int, kind: String) -> float:
+	var key := "%d:%s" % [sid, kind]
+	if not mo3_icon.has(key):
+		mo3_icon[key] = time
+	var k := clampf((time - float(mo3_icon[key])) / 0.2, 0.0, 1.0)
+	return _back(k) if k < 1.0 else 1.0
+
+
+## 느림보 태엽: 움직이는 동안 달팽이 껍데기 태엽이 돈다
+func _draw_mo3_over() -> void:
+	if m == null:
+		return
+	for s in m.world.stones:
+		if s.alive and s.vel.length() > 5.0 and s.parts.get("prop", "") == "slow_spring":
+			var p := w2s(s.pos) + Vector2(0, World.STONE_R * view_scale * 1.15)
+			var pts := PackedVector2Array()
+			for i in 24:
+				var a := -time * 6.0 + i * 0.5
+				pts.append(p + Vector2.from_angle(a) * (1.0 + i * 0.35) * view_scale)
+			draw_polyline(pts, Color("E8C98A"), 2.5, true)
+
+
+func _draw_mo3_fx(f: Dictionary, u: float) -> void:
+	var k := view_scale
+	var c: Color = f["c"]
+	match str(f["k"]):
+		"mo3_flash":
+			draw_circle(w2s(f["pos"]), 10.0 * k, Color(c, 1.0 - u))
+		"mo3_drop":
+			var p := w2s(f["pos"])
+			var d := clampf(u / 0.5, 0.0, 1.0)
+			var by := -sin(clampf((u - 0.5) / 0.3, 0.0, 1.0) * PI) * 8.0 if u > 0.5 else -(1.0 - d * d) * 60.0
+			draw_circle(p + Vector2(0, 4), 10.0 * k * (0.5 + 0.5 * d), Color(0, 0, 0, 0.3))
+			if u < 0.95:
+				draw_circle(p + Vector2(0, by), 8.0 * k, Color(c, 0.8))
+				draw_arc(p + Vector2(0, by), 8.0 * k, 0, TAU, 12, Art.outline, 1.5, true)
+			if u > 0.5 and u < 0.95:
+				_text_outline(p + Vector2(0, -26), "툭", 14, Color.WHITE, true)
+		"mo3_dots":
+			var pd := w2s(f["pos"])
+			for i in 8:
+				var a := TAU * i / 8.0
+				draw_circle(pd + Vector2(cos(a) * 40.0 * u, sin(a) * 30.0 * u - 10.0 * u) * k, 3.0 * k, Color(c, 1.0 - u))
+		"mo3_tether":
+			var a2 := w2s(f["a"])
+			var b2 := w2s(f["b"])
+			var tw := sin(f["t"] * 60.0) * 4.0 * (1.0 - u)
+			var mid := (a2 + b2) * 0.5 + (b2 - a2).orthogonal().normalized() * tw
+			draw_polyline(PackedVector2Array([a2, mid, b2]), Color(c, 1.0 - u), 3.0, true)
+		"mo3_arrow":
+			var pa := w2s(f["pos"]) + Vector2(18, -22)
+			var dir: Vector2 = f["dir"]
+			var s := _back(clampf(u / 0.3, 0.0, 1.0)) * (1.0 - clampf((u - 0.7) / 0.3, 0.0, 1.0))
+			draw_line(pa - dir * 14.0 * s, pa + dir * 14.0 * s, c, 4.0, true)
+			poly_arrow(pa + dir * 14.0 * s, dir, 8.0 * s, c)
+		"mo3_shield":
+			var ps := w2s(f["pos"])
+			var sc := _back(clampf(u / 0.17, 0.0, 1.0))
+			draw_arc(ps, 34.0 * k * sc, -1.1, 1.1, 16, Color(c, 1.0 - u), 7.0, true)
+			draw_arc(ps, 34.0 * k * sc, PI - 1.1, PI + 1.1, 16, Color(c, 1.0 - u), 7.0, true)
+		"mo3_smoke":
+			var pc := w2s(f["pos"])
+			var dir2: Vector2 = f["dir"]
+			var kk := clampf(u / 0.35, 0.0, 1.0)
+			var al := 0.8 * (1.0 - clampf((u - 0.7) / 0.3, 0.0, 1.0))
+			for i in 6:
+				var a3 := (i - 2.5) * 0.18
+				var dist := (0.35 + kk * 0.65) * float(f["r"]) * (0.6 + float(i % 2) * 0.4)
+				draw_circle(pc + dir2.rotated(a3) * dist * k, (14.0 + kk * 26.0) * k, Color(c, al))
+		"mo3_metro":
+			var pm := w2s(f["pos"])
+			var to := w2s(f["to"])
+			var ang := lerpf(-0.7, 0.7, _eio(clampf(u / 0.6, 0.0, 1.0))) if to.x > pm.x else lerpf(0.7, -0.7, _eio(clampf(u / 0.6, 0.0, 1.0)))
+			var tip := pm + Vector2(0, -60.0 * k).rotated(ang)
+			draw_line(pm, tip, Color(c, 1.0 - u * 0.5), 5.0, true)
+			draw_rect(Rect2(pm.lerp(tip, 0.75) - Vector2(7, 5), Vector2(14, 10)), Color("C9A15A", 1.0 - u * 0.5))
+		"mo3_wheel":
+			var pw := w2s(f["pos"])
+			var rot := _eio(clampf(u / 0.9, 0.0, 1.0)) * PI
+			var al2 := 1.0 - clampf((u - 0.8) / 0.2, 0.0, 1.0)
+			for i in 8:
+				var a4 := rot + TAU * i / 8.0
+				draw_line(pw, pw + Vector2.from_angle(a4) * 36.0 * k, Color(c, al2), 5.0, true)
+			draw_arc(pw, 26.0 * k, 0, TAU, 24, Color(c, al2), 6.0, true)
+			draw_circle(pw, 6.0 * k, Color("C9A15A", al2))
+		"mo3_crack":
+			var pk := w2s(f["pos"]) + Vector2(0, World.STONE_R * k)
+			var al3 := 1.0 - clampf((u - 0.7) / 0.3, 0.0, 1.0)
+			for seg in [[Vector2(-14, 10), Vector2(-20, 24)], [Vector2(16, 8), Vector2(26, 22)], [Vector2(2, 18), Vector2(2, 18)]]:
+				draw_polyline(PackedVector2Array([pk, pk + (seg[0] as Vector2) * k, pk + (seg[1] as Vector2) * k]), Color(c, al3), 2.5, true)
+			if u < 0.45:
+				_text_outline(pk + Vector2(40, -50), "쿵", 22, Color("FFE08A"), true)
+		"mo3_eyes":
+			var pe := w2s(f["pos"]) + Vector2(30, -50) * k
+			var al4 := 1.0 - clampf((u - 0.75) / 0.25, 0.0, 1.0)
+			draw_rect(Rect2(pe - Vector2(18, 21) * k, Vector2(36, 42) * k), Color(c, al4))
+			draw_rect(Rect2(pe - Vector2(14, 17) * k, Vector2(28, 34) * k), Color("5E5034", al4))
+			var look := clampf((u - 0.1) / 0.12, 0.0, 1.0) * 2.0
+			for sx in [-5.0, 5.0]:
+				draw_circle(pe + Vector2(sx, -5) * k, 3.5 * k, Color(1, 1, 1, al4))
+				draw_circle(pe + Vector2(sx + look, -5 + look) * k, 1.8 * k, Color(0.07, 0.07, 0.07, al4))
+		"mo3_broom":
+			var pb := w2s(f["pos"])
+			var a5 := _eio(clampf(u, 0.0, 1.0)) * TAU
+			var tipb := pb + Vector2.from_angle(a5 - PI / 2.0) * 60.0 * k
+			draw_line(pb, tipb, Color("9A6A3E", 1.0 - u * 0.3), 4.0, true)
+			var side := Vector2.from_angle(a5)
+			draw_colored_polygon(PackedVector2Array([tipb - side * 10.0 * k, tipb + side * 10.0 * k, tipb + side * 14.0 * k + (tipb - pb).normalized() * 18.0 * k, tipb - side * 14.0 * k + (tipb - pb).normalized() * 18.0 * k]), Color(c, 1.0 - u * 0.3))
+			if u > 0.2 and u < 0.8:
+				_text_outline(pb + Vector2(0, -80) * k, "쓱싹", 16, Color.WHITE, true)
+		"mo3_wave":
+			var p0: Vector2 = f["pos"]
+			var dirw: Vector2 = f["dir"]
+			var kc := _eio(clampf(u / 0.3, 0.0, 1.0))
+			var mv := clampf((u - 0.25) / 0.6, 0.0, 1.0)
+			var al5 := 1.0 - clampf((u - 0.85) / 0.15, 0.0, 1.0)
+			var front := p0 + dirw * (World.STONE_R * 1.5 + mv * CELL * 4.0)
+			var side2 := dirw.orthogonal()
+			var h := (10.0 + 60.0 * kc) * k
+			var pts := PackedVector2Array()
+			for i in 13:
+				var t := float(i) / 12.0
+				var lat := (t - 0.5) * 2.0 * CELL
+				var curl := sin(t * PI) * h
+				pts.append(w2s(front + side2 * lat) - dirw * 0.0 + Vector2(0, -curl * 0.6))
+			for i in range(12, -1, -1):
+				var t2 := float(i) / 12.0
+				pts.append(w2s(front - dirw * CELL * 0.9 + side2 * (t2 - 0.5) * 2.0 * CELL))
+			draw_colored_polygon(pts, Color(c, 0.75 * al5))
+			for i in 4:
+				var t3 := (i + 0.5) / 4.0
+				var q := w2s(front + side2 * (t3 - 0.5) * 2.0 * CELL) + Vector2(0, -sin(t3 * PI) * h * 0.6)
+				draw_arc(q, 7.0 * k, PI, TAU, 8, Color(1, 1, 1, al5), 2.5, true)
+		"mo3_lean":
+			var s = m.world.get_stone(int(f.get("stone", -1)))
+			if s != null and s.alive:
+				var pl := w2s(s.pos)
+				var lean := sin(clampf(u / 0.8, 0.0, 1.0) * PI)
+				for i in 2:
+					draw_circle(pl + Vector2(5.0 * (i + 1), 4.0 * (i + 1)) * k, World.STONE_R * k * (1.0 - 0.3 * lean), Color(m.players[s.owner].color, 0.25 * lean))
+				for i in 3:
+					draw_line(pl + Vector2(-60, -24 + i * 8) * k, pl + Vector2(60, -24 + i * 8) * k, Color(1, 1, 1, 0.6 * lean), 2.0, true)
