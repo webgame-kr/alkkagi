@@ -195,6 +195,7 @@ var crown := {}               # 왕관 쟁탈전의 왕관 (crown.gd). 비어 �
 var parcel := {}              # 택배 쟁탈전의 택배 (parcel.gd). 비어 있으면 다른 모드
 var clock := {}               # 태엽 시계탑: 차례를 넘는 물체·잔상·자명종 (clock.gd)
 var pirate := {}              # 해적 선착장: 바람·밀물·널빤지·구멍·줄·술통 … (pirate.gd)
+var lab_exp := {}             # 미친 과학자 세트 「대실험!」 {kind, round, by} (lab.gd)
 var museum := {}              # 그랑 뮤제: 붓·점묘 자국 · 레이저 · 바위 · 등지느러미 (museum.gd)
 var turn_no := 0              # 지금까지 시작한 차례 수 (다음 차례 판정용)
 
@@ -216,6 +217,7 @@ func clone():
 	w.clock = clock.duplicate(true)
 	w.pirate = pirate.duplicate(true)
 	w.museum = museum.duplicate(true)
+	w.lab_exp = lab_exp.duplicate(true)
 	w.turn_no = turn_no
 	w.next_device_id = next_device_id
 	w.round_no = round_no
@@ -279,7 +281,7 @@ func size_of(s) -> float:
 	var k: float = s.base_size
 	for key in s.mods:
 		k *= float(s.mods[key].get("size", 1.0))
-	return k
+	return Lab.size_k(self, k)
 
 
 func radius_of(s) -> float:
@@ -645,6 +647,7 @@ func step() -> void:
 				gk = 0.0   # 라스트 컷: 판 끝까지 줄지 않고 달린다
 			gk *= Clock.friction_k(self, s)
 			gk *= Museum.friction_k(self, s)
+			gk *= Lab.friction_k(self)
 			var fr := FRICTION * _friction_scale(s.pos) * Ex.friction_scale(self, s.pos) * gk
 			var ns := sp - fr * dt - sp * DRAG * gk * dt
 			if ns < STOP_SPEED:
@@ -801,7 +804,7 @@ func _collide_stones() -> void:
 				continue
 			var va := a.vel
 			var vb := b.vel
-			var imp := rel * (1.0 + RESTITUTION) / (1.0 / ma + 1.0 / mb)
+			var imp := rel * (1.0 + RESTITUTION * Lab.restitution_k(self)) / (1.0 / ma + 1.0 / mb)
 			a.vel -= nrm * imp / ma
 			b.vel += nrm * imp / mb
 			Lab.post_collision(self, a, b, nrm, imp)

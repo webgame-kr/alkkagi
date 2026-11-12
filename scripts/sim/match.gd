@@ -603,6 +603,9 @@ func _settle_turn() -> void:
 	# 바퀴 끝
 	var chest := World.Pirate.round_end(world, round_no)
 	World.Museum.round_end(world, round_no)
+	if not world.lab_exp.is_empty():
+		exp_events.append({"kind": "end", "exp": str(world.lab_exp.get("kind", "")), "pid": int(world.lab_exp.get("by", -1))})
+		world.lab_exp = {}
 	for cp in chest:
 		extra_offer[cp] = int(extra_offer.get(cp, 0)) + int(chest[cp])
 		order_log.append({"kind": "chest", "pid": cp})
@@ -975,6 +978,37 @@ func _parcel_settle() -> bool:
 
 
 # ── 컷! 다시 찍어! (영화감독 세트, SYS-17) ─────────────────
+# ── 대실험! (미친 과학자 세트) ─────────────────────────
+var exp_used := {}            # pid → 대실험을 쓴 횟수 (판당 3회)
+var exp_events: Array = []    # 화면이 읽고 비우는 알림 {kind: start|end, exp, pid}
+const EXP_MAX := 3
+
+
+## 지금 대실험을 걸 수 있는지: 세트를 모은 살아 있는 알, 이번 바퀴에 아직 실험 없음, 그 바퀴 첫 자기 차례, 판당 3회
+func can_experiment(pid: int) -> bool:
+	if phase != "aim" or current_player() != pid or world.shot != null:
+		return false
+	if int(exp_used.get(pid, 0)) >= EXP_MAX or World.Lab.experiment(world) != "":
+		return false
+	if not bonus_active.is_empty() or not retake_active.is_empty():
+		return false
+	if order.find(pid) != turn_pos:
+		return false
+	for s in world.alive_stones_of(pid):
+		if PartsData.set_complete(s.parts, "madsci"):
+			return true
+	return false
+
+
+func start_experiment(pid: int, kind: String) -> bool:
+	if not can_experiment(pid) or not World.Lab.EXPERIMENTS.has(kind):
+		return false
+	exp_used[pid] = int(exp_used.get(pid, 0)) + 1
+	world.lab_exp = {"kind": kind, "round": round_no, "by": pid}
+	exp_events.append({"kind": "start", "exp": kind, "pid": pid})
+	return true
+
+
 var retake_snap = null        # 샷 직전 판 (world.clone)
 var retake_stone := -1
 var retake_used := {}         # pid → 다시 찍기를 쓴 바퀴

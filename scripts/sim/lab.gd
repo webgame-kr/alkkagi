@@ -5,6 +5,7 @@ extends RefCounted
 const D = preload("res://scripts/sim/parts_data.gd")
 const CELL := 44.0
 const TIME_K := 2.5
+const C = preload("res://scripts/sim/clock.gd")
 const R := 22.0
 
 const TILT_SPEED := 0.8 * CELL * TIME_K
@@ -17,6 +18,23 @@ const SHRINK_RANGE := 9.0 * CELL
 
 static func on_launch(w, s) -> void:
 	var dir: Vector2 = w.shot.dir
+	# 테슬라 코일 표식: 표식이 붙은 알 주인의 다음 샷 힘 −10%
+	var marked := false
+	for o in w.stones:
+		if o.owner == w.shot.owner and o.status.has("tesla"):
+			o.status.erase("tesla")
+			marked = true
+	if marked:
+		s.vel *= 0.9
+		w.emit({"t": "part", "part": "tesla_coil", "pos": s.pos, "owner": s.owner, "text": "힘 −10%"})
+	if s.parts["weapon"] == "tesla_coil":
+		var tt = _first_on_ray(w, s.pos, dir, 8.0 * 44.0, s.id)
+		if tt != null:
+			tt.vel += dir * C.speed_for(0.5)
+			tt.status["tesla"] = true
+			_mark(w, tt, "tesla_coil")
+			w.emit({"t": "beam", "a": s.pos + dir * (R + 6.0), "b": tt.pos, "owner": s.owner, "part": "tesla_coil", "zig": true})
+			w.emit({"t": "part", "part": "tesla_coil", "pos": tt.pos, "owner": s.owner, "text": "지지직!", "big": true})
 	match s.parts["weapon"]:
 		"shrink_ray":
 			if _use(w, "shrink_ray"):
@@ -30,7 +48,9 @@ static func on_launch(w, s) -> void:
 				w.emit({"t": "beam", "a": s.pos + dir * (R + 6.0), "b": end, "owner": s.owner, "part": "shrink_ray"})
 				_ev(w, s, "shrink_ray", end, {"text": "축소 광선"})
 		"tilter":
-			if _use(w, "tilter"):
+			if experiment(w) != "":
+				_ev(w, s, "tilter", s.pos, {"text": "대실험 중이라 기울일 수 없음"})
+			elif _use(w, "tilter"):
 				w.shot.ex["tilt"] = {"dir": dir, "t": TILT_TIME}
 				_ev(w, s, "tilter", s.pos, {"text": "판 기울이개", "big": true})
 		"sticky":
@@ -63,6 +83,15 @@ static func skip_pair(w, a, b) -> bool:
 
 ## 충돌 직후 (모든 알 사이): 반발 코팅은 부딪힌 알을 2배로 튕긴다.
 static func post_collision(w, a, b, nrm: Vector2, imp: float) -> void:
+	# 실험 가운: 옆에서 맞으면 충격 30% 흡수 (차례마다 1회)
+	for pr in [[a, -nrm], [b, nrm]]:
+		var x = pr[0]
+		var hit_dir: Vector2 = pr[1]
+		if x.parts.get("aux", "") == "lab_coat" and int(x.status.get("coat_turn", -1)) != w.turn_no and (w.shot == null or x.id != w.shot.stone_id):
+			if absf(Vector2.from_angle(x.facing).dot(hit_dir)) < 0.75:
+				x.status["coat_turn"] = w.turn_no
+				x.vel *= 0.7
+				w.emit({"t": "part", "part": "lab_coat", "pos": x.pos, "owner": x.owner, "text": "펄럭! 흡수 30%"})
 	if a.mods.has("repel"):
 		b.vel += nrm * imp / w.mass_of(b)
 	if b.mods.has("repel"):
@@ -83,8 +112,8 @@ static func on_contact(w, s, t, n: Vector2, first: bool) -> bool:
 		for slot in ["weapon", "aux", "prop"]:
 			if s.parts[slot] == "" and t.parts[slot] != "":
 				s.parts[slot] = t.parts[slot]
-		s.base_size = 1.4
-		s.base_mass = 2.0
+		s.base_size = 1.3
+		s.base_mass = 1.8
 		s.mods["merged"] = {"size": 1.0, "mass": 1.0, "until": 999999}
 		t.alive = false
 		t.vel = Vector2.ZERO
@@ -289,3 +318,35 @@ static func _first_on_ray(w, from: Vector2, dir: Vector2, max_len: float, skip_i
 			best_t = along
 			best = t
 	return best
+
+
+# ── 미친 과학자 세트 「대실험!」 ─────────────────────────────
+## world.lab_exp = {kind: shrink|zerog|bounce, round, by}. 그 바퀴가 끝날 때까지 판 전체에.
+const EXPERIMENTS := ["shrink", "zerog", "bounce"]
+const EXP_NAMES := {"shrink": "축소 실험", "zerog": "무중력 실험", "bounce": "반발 실험"}
+const ZEROG_LIMIT := 4.0    # 무중력 실험: 한 샷 4초 뒤부터는 평소처럼 감속
+
+
+static func experiment(w) -> String:
+	if w.lab_exp.is_empty() or int(w.lab_exp.get("round", -1)) != w.round_no:
+		return ""
+	return str(w.lab_exp.get("kind", ""))
+
+
+## 축소 실험: 모든 알 0.7배 (다른 크기 변화와 곱해도 0.5배 아래로는 안 내려감)
+static func size_k(w, base: float) -> float:
+	if experiment(w) == "shrink":
+		return maxf(base * 0.7, minf(base, 0.5))
+	return base
+
+
+## 무중력 실험: 마찰 0 (한 샷 4초가 지나면 평소대로)
+static func friction_k(w) -> float:
+	if experiment(w) == "zerog" and (w.shot == null or w.shot.time < ZEROG_LIMIT):
+		return 0.0
+	return 1.0
+
+
+## 반발 실험: 모든 충돌 반발 1.5배
+static func restitution_k(w) -> float:
+	return 1.5 if experiment(w) == "bounce" else 1.0

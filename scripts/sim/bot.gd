@@ -286,3 +286,34 @@ func finish_now() -> void:
 	if best.is_empty() and index < candidates.size():
 		think_step(1)
 	index = candidates.size()
+
+
+## CPU 대실험 고르기: 장거리 부품이 많으면 무중력, 몸통 충돌이면 반발, 판에 알이 붙어 있으면 축소.
+## 상대가 판 끝에 몰려 있으면 반발 우선, 내가 판 끝 근처면 무중력은 피한다.
+static func choose_experiment(m, pid: int) -> String:
+	var w = m.world
+	var score := {"shrink": 0.0, "zerog": 0.0, "bounce": 0.5}
+	for s in w.alive_stones_of(pid):
+		if ["rocket", "retro"].has(s.parts.get("prop", "")):
+			score["zerog"] += 1.0
+		if s.parts.get("weapon", "") == "" or ["nose", "claw", "trex_head"].has(s.parts.get("weapon", "")):
+			score["bounce"] += 0.5
+		if w.edge_distance(s.pos) < 2.0 * 44.0:
+			score["zerog"] -= 2.0
+	var near := 0
+	var edge_foes := 0
+	for a in w.stones:
+		if not a.alive:
+			continue
+		if a.owner != pid and w.edge_distance(a.pos) < 2.5 * 44.0:
+			edge_foes += 1
+		for b in w.stones:
+			if b.alive and b.id > a.id and a.pos.distance_to(b.pos) < 3.0 * 44.0:
+				near += 1
+	score["shrink"] += near * 0.3
+	score["bounce"] += edge_foes * 0.8
+	var best := "bounce"
+	for k in score:
+		if score[k] > score[best]:
+			best = k
+	return best

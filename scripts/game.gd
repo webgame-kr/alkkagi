@@ -370,7 +370,7 @@ func _debug_args() -> void:
 		if m.workshop == "pirate":
 			kits = [["parrot_hat", "hook_hand", "peg_leg"], ["hole_cannon", "plank_dock", "lifeboat"], ["bolas", "rum_barrel", "oar"], ["flag_signal", "water_pump", "wind_sail"]]
 		if m.workshop == "lab":
-			kits = [["shrink_ray", "merge_bolt", "inflate"], ["sticky", "repel", "split_capsule"], ["remote", "decoy", "ghost"], ["tilter", "coupling", "weight"]]
+			kits = [["tesla_coil", "lab_coat", "safety_goggles"], ["sticky", "repel", "split_capsule"], ["remote", "decoy", "ghost"], ["tilter", "coupling", "weight"]]
 		if m.workshop == "junk":
 			kits = [["trex_head", "trex_arm", "trex_leg"], ["copier", "carousel", "brake"], ["claw", "mine", "crab"], ["hook", "trex_arm", "trex_leg"]]
 		if m.workshop == "magic":
@@ -578,6 +578,7 @@ func _start_match(seed_value := -1) -> void:
 	_mo_reset()
 	_mo2_reset()
 	_mo3_reset()
+	_ms_reset()
 	mu_frame = {}
 	mu_film = {}
 	mu_rewind = {}
@@ -737,6 +738,7 @@ func _update_play(delta: float) -> void:
 	_mo_tick(delta)
 	_mo2_tick(delta)
 	_mo3_tick(delta)
+	_ms_tick(delta)
 	if turn_hold > 0.0:
 		turn_hold -= delta
 		return
@@ -892,6 +894,8 @@ func _on_phase_changed() -> void:
 					fx.append({"k": "text", "pos": st_a.pos + Vector2(0, -40), "t": 0.0, "life": 1.6, "text": al["text"], "c": POWER, "size": 26})
 					fx.append({"k": "ring", "pos": st_a.pos, "t": 0.0, "life": 0.8, "r": 60.0, "c": POWER})
 					_mo2_set_flash(st_a.pos)
+					if PartsData.set_complete(st_a.parts, "madsci"):
+						_ms_transform(st_a.pos)
 				set_alerts.clear()
 				snd.play("set_complete", -4.0)
 				turn_hold = 0.4 if _reduced() else 1.1
@@ -1134,8 +1138,12 @@ func _consume_events() -> void:
 				fx.append({"k": "ring", "pos": e["pos"], "t": 0.0, "life": 0.5, "r": 50.0, "c": Color("B6F23C")})
 				_log("%s 알이 둘로 갈라졌어요" % m.players[int(e["owner"])].name, m.players[int(e["owner"])].color)
 			"beam":
-				snd.play("fx_magic_cast", -2.0, 1.3)
-				fx.append({"k": "beam", "a": e["a"], "b": e["b"], "t": 0.0, "life": 0.5, "c": Color("7FD8FF")})
+				if e.get("zig", false):
+					snd.play("fx_magic_cast", -2.0, 2.0)   # 지지직
+					fx.append({"k": "mo2_zig", "a": e["a"], "b": e["b"], "t": 0.0, "life": 0.4, "c": MS_NEON})
+				else:
+					snd.play("fx_magic_cast", -2.0, 1.3)
+					fx.append({"k": "beam", "a": e["a"], "b": e["b"], "t": 0.0, "life": 0.5, "c": Color("7FD8FF")})
 			"hexbreak":
 				snd.play("rail_bump", -3.0, 1.3)
 				fx.append({"k": "hex", "pos": e["pos"], "t": 0.0, "life": 0.5, "c": Color("F28A2E")})
@@ -1488,6 +1496,7 @@ func _draw_inner() -> void:
 	_draw_devices()
 	_draw_pirate_board()
 	_draw_museum_board()
+	_draw_ms_board()
 	_draw_clock_things()
 	_draw_crown_floor()
 	_draw_parcel()
@@ -1513,6 +1522,8 @@ func _draw_inner() -> void:
 	_perf_sec["fx"] = _perf_sec.get("fx", 0.0) + float(Time.get_ticks_usec() - _ts)
 	_ts = Time.get_ticks_usec()
 	_draw_museum_screen(vs)
+	_draw_ms_chip(vs)
+	_draw_ms_transform(vs)
 	_draw_mo2_screen(vs)
 	if banner_t > 0.0:
 		_draw_banner(vs)
@@ -2201,6 +2212,7 @@ func _draw_aim_over() -> void:
 
 
 	_draw_pirate_aim(info)
+	_draw_goggles_aim(info)
 
 
 ## 메카 티라노 조준: 팔이 닿는 측면(주인 색 부채꼴)과 던질 방향(황동 점선).
@@ -3765,6 +3777,8 @@ func _apply_action(a: Dictionary) -> void:
 					_on_placed()
 		"retake":
 			_apply_retake(bool(a.get("take", false)))
+		"exp":
+			m.start_experiment(pid, str(a.get("exp", "shrink")))
 		"skip":
 			_log("%s 시간 초과, 차례를 넘겨요" % m.players[pid].name, m.players[pid].color)
 			_banner("시간 초과")
@@ -11159,3 +11173,269 @@ func _draw_mo3_fx(f: Dictionary, u: float) -> void:
 					draw_circle(pl + Vector2(5.0 * (i + 1), 4.0 * (i + 1)) * k, World.STONE_R * k * (1.0 - 0.3 * lean), Color(m.players[s.owner].color, 0.25 * lean))
 				for i in 3:
 					draw_line(pl + Vector2(-60, -24 + i * 8) * k, pl + Vector2(60, -24 + i * 8) * k, Color(1, 1, 1, 0.6 * lean), 2.0, true)
+
+
+# ══ 미친 과학자 세트 「대실험!」 (기획서 「연구소 세트 기획서 · 미친 과학자」 · 모션 「연구소 세트 · 미친 과학자 모션」) ══
+const MS_NEON := Color("8BE04E")
+const MS_EXP_COL := {"shrink": Color("3D6FD1"), "zerog": Color("38A672"), "bounce": Color("F2A33A")}
+const MS_EXP_DESC := {"shrink": "모든 알 0.7배", "zerog": "판 전체 마찰 없음", "bounce": "모든 충돌 반발 1.5배"}
+var ms_btn: Button = null
+var ms_pick: Control = null
+var ms_pick_t := 0.0
+var ms_pick_done := false
+var ms_wave := {}             # 물결 {t, back}
+var ms_cpu_turn := -1
+var ms_transform := {}        # 변신 연출 {pos, t}
+
+
+func _ms_reset() -> void:
+	ms_wave = {}
+	ms_transform = {}
+	ms_cpu_turn = -1
+	_ms_close_pick()
+
+
+## 매 프레임: 버튼 · CPU 선택 · 실험 알림
+func _ms_tick(delta: float) -> void:
+	if m == null:
+		return
+	for ev in m.exp_events:
+		var pl: Dictionary = m.players[int(ev["pid"])] if int(ev["pid"]) >= 0 else {"name": "", "color": TEXT}
+		var nm: String = World.Lab.EXP_NAMES.get(str(ev["exp"]), "")
+		if ev["kind"] == "start":
+			ms_wave = {"t": time, "back": false}
+			_banner("대실험! " + nm, MS_NEON, "%s 시작 · %s · 이번 바퀴 끝까지" % [_j(pl.name, "이", "가"), MS_EXP_DESC.get(str(ev["exp"]), "")])
+			_log("대실험! %s %s 걸었어요" % [_j(pl.name, "이", "가"), _j(nm, "을", "를")], pl.color)
+			snd.play("fx_parody_stamp", 0.0, 0.8)   # 도장 쾅
+			get_tree().create_timer(0.2).timeout.connect(func(): snd.play(["fx_magic_shadow", "puck_slide_loop", "fx_mech_spring"][World.Lab.EXPERIMENTS.find(str(ev["exp"]))], -4.0, 1.4))
+		else:
+			ms_wave = {"t": time, "back": true}
+			_banner("실험 종료", MS_NEON, "판이 원래대로 돌아와요")
+			for i in 2:
+				get_tree().create_timer(0.12 * i).timeout.connect(func(): snd.play("ui_click", -4.0, 2.4))   # 삐빅
+	m.exp_events.clear()
+	# 내 차례: 대실험 버튼
+	var pid := m.current_player()
+	var show := state == "play" and m.phase == "aim" and pid >= 0 and _is_mine(pid) and m.can_experiment(pid) and turn_hold <= 0.0 and ms_pick == null
+	if show and ms_btn == null:
+		ms_btn = _primary(_button("대실험!", func(): _ms_open_pick()))
+		ms_btn.custom_minimum_size = Vector2(170, 52)
+		ms_btn.add_theme_font_override("font", font_display)
+		ms_btn.add_theme_font_size_override("font_size", 22)
+		ms_btn.add_theme_stylebox_override("normal", _sb(Color("1E2A24"), MS_NEON, 12))
+		ms_btn.add_theme_stylebox_override("hover", _sb(Color("2C4033"), MS_NEON, 12))
+		for k in ["font_color", "font_hover_color", "font_pressed_color"]:
+			ms_btn.add_theme_color_override(k, MS_NEON)
+		ui.add_child(ms_btn)
+	if ms_btn != null:
+		if not show:
+			ms_btn.queue_free()
+			ms_btn = null
+		else:
+			var vs := get_viewport_rect().size
+			ms_btn.position = Vector2(vs.x * 0.5 - 85.0, vs.y - 128.0)
+	# 고르기: 6초가 지나면 첫 번째 카드
+	if ms_pick != null:
+		ms_pick_t += delta
+		if m.phase != "aim" or not m.can_experiment(pid):
+			_ms_close_pick()
+		elif ms_pick_t >= 6.0 and not ms_pick_done:
+			_ms_choose(World.Lab.EXPERIMENTS[0])
+		else:
+			ms_pick.queue_redraw()
+	# CPU
+	if m.phase == "aim" and pid >= 0 and m.players[pid].cpu and _drives_cpu() and m.can_experiment(pid) and ms_cpu_turn != m.world.turn_no and turn_hold <= 0.0:
+		ms_cpu_turn = m.world.turn_no
+		_act({"k": "exp", "pid": pid, "exp": Bot.choose_experiment(m, pid)})
+
+
+func _ms_open_pick() -> void:
+	if ms_pick != null:
+		return
+	ms_pick_t = 0.0
+	ms_pick_done = false
+	var root := Control.new()
+	root.set_anchors_preset(Control.PRESET_FULL_RECT)
+	root.mouse_filter = Control.MOUSE_FILTER_STOP
+	ui.add_child(root)
+	ms_pick = root
+	var vs := get_viewport_rect().size
+	var pw := minf(560.0, vs.x - 24.0)
+	var panel := Rect2(vs.x * 0.5 - pw * 0.5, vs.y * 0.5 - 170.0, pw, 340.0)
+	var cw := (pw - 48.0) / 3.0
+	root.draw.connect(func():
+		root.draw_rect(Rect2(Vector2.ZERO, vs), Color(0, 0, 0, 0.45))
+		var sb := StyleBoxFlat.new()
+		sb.bg_color = Color("1E2A24")
+		sb.border_color = MS_NEON
+		sb.set_border_width_all(3)
+		sb.set_corner_radius_all(16)
+		sb.draw(root.get_canvas_item(), panel)
+		root.draw_string(font_display, panel.position + Vector2(0, 48), "대실험!", HORIZONTAL_ALIGNMENT_CENTER, pw, 34, MS_NEON)
+		root.draw_string(font, panel.position + Vector2(0, 74), "이번 바퀴 동안 판 전체에 적용할 실험을 골라요 · 모두에게 똑같이", HORIZONTAL_ALIGNMENT_CENTER, pw, 13, Color("C9D8CF"))
+		root.draw_string(font_bold, panel.position + Vector2(pw - 70, 48), "%d초" % int(ceil(maxf(0.0, 6.0 - ms_pick_t))), HORIZONTAL_ALIGNMENT_RIGHT, 50, 18, Color.WHITE)
+		for i in 3:
+			var k := 1.0 - pow(1.0 - clampf((ms_pick_t - 0.12 * i) / 0.4, 0.0, 1.0), 3.0)
+			var x := lerpf(vs.x + 40.0, panel.position.x + 12.0 + i * (cw + 12.0), k)
+			var cr := Rect2(x, panel.position.y + 96.0, cw, 200.0)
+			var exp_k: String = World.Lab.EXPERIMENTS[i]
+			root.draw_rect(cr, Color("F4F7F5"))
+			root.draw_rect(cr, Color("0E1013"), false, 2.0)
+			root.draw_circle(cr.position + Vector2(cw * 0.5, 64), 30, MS_EXP_COL[exp_k])
+			root.draw_arc(cr.position + Vector2(cw * 0.5, 64), 30, 0, TAU, 28, Color("0E1013"), 2.5, true)
+			root.draw_string(font_bold, cr.position + Vector2(0, 128), World.Lab.EXP_NAMES[exp_k], HORIZONTAL_ALIGNMENT_CENTER, cw, 16, Color("1E2A24"))
+			root.draw_string(font, cr.position + Vector2(0, 152), MS_EXP_DESC[exp_k], HORIZONTAL_ALIGNMENT_CENTER, cw, 12, Color("4A5A50"))
+		root.draw_string(font, panel.position + Vector2(0, panel.size.y - 14), "고르지 않으면 첫 번째 실험 · 바퀴가 끝나면 원래대로", HORIZONTAL_ALIGNMENT_CENTER, pw, 12, Color("C9D8CF")))
+	root.gui_input.connect(func(e):
+		if e is InputEventMouseButton and e.pressed and e.button_index == MOUSE_BUTTON_LEFT:
+			for i in 3:
+				var cr2 := Rect2(panel.position.x + 12.0 + i * (cw + 12.0), panel.position.y + 96.0, cw, 200.0)
+				if cr2.has_point(e.position):
+					_ms_choose(World.Lab.EXPERIMENTS[i])
+					return
+			if not panel.has_point(e.position):
+				_ms_close_pick())
+	snd.play("flick_pull", -6.0, 1.5)   # 카드 슥
+
+
+func _ms_choose(kind: String) -> void:
+	if ms_pick_done:
+		return
+	ms_pick_done = true
+	_ms_close_pick()
+	_act({"k": "exp", "pid": m.current_player(), "exp": kind})
+
+
+func _ms_close_pick() -> void:
+	if ms_pick != null:
+		ms_pick.queue_free()
+		ms_pick = null
+
+
+## 실험이 걸린 판: 축소는 원래 크기 점선, 무중력은 하늘색과 기포, 반발은 주황 스프링 테
+func _draw_ms_board() -> void:
+	if m == null:
+		return
+	var ex := World.Lab.experiment(m.world)
+	var k := view_scale
+	var c := w2s(Vector2.ZERO)
+	var R: float = m.world.size * k
+	if ex == "zerog":
+		draw_circle(c, R, Color(0.75, 0.91, 1.0, 0.22))
+		for i in 18:
+			var q := fmod(time * 0.4 + i / 18.0, 1.0)
+			var bx := c.x + (fposmod(i * 61.0, 2.0 * R) - R) * 0.9
+			draw_arc(Vector2(bx, c.y + R * 0.9 - q * R * 1.8), 3.0 + i % 4, 0, TAU, 10, Color(0.36, 0.72, 0.88, 0.8 * (1.0 - q)), 1.5, true)
+	for s in m.world.stones:
+		if not s.alive:
+			continue
+		var p := w2s(s.pos)
+		if ex == "shrink":
+			for q2 in 16:
+				if q2 % 2 == 0:
+					draw_arc(p, World.STONE_R * k, TAU * q2 / 16.0, TAU * (q2 + 1) / 16.0, 4, Color(MS_EXP_COL["shrink"], 0.7), 1.5, true)
+		elif ex == "bounce":
+			var r2 := (m.world.radius_of(s) + 4.0) * k
+			for q3 in 20:
+				if q3 % 3 != 2:
+					draw_arc(p, r2, TAU * q3 / 20.0, TAU * (q3 + 1) / 20.0, 4, Color(MS_EXP_COL["bounce"], 0.9), 3.0, true)
+	# 실험 시작 · 종료 물결
+	if not ms_wave.is_empty():
+		var t := time - float(ms_wave["t"])
+		var dur := 0.6 if ms_wave["back"] else 1.2
+		if t > dur:
+			ms_wave = {}
+		else:
+			var u := t / dur
+			var x := lerpf(c.x - R - 20.0, c.x + R + 20.0, (1.0 - u) if ms_wave["back"] else u)
+			var h := sqrt(maxf(0.0, R * R - (x - c.x) * (x - c.x)))
+			draw_line(Vector2(x, c.y - h), Vector2(x, c.y + h), Color(MS_NEON, 0.55), 16.0)
+
+
+## 진행 중 칩: 「대실험 · 무중력 · 빨강이 시작」
+func _draw_ms_chip(vs: Vector2) -> void:
+	if m == null:
+		return
+	var ex := World.Lab.experiment(m.world)
+	if ex == "":
+		return
+	var by := int(m.world.lab_exp.get("by", -1))
+	var who: String = m.players[by].name if by >= 0 else ""
+	var t1: String = "대실험 · " + str(World.Lab.EXP_NAMES[ex]).replace(" 실험", "")
+	var t2 := "%s 시작 · 이번 바퀴 끝까지" % _j(who, "이", "가")
+	var w := maxf(font_bold.get_string_size(t1, HORIZONTAL_ALIGNMENT_LEFT, -1, 14).x, font.get_string_size(t2, HORIZONTAL_ALIGNMENT_LEFT, -1, 11).x) + 56.0
+	var r := Rect2(vs.x * 0.5 - w * 0.5, 128.0, w, 44.0)
+	_round_rect(r, Color("1E2A24"), 22)
+	draw_arc(r.position + Vector2(24, 22), 10, 0, TAU, 16, MS_NEON, 2.0, true)
+	draw_colored_polygon(PackedVector2Array([r.position + Vector2(20, 16), r.position + Vector2(28, 16), r.position + Vector2(31, 28), r.position + Vector2(17, 28)]), MS_NEON)
+	draw_string(font_bold, r.position + Vector2(42, 20), t1, HORIZONTAL_ALIGNMENT_LEFT, w - 48, 14, MS_NEON)
+	draw_string(font, r.position + Vector2(42, 36), t2, HORIZONTAL_ALIGNMENT_LEFT, w - 48, 11, Color("C9D8CF"))
+
+
+## 보호 고글: 조준하는 동안 첫 충돌 지점에 형광 표적, 그 알이 밀려갈 방향
+func _draw_goggles_aim(info: Dictionary) -> void:
+	if not info.has("dir") or info.has("cancel"):
+		return
+	var s = info["stone"]
+	if s.parts.get("prop", "") != "safety_goggles":
+		return
+	var dir: Vector2 = info["dir"]
+	var best = null
+	var bt := 99999.0
+	for o in m.world.stones:
+		if not o.alive or o.id == s.id:
+			continue
+		var off: Vector2 = o.pos - s.pos
+		var along := off.dot(dir)
+		var side := absf(off.cross(dir))
+		var rr: float = m.world.radius_of(s) + m.world.radius_of(o)
+		if along > 0.0 and side < rr:
+			var t := along - sqrt(rr * rr - side * side)
+			if t < bt:
+				bt = t
+				best = o
+	if best == null:
+		return
+	var hit: Vector2 = s.pos + dir * bt
+	var push: Vector2 = (best.pos - hit).normalized()
+	var p := w2s(hit + push * m.world.radius_of(s))
+	draw_arc(p, 10.0 * (1.0 + 0.25 * sin(time * 10.0)), 0, TAU, 20, MS_NEON, 3.0, true)
+	var tp := w2s(best.pos)
+	var al := 0.6 + 0.4 * sin(time * 6.0)
+	draw_line(tp + push * 26.0, tp + push * 62.0, Color(MS_NEON, al), 4.0, true)
+	poly_arrow(tp + push * 62.0, push, 9.0, Color(MS_NEON, al))
+
+
+## 세트 완성 · 미친 과학자 변신: 어두워짐 → 번개와 섬광 → 머리 · 가운 · 코일
+func _ms_transform(pos: Vector2) -> void:
+	ms_transform = {"pos": pos, "t": time}
+	shake = maxf(shake, 6.0)
+	get_tree().create_timer(0.5).timeout.connect(func(): snd.play("puck_hit_heavy", 2.0, 0.4))   # 천둥
+	for i in 4:
+		get_tree().create_timer(1.1 + 0.15 * i).timeout.connect(func(): snd.play("fx_magic_cast", -12.0, 2.2))   # 지지직
+
+
+func _draw_ms_transform(vs: Vector2) -> void:
+	if ms_transform.is_empty():
+		return
+	var t := time - float(ms_transform["t"])
+	if t > 2.4:
+		ms_transform = {}
+		return
+	var dark := clampf(t / 0.3, 0.0, 1.0) * 0.55 if t < 0.6 else 0.55 * (1.0 - clampf((t - 0.7) / 0.5, 0.0, 1.0))
+	draw_rect(Rect2(Vector2.ZERO, vs), Color(0.05, 0.06, 0.07, dark))
+	var p := w2s(ms_transform["pos"])
+	if t > 0.5 and t < 0.7:
+		var pts := PackedVector2Array([Vector2(p.x + 10, -10)])
+		for i in range(1, 7):
+			pts.append(Vector2(p.x + (12.0 if i % 2 == 1 else -12.0), lerpf(-10.0, p.y, i / 7.0)))
+		pts.append(p)
+		draw_polyline(pts, MS_NEON, 4.0, true)
+	if t > 0.55 and t < 0.75:
+		draw_rect(Rect2(Vector2.ZERO, vs), Color(1, 1, 1, 1.0 - (t - 0.55) / 0.2))
+	if t > 1.1 and int(t * 12.0) % 2 == 0:
+		for side in [-1.0, 1.0]:
+			var cp := p + Vector2(side * 70.0, -50.0)
+			draw_polyline(PackedVector2Array([cp, cp + Vector2(side * -10, -14), cp + Vector2(side * 6, -26), cp + Vector2(side * -4, -40)]), MS_NEON, 3.0, true)
+	if t > 1.3:
+		_text_outline(p + Vector2(0, 110), "미친 과학자!", 26, MS_NEON, true)

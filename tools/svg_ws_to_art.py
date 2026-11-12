@@ -68,6 +68,18 @@ def main(folder, dst):
         shapes[set_id + "_front"] = front
         for i, pid in enumerate(ids):
             shapes[pid], _ = conv(svgs[8 + i], True)
+    # 연구소 세트 「미친 과학자」: 변신 1 · 세트 부품 3
+    lab_board = os.path.join(folder, "LabSet.dc.html")
+    if os.path.exists(lab_board):
+        svgs = svgs_of(lab_board)
+        body = svgs[0]
+        head = '<g transform="translate(60.0 62.0)">'
+        cut = body.find(head)
+        rest = strip_group(body[cut:], head)
+        shapes["set_madsci"], _ = conv(body[:cut], False)
+        shapes["set_madsci_front"], _ = conv(rest, False)
+        for i, pid in enumerate(["tesla_coil", "lab_coat", "safety_goggles"]):
+            shapes[pid], _ = conv(svgs[1 + i], True)
     up = svgs_of(os.path.join(folder, "WSUpgrade.dc.html"))
     assert len(up) == 56, len(up)
     for i, pid in enumerate(CLOCK[3:] + PIRATE[3:]):

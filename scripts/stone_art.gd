@@ -22,7 +22,7 @@ const ArtData = preload("res://scripts/art_data.gd")
 const ArtUp = preload("res://scripts/art_up_data.gd")
 const ArtWs = preload("res://scripts/art_ws_data.gd")
 ## 세트 변신 겉모습 (퍽 위·아래 두 겹): 세트 id → 도형 이름
-const WS_SETS := {"clock": "set_clock", "captain": "set_captain", "director": "set_director"}
+const WS_SETS := {"clock": "set_clock", "captain": "set_captain", "director": "set_director", "madsci": "set_madsci"}
 const WS_SET_PARTS := {"clock": ["hour_hammer", "late_key", "minute_spring"], "captain": ["parrot_hat", "hook_hand", "peg_leg"]}
 
 ## 만화 연출 중인 알: 모든 색을 먹선 흑백으로 그린다.

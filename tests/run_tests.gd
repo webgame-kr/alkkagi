@@ -36,7 +36,7 @@ func _initialize() -> void:
 		"test_mushroom_and_wind", "test_second_step", "test_rebound_and_string", "test_at_field_and_beam",
 		"test_hero_band_and_shoes", "test_all_parts_have_art",
 		"test_workshop_pools", "test_offer_fits_empty_slots", "test_min_power_moves_one_cell",
-		"test_knockout_causes", "test_derby_mode", "test_gimmicks_junk", "test_start_placement", "test_upgrades", "test_gimmicks_magic_toon", "test_lab_parts", "test_lab_gimmicks", "test_draft_pass", "test_playtest_fixes", "test_crown_rules", "test_crown_match", "test_parcel_physics", "test_parcel_match", "test_clock_parts", "test_clock_flow", "test_pirate_board", "test_pirate_parts", "test_pirate_flow", "test_ws_upgrades", "test_museum_parts", "test_museum_board", "test_museum_retake", "test_museum_bot_match",
+		"test_knockout_causes", "test_derby_mode", "test_gimmicks_junk", "test_start_placement", "test_upgrades", "test_gimmicks_magic_toon", "test_lab_parts", "test_lab_gimmicks", "test_draft_pass", "test_playtest_fixes", "test_crown_rules", "test_crown_match", "test_parcel_physics", "test_parcel_match", "test_clock_parts", "test_clock_flow", "test_pirate_board", "test_pirate_parts", "test_pirate_flow", "test_ws_upgrades", "test_museum_parts", "test_museum_board", "test_museum_retake", "test_museum_bot_match", "test_madsci_parts", "test_madsci_experiments",
 	]
 	for t in tests:
 		var before := failures
@@ -1217,12 +1217,12 @@ func test_all_parts_have_art() -> void:
 	hand.append_array(PartsData.WORKSHOPS["clock"]["parts"])
 	hand.append_array(PartsData.WORKSHOPS["pirate"]["parts"])
 	var WS = load("res://scripts/art_ws_data.gd")
-	for id in PartsData.WORKSHOPS["museum"]["parts"]:
+	for id in PartsData.WORKSHOPS["museum"]["parts"] + ["tesla_coil", "lab_coat", "safety_goggles"]:
 		check(WS.SHAPES.has(id), "museum art for " + id)
 		hand.append(id)
 	for id in PartsData.ids():
 		check(hand.has(id) or AD.SHAPES.has(id), "art for " + id)
-	check(PartsData.ids().size() == 129, "129 parts: %d" % PartsData.ids().size())
+	check(PartsData.ids().size() == 132, "132 parts: %d" % PartsData.ids().size())
 
 
 # ── 오늘의 공방 ──────────────────────────────────────────
@@ -1527,7 +1527,7 @@ func test_lab_parts() -> void:
 	a.parts["aux"] = "merge_bolt"
 	b.parts["weapon"] = "pea"
 	shoot(w, a.id, Vector2.RIGHT, 0.4)
-	check(not b.alive and a.alive and is_equal_approx(w.size_of(a), 1.4) and a.parts["weapon"] == "pea", "merged: size %.2f parts %s" % [w.size_of(a), a.parts])
+	check(not b.alive and a.alive and is_equal_approx(w.size_of(a), 1.3) and a.parts["weapon"] == "pea", "merged: size %.2f parts %s" % [w.size_of(a), a.parts])
 	check(w.alive_stones_of(0).size() == 1, "one stone left after merge")
 	# 분열 캡슐: 첫 충돌 직후 둘로
 	var w2 := make_world("circle", 900.0)
@@ -2349,3 +2349,89 @@ func test_museum_bot_match() -> void:
 			m.world.run_until_settled()
 			m.finish_shot()
 	check(m.phase == "over", "museum bot match finished (round %d, guard %d)" % [m.round_no, guard])
+
+
+# ── 미친 과학자 세트 ─────────────────────────────────────
+
+func test_madsci_parts() -> void:
+	# 테슬라 코일: 정면 첫 알을 밀고 표식, 그 주인의 다음 샷 힘 −10%
+	var w := make_world("circle", 400.0)
+	var a := w.add_stone(0, Vector2(-250, 0), 0)
+	var t := w.add_stone(1, Vector2(-100, 0), 0)
+	a.parts["weapon"] = "tesla_coil"
+	w.launch(a.id, Vector2.RIGHT, 0.0)
+	w.run_until_settled()
+	w.end_shot()
+	check(t.status.has("tesla") and t.pos.x > -95.0, "tesla marked and pushed: %s" % t.pos)
+	w.launch(t.id, Vector2.RIGHT, 0.5)
+	var v1: float = t.vel.length()
+	check(not t.status.has("tesla"), "mark used up")
+	var w2 := make_world("circle", 400.0)
+	var t2 := w2.add_stone(1, Vector2(-100, 0), 0)
+	w2.launch(t2.id, Vector2.RIGHT, 0.5)
+	check(absf(v1 - t2.vel.length() * 0.9) < 1.0, "power -10%%: %.0f vs %.0f" % [v1, t2.vel.length()])
+	# 실험 가운: 옆에서 맞으면 덜 밀린다
+	var w3 := make_world("circle", 400.0)
+	var c := w3.add_stone(0, Vector2(0, 0), 0)
+	c.parts["aux"] = "lab_coat"
+	var h := w3.add_stone(1, Vector2(0, -150), 0)
+	shoot(w3, h.id, Vector2.DOWN, 0.4)
+	var w4 := make_world("circle", 400.0)
+	var c2 := w4.add_stone(0, Vector2(0, 0), 0)
+	var h2 := w4.add_stone(1, Vector2(0, -150), 0)
+	shoot(w4, h2.id, Vector2.DOWN, 0.4)
+	check(c.pos.y < c2.pos.y - 5.0, "coat absorbed: %.0f vs %.0f" % [c.pos.y, c2.pos.y])
+
+
+func test_madsci_experiments() -> void:
+	var m := Match.new()
+	m.setup(2, [], 9, false, {"workshop": "lab"})
+	while m.phase == "place":
+		for pid in 2:
+			if not m.placements.has(pid):
+				m.place(pid, m.preset(pid, "line"))
+	m.settle_fx()
+	check(m.match_parts.has("tesla_coil") and m.match_parts.has("lab_coat") and m.match_parts.has("safety_goggles"), "lab set always in the pool")
+	var p := m.current_player()
+	var st = m.world.alive_stones_of(p)[0]
+	check(not m.can_experiment(p), "no set, no experiment")
+	st.parts = {"weapon": "tesla_coil", "aux": "lab_coat", "prop": "safety_goggles"}
+	check(m.can_experiment(p), "set: experiment available")
+	check(m.start_experiment(p, "shrink"), "experiment started")
+	check(absf(m.world.radius_of(st) - World.STONE_R * 0.7) < 0.01, "shrink: 0.7x")
+	check(not m.can_experiment(p), "one per round")
+	# 축소 광선과 겹쳐도 0.5배 아래로 안 내려감
+	st.mods["shrink"] = {"size": 0.7, "mass": 0.5, "until": 99}
+	check(m.world.size_of(st) >= 0.5 - 0.001, "min 0.5x: %.2f" % m.world.size_of(st))
+	st.mods.erase("shrink")
+	# 바퀴가 끝나면 원래대로
+	var guard := 0
+	var r0 := m.round_no
+	while m.round_no == r0 and guard < 50:
+		guard += 1
+		if m.phase == "fx":
+			m.settle_fx()
+		elif m.phase == "draft":
+			m.equip(m.current_drafter(), "", -1)
+		else:
+			m.skip_turn()
+	check(m.world.lab_exp.is_empty() and absf(m.world.radius_of(st) - World.STONE_R) < 0.01, "experiment ended with the round")
+	# 무중력: 약하게 쏴도 멀리 · 반발: 더 세게 튕김
+	var w := make_world("circle", 400.0)
+	var a := w.add_stone(0, Vector2(-300, 0), 0)
+	w.lab_exp = {"kind": "zerog", "round": 1, "by": 0}
+	shoot(w, a.id, Vector2.RIGHT, 0.1)
+	check(not a.alive or a.pos.x > 300.0, "zero-g slides to the edge: %s" % a.pos)
+	var w5 := make_world("circle", 400.0)
+	var b1 := w5.add_stone(0, Vector2(-200, 0), 0)
+	var b2 := w5.add_stone(1, Vector2(-120, 0), 0)
+	w5.lab_exp = {"kind": "bounce", "round": 1, "by": 0}
+	shoot(w5, b1.id, Vector2.RIGHT, 0.3)
+	var w6 := make_world("circle", 400.0)
+	var c1 := w6.add_stone(0, Vector2(-200, 0), 0)
+	var c2 := w6.add_stone(1, Vector2(-120, 0), 0)
+	shoot(w6, c1.id, Vector2.RIGHT, 0.3)
+	check(b2.pos.x > c2.pos.x + 10.0 or not b2.alive, "bounce: further: %.0f vs %.0f" % [b2.pos.x, c2.pos.x])
+	# 판당 3회
+	m.exp_used[p] = 3
+	check(not m.can_experiment(p), "three per match")
