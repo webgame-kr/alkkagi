@@ -327,7 +327,21 @@ func _debug_args() -> void:
 		my_profile["color"] = 1
 		my_profile["symbol"] = 1
 		my_profile["nick"] = "나"
+		chat_log = [{"name": "민지", "text": "한 판 더!", "t": 0.0}]
 		_show_setup()
+		if args.has("--resultdemo"):
+			chat_log.clear()
+			_start_from_room()
+			for q in [3, 2, 4]:
+				m.players[q].out = true
+				m.players[q].out_round = 2 + q
+				m.out_order.append(q)
+			m.winners = [1]
+			m.round_no = 7
+			m.shots = 34
+			ko_by = {1: 4, 0: 2}
+			highlight = "민지 한 발에 2개"
+			_show_result()
 		if args.has("--roomstart"):
 			settings["skins"] = false
 			_start_from_room()
@@ -535,6 +549,10 @@ func _start_match(seed_value := -1) -> void:
 		_host_start()
 		return
 	match_started_t = time
+	ko_by.clear()
+	highlight = ""
+	_shot_ko = 0
+	_best_ko = 0
 	mode_alerts.clear()
 	late_tag.clear()
 	crown_fly = {}
@@ -642,6 +660,8 @@ func _process_inner(delta: float) -> void:
 	_place()
 	if online != "":
 		_net_poll()
+	if overlay != null and overlay.has_meta("wk") and get_viewport_rect().size.distance_to(wk_built_size) > 2.0:
+		_wk_rebuild(str(overlay.get_meta("wk")))
 	if state == "setup" and is_instance_valid(lobby_col):
 		# 화면 크기가 실제로 바뀌면 (휴대폰 회전, 웹 첫 프레임) 대기실을 다시 짠다
 		if get_viewport_rect().size.distance_to(lobby_built_size) > 2.0 and overlay != null and not overlay.has_meta("settings"):
@@ -955,6 +975,7 @@ func _consume_events() -> void:
 			"bullet_hit":
 				fx.append({"k": "ring", "pos": e["pos"], "t": 0.0, "life": 0.3, "r": 16.0, "c": owner_col.lightened(0.4)})
 			"launch":
+				_shot_ko = 0
 				var ls = m.world.get_stone(m.world.shot.stone_id) if m.world.shot != null else null
 				if ls != null:
 					last_shot[ls.owner] = ls.id
@@ -974,6 +995,13 @@ func _consume_events() -> void:
 				fx.append({"k": "text", "pos": e["pos"], "t": 0.0, "life": 0.9, "text": "탈락!", "c": owner_col, "size": 30, "pop": true})
 				var why := _cause_text(e.get("cause", {}), int(e["owner"]))
 				var cc: Dictionary = e.get("cause", {})
+				if cc.has("owner") and int(cc["owner"]) != int(e["owner"]):
+					var kp := int(cc["owner"])
+					ko_by[kp] = int(ko_by.get(kp, 0)) + 1
+					_shot_ko += 1
+					if _shot_ko > _best_ko or highlight == "":
+						_best_ko = maxi(_best_ko, _shot_ko)
+						highlight = ("%s 한 발에 %d개" % [m.players[kp].name, _shot_ko]) if _shot_ko >= 2 else ("%s · %s" % [m.players[kp].name, why])
 				ko_pills.append({"t": time, "text": "%s 알 %s · %s" % [m.players[int(e["owner"])].name, "탈락" if m.mode == "survival" else "추락", why],
 					"c": m.players[int(cc["owner"])].color if cc.has("owner") else SUB})
 				if ko_pills.size() > 3:
@@ -3532,123 +3560,6 @@ func _show_side_choice(pid: int) -> void:
 	again.resized.connect(func(): again.position = Vector2(vs.x * 0.5 - again.size.x * 0.5, vs.y - again.size.y - 18))
 
 
-func _show_result() -> void:
-	state = "result"
-	_record_result()
-	snd.slide(0.0)
-	if m.winners.is_empty():
-		snd.play("draw")
-	drag_stone = -1
-	var root := _new_overlay(true)
-	var box := _centered_panel(root, 520)
-	var title := ""
-	var col := TEXT
-	if m.winners.is_empty():
-		title = "무승부"
-	elif m.winners.size() == 1:
-		var wp: int = m.winners[0]
-		title = "내가 이겼어요" if _is_mine(wp) and my_seats.size() == 1 else "%s 승리" % m.players[wp].name
-		col = m.players[wp].color
-	elif m.mode == "parcel":
-		var wt: int = m.team_of(m.winners[0])
-		title = "%s 팀 승리" % Match.TEAM_NAMES[wt]
-		col = Match.TEAM_COLORS[wt]
-	else:
-		var names: Array = []
-		for w in m.winners:
-			names.append(m.players[w].name)
-		title = "공동 승리: " + ", ".join(names)
-	var head := HBoxContainer.new()
-	head.add_theme_constant_override("separation", 14)
-	if m.winners.size() == 1:
-		head.add_child(_icon_pic(m.players[m.winners[0]].color, m.winners[0], 48))
-	var tl := _label(title, 48, col, 3)
-	tl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	tl.add_theme_color_override("font_outline_color", Color(th["outline"], 0.6))
-	tl.add_theme_constant_override("outline_size", 4)
-	head.add_child(tl)
-	box.add_child(head)
-	root.get_child(0).color = Color(0, 0, 0, 0.25)
-	# 승리 창: 작게 시작해 튀어나온다
-	var pc_: Control = box.get_parent()
-	if not _reduced():
-		pc_.pivot_offset = Vector2(260, 160)
-		pc_.scale = Vector2(0.8, 0.8)
-		pc_.modulate.a = 0.0
-		var tw := create_tween().set_parallel(true)
-		tw.tween_property(pc_, "scale", Vector2.ONE, 0.5).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
-		tw.tween_property(pc_, "modulate:a", 1.0, 0.25)
-	var score_line: Array = []
-	for pp in m.players:
-		score_line.append("%s %d" % [pp.name, m.scores[pp.id]])
-	var reason := {"score": "점수 " + " · ".join(score_line), "last": "마지막 생존", "limit": "최대 %d바퀴 도달 · 남은 퍽이 가장 많은 사람이 승리" % m.max_rounds, "draw": "한 발에 모두 떨어졌습니다", "crown": "왕관 %d점 선취" % m.crown_goal, "parcel": "택배 %d점 선취 · %d : %d" % [m.parcel_goal, m.team_scores[0], m.team_scores[1]]}
-	box.add_child(_label(reason.get(m.end_reason, ""), 15, SUB))
-	# 순위: 남은 퍽 많은 순, 그다음 늦게 탈락한 순
-	var rank: Array = []
-	for p in m.players:
-		if not p.out:
-			rank.append(p.id)
-	if m.mode == "derby" or m.mode == "crown":
-		rank.sort_custom(func(a, b): return m.scores[a] > m.scores[b])
-	elif m.mode == "parcel":
-		var tch: Dictionary = m.world.parcel.get("touch", {})
-		rank.sort_custom(func(a, b):
-			if m.team_scores[m.team_of(a)] != m.team_scores[m.team_of(b)]:
-				return m.team_scores[m.team_of(a)] > m.team_scores[m.team_of(b)]
-			return int(tch.get(a, 0)) > int(tch.get(b, 0)))
-	else:
-		rank.sort_custom(func(a, b): return m.stones_left(a) > m.stones_left(b))
-	var outs: Array = m.out_order.duplicate()
-	outs.reverse()
-	rank.append_array(outs)
-	var i := 1
-	for pid in rank:
-		var p: Dictionary = m.players[pid]
-		var r := HBoxContainer.new()
-		r.add_theme_constant_override("separation", 10)
-		r.add_child(_nw(_label("%d" % i, 16, SUB, 1)))
-		r.add_child(_icon_pic(p.color, pid, 22))
-		var nm := _label(p.name, 17, Color(TEXT, 1.0 if not p.out else 0.6), 1)
-		nm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		r.add_child(nm)
-		if m.mode == "parcel":
-			r.add_child(_nw(_label("택배 접촉 %d" % int(m.world.parcel.get("touch", {}).get(pid, 0)), 13, SUB)))
-		if m.mode == "crown":
-			var cs: Dictionary = m.crown_stats[pid]
-			r.add_child(_nw(_label("획득 %d · 방어 %d" % [cs["gain"], cs["defend"]], 13, SUB)))
-		var right_txt: String = ("%d점" % m.scores[pid]) if (m.mode == "derby" or m.mode == "crown" or m.mode == "parcel") else (("퍽 %d개" % m.stones_left(pid)) if not p.out else "%d바퀴 탈락" % p.out_round)
-		r.add_child(_nw(_label(right_txt, 15, SUB)))
-		box.add_child(r)
-		i += 1
-	var secs := int(time - match_started_t)
-	var tail := "%d바퀴 · %d발 · 시간 %d분 %02d초" % [m.round_no, m.shots, secs / 60, secs % 60]
-	if m.mode == "crown":
-		var steals := 0
-		for cs2 in m.crown_stats:
-			steals += int(cs2["steal"])
-		tail += " · 강탈 %d회" % steals
-	if m.mode == "parcel":
-		tail += " · 정산 %d회 · 무득점 %d" % [m.parcel_stats["settles"], m.parcel_stats["zero"]]
-	box.add_child(_label(tail, 13, SUB))
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 8)
-	if online == "guest":
-		box.add_child(_label("호스트가 다음 판을 고르고 있어요.", 15, HINT_GOLD))
-		var leave := _button("방 나가기", func(): _leave_online())
-		leave.custom_minimum_size = Vector2(140, 52)
-		row.add_child(leave)
-		box.add_child(row)
-		return
-	var again := _primary(_button("바로 재대결", func(): _start_match()))
-	again.custom_minimum_size = Vector2(200, 52)
-	again.add_theme_font_size_override("font_size", 19)
-	row.add_child(again)
-	var back := _button("다시 고르기", func(): _back_to_lobby())
-	back.custom_minimum_size = Vector2(140, 52)
-	row.add_child(back)
-	box.add_child(row)
-
-
 # ── 친구 초대 (온라인) ───────────────────────────────────
 ## 물리는 같은 입력이면 같은 결과가 나오므로, 기기끼리는 행동(발사·장착·유품·건너뛰기)만 주고받는다.
 ## 호스트가 모든 행동에 순번을 매겨 뿌리고, 모든 기기는 그 순서대로 같은 판에 적용한다.
@@ -3805,6 +3716,14 @@ func _host_msg(from: String, d: Dictionary) -> void:
 			var seat1 := _seat_of_peer(from)
 			if seat1 >= 0 and state == "setup":
 				_host_set_prof(seat1, d.get("prof", {}), from)
+		"chat":
+			var seatc := _seat_of_peer(from)
+			if seatc >= 0:
+				_host_chat(seatc, str(d.get("text", "")))
+		"again":
+			var seata := _seat_of_peer(from)
+			if seata >= 0 and state == "result":
+				_host_again(seata)
 		"ready":
 			var seat2r := _seat_of_peer(from)
 			if seat2r >= 0 and state == "setup":
@@ -4044,6 +3963,10 @@ func _guest_msg(from: String, d: Dictionary) -> void:
 			net.send_to(from, {"t": "hello", "prof": my_profile})
 		"note":
 			_banner(str(d.get("text", "")))
+		"chat":
+			_take_chat(d)
+		"again_n":
+			_update_again_note(int(d.get("n", 0)), int(d.get("of", 0)))
 		"lobby":
 			host_peer = from
 			guest_lobby = d
@@ -7733,82 +7656,6 @@ func _puck_view(prof: Dictionary, size: float, team_col := Color(0, 0, 0, 0)) ->
 
 
 # ── 시작 화면 ────────────────────────────────────────────
-func _show_home() -> void:
-	state = "home"
-	m = null
-	menu_btn.visible = false
-	parts_btn.visible = false
-	sound_btn.visible = false
-	var root := _new_overlay(false)
-	var vs := get_viewport_rect().size
-	var narrow := vs.x < 900
-	var col := VBoxContainer.new()
-	col.add_theme_constant_override("separation", 14)
-	col.position = Vector2(80.0 if not narrow else 24.0, maxf(40.0, vs.y * 0.12))
-	col.custom_minimum_size = Vector2(minf(440.0, vs.x - 48.0), 0)
-	root.add_child(col)
-	var title := _nw(_label("개조 알까기", 64 if not narrow else 44, TEXT, 3))
-	col.add_child(title)
-	col.add_child(_label("알을 튕겨 판 밖으로, 부품으로 개조해서.", 17, SUB))
-	var gap := Control.new()
-	gap.custom_minimum_size = Vector2(0, 14)
-	col.add_child(gap)
-	var make := _primary(_button("방 만들기", func(): _create_room()))
-	make.custom_minimum_size = Vector2(0, 64)
-	make.add_theme_font_size_override("font_size", 22)
-	col.add_child(make)
-	var join := _button("방 코드로 들어가기", func(): _show_join(""))
-	join.custom_minimum_size = Vector2(0, 58)
-	join.add_theme_font_size_override("font_size", 19)
-	col.add_child(join)
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 12)
-	var solo := _button("혼자 연습 (CPU)", func(): _start_solo())
-	solo.custom_minimum_size = Vector2(0, 52)
-	solo.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	row.add_child(solo)
-	var deco := _button("알 꾸미기", func(): _show_puck_picker("home"))
-	deco.custom_minimum_size = Vector2(0, 52)
-	deco.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	row.add_child(deco)
-	col.add_child(row)
-	col.add_child(_label("친구가 보낸 링크로 들어오면 이 화면 없이 바로 대기실로 가요.", 13, SUB))
-	# 오른쪽: 여러 형태의 알을 흩어 놓은 판
-	if not narrow:
-		var art := Control.new()
-		art.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		art.position = Vector2(vs.x * 0.52, vs.y * 0.18)
-		art.size = Vector2(vs.x * 0.42, vs.y * 0.6)
-		art.draw.connect(func():
-			var c0 := art.size * 0.5
-			var rx := art.size.x * 0.48
-			var ry := art.size.y * 0.46
-			var pts := PackedVector2Array()
-			for i in 48:
-				pts.append(c0 + Vector2(cos(TAU * i / 48.0) * rx, sin(TAU * i / 48.0) * ry))
-			art.draw_colored_polygon(pts, Color("2E6F5E"))
-			pts.append(pts[0])
-			art.draw_polyline(pts, Color("C9A15A"), 10.0, true)
-			var spots := [[Vector2(-0.5, -0.25), "metal", 0, 0, 0.1], [Vector2(-0.02, -0.45), "glass", 1, 1, 0.085], [Vector2(0.5, -0.1), "cap", 2, 2, 0.08],
-				[Vector2(-0.15, 0.32), "coin", 3, 3, 0.075], [Vector2(0.38, 0.42), "metal", 4, 4, 0.085]]
-			for sp in spots:
-				var p: Vector2 = c0 + Vector2(sp[0].x * rx, sp[0].y * ry)
-				var u: float = art.size.y * float(sp[4])
-				Art.draw_puck_shadow(art, p, u)
-				Art.draw_puck_form(art, p, u, Match.COLORS[int(sp[2])], int(sp[3]), str(sp[1]), -PI / 2.0))
-		root.add_child(art)
-	var icons := HBoxContainer.new()
-	icons.add_theme_constant_override("separation", 8)
-	icons.position = Vector2(vs.x - 24.0 - 96.0, 24.0)
-	icons.add_child(_icon_button("gear", func(): _show_settings(false), "설정"))
-	icons.add_child(_icon_button("sound" if snd.enabled else "mute", func():
-		_toggle_sound()
-		_show_home(), "소리"))
-	root.add_child(icons)
-	if str(my_profile.get("nick", "")) == "":
-		_ask_nick()
-
-
 ## 처음 실행: 닉네임을 한 번 묻고, 기본 알(금속 퍽, 무작위 색·기호)을 정해 둔다.
 func _ask_nick() -> void:
 	var root := Control.new()
@@ -7881,67 +7728,6 @@ func _reset_room(n: int) -> void:
 
 
 # ── 코드로 들어가기 ──────────────────────────────────────
-func _show_join(prefill: String) -> void:
-	state = "join"
-	var root := _new_overlay(true)
-	var box := _centered_panel(root, minf(640.0, get_viewport_rect().size.x - 32.0))
-	box.add_theme_constant_override("separation", 16)
-	var t := _label("방 코드로 들어가기", 26, TEXT, 2)
-	t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	box.add_child(t)
-	box.add_child(_label("방장이 알려준 6자리 코드를 입력하세요. 숫자 0과 영문 O처럼 헷갈리는 글자는 쓰지 않아요.", 14, SUB))
-	var code := LineEdit.new()
-	code.max_length = 6
-	code.text = prefill.to_upper()
-	code.placeholder_text = "TEK7RA"
-	code.alignment = HORIZONTAL_ALIGNMENT_CENTER
-	code.custom_minimum_size = Vector2(0, 76)
-	code.add_theme_font_override("font", font_display)
-	code.add_theme_font_size_override("font_size", 40)
-	code.text_changed.connect(func(tx: String):
-		var clean := ""
-		for ch in tx.to_upper():
-			if CODE_CHARS.contains(ch):
-				clean += ch
-		if clean != tx:
-			code.text = clean
-			code.caret_column = clean.length())
-	box.add_child(code)
-	box.add_child(_label("닉네임", 13, LABEL, 1))
-	var nick := LineEdit.new()
-	nick.max_length = 10
-	nick.text = str(my_profile["nick"])
-	nick.custom_minimum_size = Vector2(0, 48)
-	nick.add_theme_font_size_override("font_size", 16)
-	box.add_child(nick)
-	var me := HBoxContainer.new()
-	me.add_theme_constant_override("separation", 14)
-	me.add_child(_puck_view(my_profile, 56))
-	var mv := VBoxContainer.new()
-	mv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	mv.add_child(_label("내 알 · %s · %s %s" % [Art.FORM_NAMES.get(my_profile["form"], "금속 퍽"), Match.NAMES[int(my_profile["color"])], SYMBOL_NAMES[int(my_profile["symbol"])]], 14, TEXT, 2))
-	mv.add_child(_label("방에 같은 색이 있으면 들어간 뒤 다른 색을 골라요", 12, SUB))
-	me.add_child(mv)
-	me.add_child(_button("바꾸기", func():
-		my_profile["nick"] = nick.text.strip_edges() if nick.text.strip_edges() != "" else my_profile["nick"]
-		_show_puck_picker("join:" + code.text)))
-	box.add_child(me)
-	var go := _primary(_button("들어가기", func():
-		if code.text.length() != 6:
-			_banner("코드 6자리를 모두 넣어 주세요")
-			return
-		var nt := nick.text.strip_edges()
-		if nt != "":
-			my_profile["nick"] = nt
-			_save_profile()
-		_join_room(code.text.to_lower())))
-	go.custom_minimum_size = Vector2(0, 58)
-	go.add_theme_font_size_override("font_size", 20)
-	box.add_child(go)
-	box.add_child(_button("뒤로", func(): _show_home()))
-	code.grab_focus()
-
-
 # ── 알 고르기 ────────────────────────────────────────────
 ## from: "home" (기본 알로 저장) · "room" (이 방에서만, 「기본으로도 저장」 선택) · "join:<코드>"
 var picker_prof := {}
@@ -7982,199 +7768,6 @@ func _taken_colors() -> Dictionary:
 		if pf2 is Dictionary and not pf2.is_empty():
 			out[int(pf2.get("color", -1))] = str(pf2.get("nick", ""))
 	return out
-
-
-func _build_picker() -> void:
-	var root := _new_overlay(true)
-	var vs := get_viewport_rect().size
-	var narrow := vs.x < 900
-	var wrap: BoxContainer = HBoxContainer.new() if not narrow else VBoxContainer.new()
-	wrap.add_theme_constant_override("separation", 20)
-	var sc := ScrollContainer.new()
-	sc.set_anchors_preset(Control.PRESET_FULL_RECT)
-	sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	root.add_child(sc)
-	var holder := MarginContainer.new()
-	holder.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	for side in ["left", "right", "top", "bottom"]:
-		holder.add_theme_constant_override("margin_" + side, 24 if not narrow else 12)
-	sc.add_child(holder)
-	holder.add_child(wrap)
-	# 왼쪽: 크게 미리보기 + 실제 판 크기
-	var lp := PanelContainer.new()
-	lp.add_theme_stylebox_override("panel", _panel_style(Color(SOLID, 0.95)))
-	lp.custom_minimum_size = Vector2(380 if not narrow else 0, 0)
-	wrap.add_child(lp)
-	var lv := VBoxContainer.new()
-	lv.add_theme_constant_override("separation", 12)
-	lp.add_child(lv)
-	lv.add_child(_label("내 알", 24, TEXT, 2))
-	var big := Control.new()
-	big.custom_minimum_size = Vector2(320, 300 if not narrow else 220)
-	big.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	big.draw.connect(func():
-		var c0 := big.size * 0.5
-		var R := minf(big.size.x, big.size.y) * 0.48
-		big.draw_circle(c0, R + 8, Color("C9A15A"))
-		big.draw_circle(c0, R, Color("2E6F5E"))
-		var col: Color = Match.COLORS[int(picker_prof["color"])]
-		var skin_before: String = Art.skin
-		Art.skin = picker_skin
-		var u := R * 0.5
-		Art.draw_puck_shadow(big, c0, u)
-		if picker_skin != "":
-			Art.draw_puck_form(big, c0, u, col, int(picker_prof["symbol"]), "metal", -PI / 2.0)
-		else:
-			Art.draw_puck_form(big, c0, u, col, int(picker_prof["symbol"]), str(picker_prof["form"]), -PI / 2.0)
-		# 실제 크기 (판 위에서 보이는 크기)
-		var su := 15.0
-		var sp := c0 + Vector2(-R * 0.62, R * 0.62)
-		Art.draw_puck_shadow(big, sp, su)
-		Art.draw_puck_form(big, sp, su, col, int(picker_prof["symbol"]), "metal" if picker_skin != "" else str(picker_prof["form"]), -PI / 2.0)
-		big.draw_string(font, sp + Vector2(24, 6), "실제 크기", HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color.WHITE)
-		Art.skin = skin_before)
-	lv.add_child(big)
-	var desc := PanelContainer.new()
-	desc.add_theme_stylebox_override("panel", _sb(Color(FG, 0.05), Color(FG, 0.12), 10))
-	var dv := VBoxContainer.new()
-	desc.add_child(dv)
-	dv.add_child(_label("%s · %s · %s" % [Art.FORM_NAMES.get(picker_prof["form"], ""), Match.NAMES[int(picker_prof["color"])], SYMBOL_NAMES[int(picker_prof["symbol"])]], 16, TEXT, 2))
-	dv.add_child(_label("판 위에서는 이 모습에 부품이 붙고, 공방 스킨을 켠 방에서는 공방 재질로 바뀌어요.", 12, SUB))
-	lv.add_child(desc)
-	var skr := HBoxContainer.new()
-	skr.alignment = BoxContainer.ALIGNMENT_CENTER
-	skr.add_theme_constant_override("separation", 6)
-	skr.add_child(_nw(_label("미리보기 공방", 13, SUB)))
-	skr.add_child(_seg([["", "기본"], ["clock", "시계탑"], ["pirate", "선착장"], ["magic", "마법"]], picker_skin, func(k):
-		picker_skin = k
-		_build_picker()))
-	lv.add_child(skr)
-	# 오른쪽: 형태 → 색 → 기호
-	var rp := PanelContainer.new()
-	rp.add_theme_stylebox_override("panel", _panel_style(Color(SOLID, 0.95)))
-	rp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	wrap.add_child(rp)
-	var rv := VBoxContainer.new()
-	rv.add_theme_constant_override("separation", 12)
-	rp.add_child(rv)
-	rv.add_child(_label("형태", 18, TEXT, 2))
-	var fg := GridContainer.new()
-	fg.columns = 7 if not narrow else 4
-	fg.add_theme_constant_override("h_separation", 8)
-	fg.add_theme_constant_override("v_separation", 8)
-	for form in FORM_ORDER:
-		var f: String = form
-		var unlocked := _form_unlocked(f)
-		var b := _button("", func():
-			if not _form_unlocked(f):
-				_banner("잠긴 형태", ACCENT, FORM_LOCK[f][2] + "하면 열려요")
-				return
-			picker_prof["form"] = f
-			_build_picker())
-		b.custom_minimum_size = Vector2(84, 104)
-		var on: bool = picker_prof["form"] == f
-		b.add_theme_stylebox_override("normal", _sb(Color(BRASS, 0.18) if on else Color(FG, 0.05), BRASS if on else Color(FG, 0.12), 10))
-		var bv := VBoxContainer.new()
-		bv.set_anchors_preset(Control.PRESET_FULL_RECT)
-		bv.alignment = BoxContainer.ALIGNMENT_CENTER
-		bv.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		var pv := _puck_view({"form": f, "color": picker_prof["color"], "symbol": picker_prof["symbol"]}, 48)
-		pv.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-		pv.modulate.a = 1.0 if unlocked else 0.45
-		bv.add_child(pv)
-		var nl := _label(Art.FORM_NAMES[f], 12, TEXT, 1)
-		nl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		bv.add_child(nl)
-		if not unlocked:
-			var ll := _label("🔒 " + str(FORM_LOCK[f][2]), 10, SUB)
-			ll.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-			bv.add_child(ll)
-		b.add_child(bv)
-		fg.add_child(b)
-	rv.add_child(fg)
-	var ch := HBoxContainer.new()
-	var cl := _nw(_label("색", 18, TEXT, 2))
-	cl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	ch.add_child(cl)
-	if picker_from == "room":
-		ch.add_child(_nw(_label("흐린 색은 이 방에서 이미 쓰는 색이에요", 12, SUB)))
-	rv.add_child(ch)
-	var taken := _taken_colors()
-	var cg := HBoxContainer.new()
-	cg.add_theme_constant_override("separation", 10)
-	for ci in 8:
-		var cidx: int = ci
-		var cv := VBoxContainer.new()
-		cv.add_theme_constant_override("separation", 2)
-		var b2 := _button("✓" if int(picker_prof["color"]) == ci else "", func():
-			if taken.has(cidx):
-				_banner("%s 님이 쓰는 색이에요" % taken[cidx])
-				return
-			picker_prof["color"] = cidx
-			_build_picker())
-		b2.custom_minimum_size = Vector2(48, 48)
-		var cc: Color = Match.COLORS[ci]
-		var sbx := _sb(Color(cc, 0.35 if taken.has(ci) else 1.0), INK if int(picker_prof["color"]) == ci else Color(0, 0, 0, 0.2), 24)
-		sbx.set_border_width_all(4 if int(picker_prof["color"]) == ci else 1)
-		b2.add_theme_stylebox_override("normal", sbx)
-		b2.add_theme_stylebox_override("hover", sbx)
-		b2.add_theme_color_override("font_color", Color.WHITE)
-		cv.add_child(b2)
-		var nm := _label(str(taken.get(ci, Match.NAMES[ci])), 11, SUB)
-		nm.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		nm.custom_minimum_size = Vector2(48, 0)
-		nm.clip_text = true
-		cv.add_child(nm)
-		cg.add_child(cv)
-	rv.add_child(cg)
-	var sh := HBoxContainer.new()
-	var sl := _nw(_label("각인 기호", 18, TEXT, 2))
-	sl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	sh.add_child(sl)
-	sh.add_child(_nw(_label("색이 비슷해도 기호로 구별돼요 · 기호는 겹쳐도 괜찮아요", 12, SUB)))
-	rv.add_child(sh)
-	var sg := HBoxContainer.new()
-	sg.add_theme_constant_override("separation", 8)
-	for si in 8:
-		var sidx: int = si
-		var b3 := _button("", func():
-			picker_prof["symbol"] = sidx
-			_build_picker())
-		b3.custom_minimum_size = Vector2(46, 46)
-		var on3: bool = int(picker_prof["symbol"]) == si
-		b3.add_theme_stylebox_override("normal", _sb(Color(BRASS, 0.18) if on3 else Color(FG, 0.05), BRASS if on3 else Color(FG, 0.12), 10))
-		var sv := Control.new()
-		sv.set_anchors_preset(Control.PRESET_FULL_RECT)
-		sv.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		sv.draw.connect(func(): Art.draw_symbol(sv, sidx, TEXT, 1.0, sv.size * 0.5, 1.2, false))
-		b3.add_child(sv)
-		sg.add_child(b3)
-	rv.add_child(sg)
-	if picker_from == "room":
-		var keep := CheckBox.new()
-		keep.text = "기본 알로도 저장"
-		keep.button_pressed = picker_save
-		keep.toggled.connect(func(on: bool): picker_save = on)
-		rv.add_child(keep)
-	var spacer := Control.new()
-	spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	rv.add_child(spacer)
-	var br := HBoxContainer.new()
-	br.add_theme_constant_override("separation", 12)
-	br.add_child(_button("뒤로", func(): _picker_back()))
-	br.add_child(_button("무작위", func():
-		var free_forms := FORM_ORDER.filter(func(x): return _form_unlocked(x))
-		picker_prof["form"] = free_forms[randi() % free_forms.size()]
-		var cs: Array = range(8).filter(func(x): return not taken.has(x))
-		picker_prof["color"] = cs[randi() % cs.size()] if not cs.is_empty() else 0
-		picker_prof["symbol"] = randi() % 8
-		_build_picker()))
-	var ok := _primary(_button("이 알로 하기", func(): _picker_done()))
-	ok.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	ok.custom_minimum_size = Vector2(0, 54)
-	ok.add_theme_font_size_override("font_size", 19)
-	br.add_child(ok)
-	rv.add_child(br)
 
 
 func _picker_back() -> void:
@@ -8231,154 +7824,6 @@ func _room_cfg(key: String, def = null):
 	return settings.get(key, def)
 
 
-func _show_room() -> void:
-	state = "setup"
-	m = null
-	menu_btn.visible = false
-	parts_btn.visible = false
-	sound_btn.visible = false
-	_ensure_room_arrays()
-	_refresh_seat_profiles()
-	var host_side := online != "guest"
-	if online == "guest" and guest_lobby.has("seats"):
-		for i in 8:
-			var seats0: Array = guest_lobby["seats"]
-			if i < seats0.size():
-				var pf0: Dictionary = seats0[i].get("prof", {})
-				slot_colors[i] = Match.COLORS[int(pf0.get("color", i))]
-				Art.slot_symbols[i] = int(pf0.get("symbol", i))
-				Art.slot_forms[i] = str(pf0.get("form", "metal"))
-	var root := _lobby_root()
-	var vs := get_viewport_rect().size
-	var narrow := vs.x < 900
-	var left_w := (vs.x - 48.0 - 24.0) * 0.6 if not narrow else vs.x - 24.0
-	var right_w := (vs.x - 48.0 - 24.0) * 0.4 if not narrow else vs.x - 24.0
-	# 왼쪽 판: 방 코드 · 자리 · 아래 버튼
-	var lp := PanelContainer.new()
-	lp.add_theme_stylebox_override("panel", _panel_style(Color(SOLID, 0.92)))
-	lp.custom_minimum_size = Vector2(left_w, 0)
-	lp.position = Vector2(24.0 if not narrow else 12.0, 24.0)
-	root.add_child(lp)
-	lobby_col = lp
-	var col := VBoxContainer.new()
-	col.add_theme_constant_override("separation", 14)
-	lp.add_child(col)
-	var head := HBoxContainer.new()
-	head.add_theme_constant_override("separation", 8)
-	var hv := VBoxContainer.new()
-	hv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	if online != "":
-		hv.add_child(_label("방 코드", 13, SUB, 1))
-		var code_txt: String = net.code().to_upper() if net.code() != "" else "······"
-		hv.add_child(_nw(_label(code_txt, 46, TEXT, 3)))
-	else:
-		hv.add_child(_nw(_label("혼자 연습", 34, TEXT, 3)))
-		hv.add_child(_label("이 기기에서만 두는 방이에요. 빈 자리는 CPU나 같은 기기 사람으로 채워요.", 12, SUB))
-	head.add_child(hv)
-	if online != "":
-		var link := _button("링크 복사", func():
-			net.copy(net.invite_url(net.code()))
-			_banner("링크를 복사했어요"))
-		link.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		head.add_child(link)
-		var show := _button("코드 보여주기", func(): _show_code_big())
-		show.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		head.add_child(show)
-	head.add_child(_icon_button("book", func(): _show_catalog(true), "부품 도감"))
-	head.add_child(_icon_button("gear", func(): _show_settings(true), "설정 (맵 · 게임 속도 · 소리)"))
-	col.add_child(head)
-	var seats := _room_seats()
-	var filled := 0
-	for st in seats:
-		if str(st.get("kind", "")) != "empty":
-			filled += 1
-	var info := HBoxContainer.new()
-	var il := _nw(_label("참가자 %d / %d" % [filled, seats.size()], 14, TEXT, 2))
-	il.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	info.add_child(il)
-	info.add_child(_nw(_label("방장이 모드와 공방을 정하고, 모두 준비하면 시작해요" if online != "" else "모드와 공방을 정하고 시작하세요", 12, SUB)))
-	col.add_child(info)
-	if room_note != "":
-		col.add_child(_label(room_note, 13, HINT_GOLD, 1))
-	var mode_now: String = _room_cfg("mode", "survival")
-	if mode_now == "parcel" and host_side:
-		col.add_child(_team_panel(narrow))
-	else:
-		var grid := GridContainer.new()
-		grid.columns = 4 if not narrow else 2
-		grid.add_theme_constant_override("h_separation", 10)
-		grid.add_theme_constant_override("v_separation", 10)
-		for i in seats.size():
-			grid.add_child(_seat_card(i, seats[i], host_side))
-		col.add_child(grid)
-	var fill := Control.new()
-	fill.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	col.add_child(fill)
-	var bot := HBoxContainer.new()
-	bot.add_theme_constant_override("separation", 10)
-	bot.add_child(_button("내 알 바꾸기", func(): _show_puck_picker("room")))
-	if online == "guest":
-		var mine_ready := false
-		if seats.size() > my_seat:
-			mine_ready = bool(seats[my_seat].get("ready", false))
-		var rb := _button("준비 취소" if mine_ready else "준비 완료", func():
-			net.send_to(host_peer, {"t": "ready", "on": not mine_ready}))
-		rb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		rb.custom_minimum_size = Vector2(0, 52)
-		if not mine_ready:
-			_primary(rb)
-		bot.add_child(rb)
-	if online != "":
-		bot.add_child(_button("나가기", func():
-			_leave_online()
-			_show_home()))
-	else:
-		bot.add_child(_button("처음으로", func(): _show_home()))
-	col.add_child(bot)
-	# 오른쪽 판: 방 설정 + 시작하기
-	var rp := PanelContainer.new()
-	rp.add_theme_stylebox_override("panel", _panel_style(Color(SOLID, 0.92)))
-	rp.custom_minimum_size = Vector2(right_w, 0)
-	rp.position = Vector2(lp.position.x + left_w + 24.0, 24.0) if not narrow else Vector2(12.0, 24.0 + 640.0)
-	root.add_child(rp)
-	lobby_col2 = rp
-	var rv := VBoxContainer.new()
-	rv.add_theme_constant_override("separation", 12)
-	rp.add_child(rv)
-	var rh := HBoxContainer.new()
-	var rt := _nw(_label("방 설정", 20, TEXT, 2))
-	rt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	rh.add_child(rt)
-	if online != "":
-		rh.add_child(_nw(_label("👑 방장만 바꿀 수 있어요", 12, HINT_GOLD)))
-	rv.add_child(rh)
-	_room_settings_ui(rv, host_side, filled)
-	var sp2 := Control.new()
-	sp2.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	rv.add_child(sp2)
-	if host_side:
-		var why := _start_blocker(seats)
-		var sb_ := _primary(_button("시작하기" if why == "" else "시작하기", func():
-			var w2 := _start_blocker(_room_seats())
-			if w2 != "":
-				_banner(w2)
-				return
-			_start_from_room()))
-		sb_.custom_minimum_size = Vector2(0, 60)
-		sb_.add_theme_font_size_override("font_size", 21)
-		if why != "":
-			sb_.modulate.a = 0.55
-		rv.add_child(sb_)
-		if why != "":
-			var wl := _label(why, 12, SUB)
-			wl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-			rv.add_child(wl)
-	else:
-		var wl2 := _label("방장이 시작하길 기다리고 있어요", 13, SUB)
-		wl2.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		rv.add_child(wl2)
-
-
 ## 시작할 수 없는 이유 (없으면 "")
 func _start_blocker(seats: Array) -> String:
 	var people := 0
@@ -8405,83 +7850,6 @@ func _start_blocker(seats: Array) -> String:
 
 
 ## 자리 카드: 알 · 닉네임 · 방장/CPU 표시 · 준비 상태. 빈 자리는 「+ CPU」.
-func _seat_card(i: int, st: Dictionary, editable: bool) -> Control:
-	var kind := str(st.get("kind", "empty"))
-	var pf: Dictionary = st.get("prof", {})
-	var mine := (online != "guest" and i == 0) or (online == "guest" and i == my_seat)
-	var b := _button("", func(): _seat_menu(i, kind))
-	b.custom_minimum_size = Vector2(150, 108)
-	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	var border := BRASS if mine else Color(FG, 0.14)
-	if kind == "empty":
-		var es := _sb(Color(0, 0, 0, 0), Color(FG, 0.25), 12)
-		es.set_border_width_all(2)
-		b.add_theme_stylebox_override("normal", es)
-		var ev := VBoxContainer.new()
-		ev.set_anchors_preset(Control.PRESET_FULL_RECT)
-		ev.alignment = BoxContainer.ALIGNMENT_CENTER
-		ev.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		var el := _label("빈 자리", 13, SUB)
-		el.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		ev.add_child(el)
-		if editable:
-			var pl := _label("+ CPU" + ("  ·  + 사람" if online == "" else ""), 13, TEXT, 2)
-			pl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-			ev.add_child(pl)
-		b.add_child(ev)
-		return b
-	var sb := _sb(Color(FG, 0.06), border, 12)
-	sb.set_border_width_all(3 if mine else 1)
-	b.add_theme_stylebox_override("normal", sb)
-	var h := HBoxContainer.new()
-	h.set_anchors_preset(Control.PRESET_FULL_RECT)
-	h.offset_left = 10
-	h.offset_right = -8
-	h.add_theme_constant_override("separation", 8)
-	h.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	if not pf.is_empty():
-		var pv := _puck_view(pf, 54)
-		pv.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		h.add_child(pv)
-	var v := VBoxContainer.new()
-	v.alignment = BoxContainer.ALIGNMENT_CENTER
-	v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	v.add_theme_constant_override("separation", 2)
-	var nm := "나" if mine else str(pf.get("nick", "친구"))
-	if kind == "wait":
-		nm = "친구 자리"
-	var nl := _nw(_label(nm, 16, TEXT, 2))
-	nl.clip_text = true
-	v.add_child(nl)
-	var role := "참가자"
-	if bool(st.get("host", false)):
-		role = "👑 방장"
-	elif kind == "cpu":
-		role = "CPU · " + CPU_LEVELS[clampi(int(pf.get("level", 1)), 0, 2)]
-	elif kind == "wait":
-		role = "접속 기다리는 중"
-	elif kind == "me" and online == "" and i > 0:
-		role = "같은 기기"
-	v.add_child(_nw(_label(role, 11, SUB)))
-	if online != "" and kind != "wait":
-		var rdy: bool = bool(st.get("ready", false)) or bool(st.get("host", false))
-		var pill := _label(("준비 완료" if not bool(st.get("host", false)) else "방장") if rdy else "고르는 중", 11, Color.WHITE if rdy else SUB, 2)
-		var pp := PanelContainer.new()
-		var ps := _sb(Color("2E7D57") if rdy else Color(FG, 0.1), Color(0, 0, 0, 0), 999)
-		ps.content_margin_left = 8
-		ps.content_margin_right = 8
-		ps.content_margin_top = 1
-		ps.content_margin_bottom = 1
-		pp.add_theme_stylebox_override("panel", ps)
-		pp.add_child(pill)
-		pp.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
-		pp.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		v.add_child(pp)
-	h.add_child(v)
-	b.add_child(h)
-	return b
-
-
 ## 자리 카드를 눌렀을 때 (방장): 빈 자리는 CPU/사람 넣기, CPU 는 난이도·빼기, 친구는 내보내기
 func _seat_menu(i: int, kind: String) -> void:
 	if online == "guest":
@@ -8553,114 +7921,6 @@ func _seat_menu(i: int, kind: String) -> void:
 
 
 ## 방 설정 (방장만 바꾼다). 손님은 같은 화면을 읽기 전용으로.
-func _room_settings_ui(rv: VBoxContainer, editable: bool, people: int) -> void:
-	var cur_mode: String = _room_cfg("mode", "survival")
-	rv.add_child(_label("모드", 13, LABEL, 1))
-	var mg := GridContainer.new()
-	mg.columns = 2
-	mg.add_theme_constant_override("h_separation", 8)
-	mg.add_theme_constant_override("v_separation", 8)
-	for md in [["survival", "최후 생존전"], ["derby", "개조 더비"], ["parcel", "택배 쟁탈전"], ["crown", "왕관 쟁탈전"]]:
-		var key: String = md[0]
-		var b := _button(md[1], func():
-			if not editable:
-				return
-			settings["mode"] = key
-			if key == "parcel":
-				_fix_parcel_count()
-			_room_settings_changed())
-		b.custom_minimum_size = Vector2(0, 40)
-		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		var on := cur_mode == key
-		var dim_parcel := key == "parcel" and not [4, 6, 8].has(people) and not on
-		b.add_theme_stylebox_override("normal", _sb(BRASS if on else Color(FG, 0.05), Color(FG, 0.12), 8))
-		for c in ["font_color", "font_hover_color", "font_pressed_color"]:
-			b.add_theme_color_override(c, INK if on else (Color(TEXT, 0.45) if dim_parcel else TEXT))
-		if dim_parcel:
-			b.tooltip_text = "4·6·8명일 때 가능"
-		mg.add_child(b)
-	rv.add_child(mg)
-	var mdesc := {"survival": "마지막까지 살아남기 · 2~8인", "derby": "정해진 바퀴 동안 많이 떨어뜨리기 · 2~8인",
-		"parcel": "택배를 우리 진영으로 · 팀전 4·6·8인", "crown": "왕관을 뺏고 버티기 · %d점 선취 · 2~8인" % int(_room_cfg("crown_goal", 5))}
-	rv.add_child(_label(mdesc.get(cur_mode, ""), 12, SUB))
-	rv.add_child(_label("공방", 13, LABEL, 1))
-	var wg := GridContainer.new()
-	wg.columns = 4
-	wg.add_theme_constant_override("h_separation", 6)
-	wg.add_theme_constant_override("v_separation", 6)
-	var cur_ws: String = _room_cfg("workshop", "random")
-	for ws in [["random", "무작위"], ["junk", "정비소"], ["magic", "마법"], ["toon", "만화"], ["lab", "연구소"], ["clock", "시계탑"], ["pirate", "선착장"]]:
-		var wk: String = ws[0]
-		var b2 := _button(ws[1], func():
-			if editable:
-				settings["workshop"] = wk
-				_room_settings_changed())
-		b2.custom_minimum_size = Vector2(0, 36)
-		b2.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		var on2 := cur_ws == wk
-		b2.add_theme_stylebox_override("normal", _sb(BRASS if on2 else Color(FG, 0.05), Color(FG, 0.12), 8))
-		for c in ["font_color", "font_hover_color", "font_pressed_color"]:
-			b2.add_theme_color_override(c, INK if on2 else TEXT)
-		wg.add_child(b2)
-	rv.add_child(wg)
-	# 작은 설정 칸: 눌러서 다음 값으로
-	var opts := GridContainer.new()
-	opts.columns = 2
-	opts.add_theme_constant_override("h_separation", 8)
-	opts.add_theme_constant_override("v_separation", 8)
-	var n_now := int(guest_lobby.get("n", settings["n"])) if online == "guest" else int(settings["n"])
-	opts.add_child(_opt_cell("최대 인원", "%d명" % n_now, editable, func():
-		var nn := n_now + 1
-		if nn > 8:
-			nn = 2
-		_set_room_size(nn)))
-	var aim: String = str(_room_cfg("aim", "auto"))
-	var aim_txt: String = {"auto": "인원 따라 (5인 이상 12초)", "none": "제한 없음", "8": "8초", "12": "12초"}.get(aim, aim)
-	opts.add_child(_opt_cell("조준 시간", aim_txt, editable, func():
-		var order := ["auto", "none", "8", "12"]
-		settings["aim"] = order[(order.find(aim) + 1) % order.size()]
-		_room_settings_changed()))
-	if cur_mode == "survival" or cur_mode == "derby":
-		var stn := int(_room_cfg("stones", 3))
-		opts.add_child(_opt_cell("알 개수", "%d개씩" % stn, editable, func():
-			settings["stones"] = 2 if stn == 3 else 3
-			_room_settings_changed()))
-	if cur_mode == "crown":
-		var cg := int(_room_cfg("crown_goal", 5))
-		opts.add_child(_opt_cell("목표 점수", "%d점" % cg, editable, func():
-			settings["crown_goal"] = {3: 5, 5: 7, 7: 3}.get(cg, 5)
-			_room_settings_changed()))
-	opts.add_child(_opt_cell("빈 자리", "CPU로 채우기" if bool(_room_cfg("fill", false)) else "비워 두기", editable, func():
-		settings["fill"] = not settings.get("fill", false)
-		_room_settings_changed()))
-	opts.add_child(_opt_cell("공방 스킨", "켜기" if bool(_room_cfg("skins", false)) else "끄기", editable, func():
-		settings["skins"] = not settings.get("skins", false)
-		_room_settings_changed()))
-	rv.add_child(opts)
-	if cur_mode == "parcel" and not editable:
-		rv.add_child(_label("팀 나누기는 방장이 정해요", 12, SUB))
-
-
-func _opt_cell(title: String, value: String, editable: bool, cb: Callable) -> Control:
-	var b := _button("", func():
-		if editable:
-			cb.call())
-	b.custom_minimum_size = Vector2(0, 58)
-	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	b.add_theme_stylebox_override("normal", _sb(Color(FG, 0.05), Color(FG, 0.14), 10))
-	var v := VBoxContainer.new()
-	v.set_anchors_preset(Control.PRESET_FULL_RECT)
-	v.offset_left = 12
-	v.offset_top = 6
-	v.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	v.add_child(_label(title, 11, SUB))
-	var vl := _nw(_label(value, 15, TEXT, 2))
-	vl.clip_text = true
-	v.add_child(vl)
-	b.add_child(v)
-	return b
-
-
 func _set_room_size(nn: int) -> void:
 	var old: int = settings["n"]
 	settings["n"] = nn
@@ -8754,3 +8014,1391 @@ func _compose_plan() -> void:
 
 
 var plan := {}   # 이번 판 자리 구성 (대기실이 만들고, 손님은 방장이 보낸 것을 쓴다)
+
+# ══ 공방 UI (디자인 「gaejo_workshop_ui」: 시작 화면 · 코드로 들어가기 · 대기실 · 알 꾸미기 · 결과) ══
+## 타공판 벽 + 나무 작업대, 황동 명판, 황동/강철 버튼, 테이프 라벨, 클립보드, 선반 칸.
+const WK_WALL := Color("3A2C21")
+const WK_WALL_DOT := Color("1F1712")
+const WK_BENCH := Color("8A5A34")
+const WK_BENCH_D := Color("6E4527")
+const WK_BRASS := Color("D2A85E")
+const WK_BRASS_D := Color("8A6A2E")
+const WK_BRASS_L := Color("E8C98A")
+const WK_STEEL := Color("C9CED6")
+const WK_STEEL_D := Color("4A4F57")
+const WK_INK := Color("2A1E12")
+const WK_PAPER := Color("F6EFE0")
+const WK_TAPE := Color("EAD9A6")
+var wk_built_size := Vector2.ZERO
+var wk_join_code := ""
+var chat_log: Array = []        # 한마디 [{pid/seat, name, text, t}]
+var again_votes := {}           # 결과 화면 「한 판 더」 누른 자리 (방장이 센다)
+var ko_by := {}                 # pid → 떨어뜨린 상대 알 수
+var highlight := ""             # 이번 판 명장면
+var _shot_ko := 0
+var _best_ko := 0
+const CHAT_LINES := ["빨리 와!", "준비 됐어?", "한 판 더!", "봐주기 없음"]
+
+
+## 화면 크기가 실제로 바뀌면 (웹 첫 프레임 · 회전) 공방 화면을 다시 짠다
+func _wk_mark(root: Control, key: String) -> void:
+	root.set_meta("wk", key)
+	wk_built_size = get_viewport_rect().size
+
+
+func _wk_rebuild(key: String) -> void:
+	match key:
+		"home":
+			_show_home()
+		"join":
+			_show_join(wk_join_code)
+		"picker":
+			_build_picker()
+		"result":
+			if m != null:
+				_show_result(true)
+
+
+## 배경: 위는 타공판 벽, 아래는 나무 작업대. lamp_x 가 있으면 그 자리에 갓등과 빛.
+func _wk_bg(root: Control, lamp_x := -1.0) -> Control:
+	var bg := Control.new()
+	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
+	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	bg.draw.connect(func():
+		var vs := bg.size
+		var bench_y := vs.y * 0.63
+		bg.draw_rect(Rect2(Vector2.ZERO, Vector2(vs.x, bench_y)), WK_WALL)
+		var st := 28.0
+		var y := 14.0
+		while y < bench_y:
+			var x := 14.0
+			while x < vs.x:
+				bg.draw_circle(Vector2(x, y), 2.4, WK_WALL_DOT)
+				x += st
+			y += st
+		if lamp_x >= 0.0:
+			var lx := vs.x * lamp_x
+			var cone := PackedVector2Array([Vector2(lx - 60, 120), Vector2(lx + 60, 120), Vector2(lx + vs.x * 0.2, bench_y), Vector2(lx - vs.x * 0.2, bench_y)])
+			bg.draw_colored_polygon(cone, Color(1.0, 0.9, 0.6, 0.08))
+			bg.draw_line(Vector2(lx, 0), Vector2(lx, 76), Color("1A1412"), 3.0)
+			var shade := PackedVector2Array([Vector2(lx - 18, 76), Vector2(lx + 18, 76), Vector2(lx + 66, 122), Vector2(lx - 66, 122)])
+			bg.draw_colored_polygon(shade, Color("2E5E4E"))
+			bg.draw_polyline(PackedVector2Array([shade[0], shade[1], shade[2], shade[3], shade[0]]), Color("142A23"), 3.0, true)
+			bg.draw_rect(Rect2(lx - 60, 118, 120, 8), Color("FFF2C6"))
+		# 작업대
+		bg.draw_rect(Rect2(0, bench_y, vs.x, vs.y - bench_y), WK_BENCH)
+		bg.draw_rect(Rect2(0, bench_y, vs.x, 10), Color("A8754A"))
+		bg.draw_rect(Rect2(0, bench_y + 10, vs.x, 4), Color(0, 0, 0, 0.25))
+		var py := bench_y + 110.0
+		while py < vs.y:
+			bg.draw_line(Vector2(0, py), Vector2(vs.x, py), WK_BENCH_D, 3.0)
+			py += 110.0
+		var px := vs.x * 0.18
+		while px < vs.x:
+			bg.draw_line(Vector2(px, bench_y + 14), Vector2(px, vs.y), Color(0, 0, 0, 0.12), 2.0)
+			px += vs.x * 0.25)
+	root.add_child(bg)
+	return bg
+
+
+## 황동 명판 (나사 네 개)
+func _wk_plaque(content: Control, pad := 22.0) -> PanelContainer:
+	var pc := PanelContainer.new()
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = WK_BRASS
+	sb.border_color = WK_BRASS_D
+	sb.set_border_width_all(4)
+	sb.set_corner_radius_all(14)
+	sb.shadow_color = Color(0, 0, 0, 0.35)
+	sb.shadow_size = 6
+	sb.shadow_offset = Vector2(0, 5)
+	sb.content_margin_left = pad + 10
+	sb.content_margin_right = pad + 10
+	sb.content_margin_top = pad
+	sb.content_margin_bottom = pad
+	pc.add_theme_stylebox_override("panel", sb)
+	pc.add_child(content)
+	pc.draw.connect(func():
+		var r := Rect2(Vector2.ZERO, pc.size)
+		pc.draw_rect(r.grow(-12), Color(WK_BRASS_L, 0.45), false, 2.0)
+		for c in [Vector2(18, 18), Vector2(r.size.x - 18, 18), Vector2(18, r.size.y - 18), Vector2(r.size.x - 18, r.size.y - 18)]:
+			pc.draw_circle(c, 7, WK_BRASS_D)
+			pc.draw_circle(c, 5, WK_BRASS_L)
+			pc.draw_line(c - Vector2(3.5, 0), c + Vector2(3.5, 0), WK_BRASS_D, 1.5))
+	return pc
+
+
+func _wk_title(text: String, size: int) -> Label:
+	var l := _nw(_label(text, size, WK_INK, 3))
+	l.add_theme_font_override("font", font_display)
+	l.add_theme_font_size_override("font_size", size)
+	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	l.add_theme_color_override("font_shadow_color", Color(1, 0.9, 0.6, 0.4))
+	l.add_theme_constant_override("shadow_offset_y", 2)
+	return l
+
+
+func _wk_btn_style(b: Button, bg: Color, edge: Color, ink: Color, radius := 10) -> void:
+	for st in ["normal", "hover", "pressed", "disabled"]:
+		var sb := StyleBoxFlat.new()
+		sb.bg_color = bg if st == "normal" else (bg.lightened(0.08) if st == "hover" else bg.darkened(0.06))
+		sb.border_color = edge
+		sb.border_width_bottom = 6 if st != "pressed" else 2
+		sb.border_width_left = 2
+		sb.border_width_right = 2
+		sb.border_width_top = 2
+		sb.set_corner_radius_all(radius)
+		sb.content_margin_left = 16
+		sb.content_margin_right = 16
+		b.add_theme_stylebox_override(st, sb)
+	for c in ["font_color", "font_hover_color", "font_pressed_color", "font_focus_color"]:
+		b.add_theme_color_override(c, ink)
+
+
+## 황동 버튼 (양 끝 리벳, 굵은 제목체)
+func _wk_brass(text: String, cb: Callable, size := 24) -> Button:
+	var b := _button(text, cb)
+	_wk_btn_style(b, WK_BRASS, WK_BRASS_D, WK_INK, 12)
+	b.add_theme_font_override("font", font_display)
+	b.add_theme_font_size_override("font_size", size)
+	b.draw.connect(func():
+		for c in [Vector2(20, b.size.y * 0.5 - 2), Vector2(b.size.x - 20, b.size.y * 0.5 - 2)]:
+			b.draw_circle(c, 4.5, WK_BRASS_D))
+	return b
+
+
+## 강철 버튼
+func _wk_steel(text: String, cb: Callable, size := 18) -> Button:
+	var b := _button(text, cb)
+	_wk_btn_style(b, WK_STEEL, WK_STEEL_D, WK_INK, 10)
+	b.add_theme_font_override("font", font_bold)
+	b.add_theme_font_size_override("font_size", size)
+	return b
+
+
+## 테이프 라벨 (살짝 기울어진 크림색 띠)
+func _wk_tape(text: String, size := 16) -> Control:
+	var l := _nw(_label(text, size, WK_INK, 2))
+	var pc := PanelContainer.new()
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = WK_TAPE
+	sb.content_margin_left = 14
+	sb.content_margin_right = 14
+	sb.content_margin_top = 4
+	sb.content_margin_bottom = 4
+	sb.skew = Vector2(-0.08, 0)
+	pc.add_theme_stylebox_override("panel", sb)
+	pc.add_child(l)
+	pc.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	return pc
+
+
+## 검은 이름표
+func _wk_tag(text: String, size := 16, fg := Color.WHITE, bg := Color("15171A")) -> PanelContainer:
+	var pc := PanelContainer.new()
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = bg
+	sb.set_corner_radius_all(4)
+	sb.content_margin_left = 10
+	sb.content_margin_right = 10
+	sb.content_margin_top = 2
+	sb.content_margin_bottom = 2
+	pc.add_theme_stylebox_override("panel", sb)
+	var l := _nw(_label(text, size, fg, 2))
+	pc.add_child(l)
+	pc.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return pc
+
+
+## 클립보드 (갈색 판 + 집게 + 줄 공책 종이)
+func _wk_clipboard(title: String, sub: String) -> Array:
+	var board := PanelContainer.new()
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color("8C5A33")
+	sb.border_color = Color("5E3A1E")
+	sb.set_border_width_all(4)
+	sb.set_corner_radius_all(16)
+	sb.content_margin_left = 18
+	sb.content_margin_right = 18
+	sb.content_margin_top = 44
+	sb.content_margin_bottom = 18
+	sb.shadow_color = Color(0, 0, 0, 0.35)
+	sb.shadow_size = 8
+	sb.shadow_offset = Vector2(0, 6)
+	board.add_theme_stylebox_override("panel", sb)
+	var paper := PanelContainer.new()
+	var ps := StyleBoxFlat.new()
+	ps.bg_color = WK_PAPER
+	ps.content_margin_left = 18
+	ps.content_margin_right = 18
+	ps.content_margin_top = 14
+	ps.content_margin_bottom = 14
+	paper.add_theme_stylebox_override("panel", ps)
+	board.add_child(paper)
+	board.draw.connect(func():
+		var cw := 170.0
+		var r := Rect2(board.size.x * 0.5 - cw * 0.5, -12, cw, 46)
+		board.draw_rect(r, Color("9AA1AA"))
+		board.draw_rect(r, WK_STEEL_D, false, 3.0)
+		board.draw_rect(Rect2(r.position + Vector2(36, 12), Vector2(cw - 72, 14)), Color("6E757E")))
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 8)
+	paper.add_child(v)
+	var h := HBoxContainer.new()
+	var t := _nw(_label(title, 28, WK_INK, 3))
+	t.add_theme_font_override("font", font_display)
+	t.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	h.add_child(t)
+	if sub != "":
+		h.add_child(_nw(_label(sub, 13, Color("A0702A"), 2)))
+	v.add_child(h)
+	return [board, v]
+
+
+## 줄 공책 한 줄: 제목 ……… 값 (눌러서 바꾸기)
+func _wk_line(title: String, value: String, editable: bool, cb: Callable) -> Control:
+	var b := _button("", func():
+		if editable:
+			cb.call())
+	b.flat = true
+	b.custom_minimum_size = Vector2(0, 34)
+	var h := HBoxContainer.new()
+	h.set_anchors_preset(Control.PRESET_FULL_RECT)
+	h.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var tl := _nw(_label(title, 17, Color("5A4A38")))
+	tl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	h.add_child(tl)
+	h.add_child(_nw(_label(value, 17, WK_INK, 3)))
+	b.add_child(h)
+	b.draw.connect(func():
+		var y := b.size.y - 2
+		var x := 0.0
+		while x < b.size.x:
+			b.draw_line(Vector2(x, y), Vector2(x + 6, y), Color(0.4, 0.33, 0.25, 0.4), 1.5)
+			x += 10.0)
+	return b
+
+
+## 공방 이름표 (각 공방 간판 색)
+const WK_SIGN := {"junk": [Color("1A1D20"), Color("FFC23D"), Color("FFC23D")], "magic": [Color("4A3A8E"), Color("8A78E0"), Color("F1EEFF")],
+	"toon": [Color("FFFDF6"), Color("111111"), Color("111111")], "lab": [Color("FFFFFF"), Color("B6F23C"), Color("3F7A0E")],
+	"clock": [Color("1B2148"), Color("C9A15A"), Color("F3EAD3")], "pirate": [Color("3A2618"), Color("C9A15A"), Color("F3EAD3")]}
+const WK_SIGN_NAME := {"junk": "정비소", "magic": "마법", "toon": "만화", "lab": "연구소", "clock": "시계탑", "pirate": "선착장"}
+
+
+func _wk_sign(key: String, on := false, size := 16) -> PanelContainer:
+	var c: Array = WK_SIGN[key]
+	var pc := PanelContainer.new()
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = c[0]
+	sb.border_color = Color("D2452F") if on else c[1]
+	sb.set_border_width_all(4 if on else 3)
+	sb.set_corner_radius_all(6)
+	sb.content_margin_left = 12
+	sb.content_margin_right = 12
+	sb.content_margin_top = 4
+	sb.content_margin_bottom = 4
+	pc.add_theme_stylebox_override("panel", sb)
+	var l := _nw(_label(WK_SIGN_NAME[key], size, c[2], 3))
+	l.add_theme_font_override("font", font_display)
+	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	pc.add_child(l)
+	pc.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return pc
+
+
+# ── 1. 시작 화면 ─────────────────────────────────────────
+func _show_home() -> void:
+	state = "home"
+	m = null
+	menu_btn.visible = false
+	parts_btn.visible = false
+	sound_btn.visible = false
+	var root := _new_overlay(false)
+	_wk_mark(root, "home")
+	var vs := get_viewport_rect().size
+	var narrow := vs.x < 900
+	_wk_bg(root, 0.765 if not narrow else -1.0)
+	var lw := minf(560.0, vs.x - 48.0) if not narrow else vs.x - 32.0
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", 18)
+	col.position = Vector2(56.0 if not narrow else 16.0, 40.0)
+	col.custom_minimum_size = Vector2(lw, 0)
+	root.add_child(col)
+	# 명판: 톱니 속 알 + 제목
+	var th0 := HBoxContainer.new()
+	th0.add_theme_constant_override("separation", 18)
+	th0.alignment = BoxContainer.ALIGNMENT_CENTER
+	var gear := Control.new()
+	gear.custom_minimum_size = Vector2(90, 90)
+	gear.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	gear.draw.connect(func():
+		var c := gear.size * 0.5
+		var pts := PackedVector2Array()
+		for i in 24:
+			pts.append(c + Vector2.from_angle(TAU * i / 24.0) * (44.0 if i % 2 == 0 else 36.0))
+		gear.draw_colored_polygon(pts, Color("7A5A2A"))
+		pts.append(pts[0])
+		gear.draw_polyline(pts, WK_INK, 3.0, true)
+		Art.draw_puck_form(gear, c, 26.0, Match.COLORS[0], 0, "metal", -PI / 2.0))
+	th0.add_child(gear)
+	th0.add_child(_wk_title("개조 알까기", 64 if not narrow else 44))
+	col.add_child(_wk_plaque(th0, 18))
+	var tag := _wk_tape("알에 부품을 달고, 튕겨서, 판 밖으로!", 18)
+	tag.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	tag.rotation = -0.04
+	col.add_child(tag)
+	var gap := Control.new()
+	gap.custom_minimum_size = Vector2(0, 16)
+	col.add_child(gap)
+	var make := _wk_brass("+ 방 만들기", func(): _create_room(), 30)
+	make.custom_minimum_size = Vector2(0, 86)
+	col.add_child(make)
+	var crow := HBoxContainer.new()
+	crow.add_theme_constant_override("separation", 14)
+	var code := LineEdit.new()
+	code.max_length = 6
+	code.placeholder_text = "방 코드  - - - - - -"
+	code.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	code.custom_minimum_size = Vector2(0, 66)
+	code.add_theme_font_override("font", font_display)
+	code.add_theme_font_size_override("font_size", 26)
+	var csb := StyleBoxFlat.new()
+	csb.bg_color = Color("15171A")
+	csb.set_corner_radius_all(6)
+	csb.content_margin_left = 20
+	code.add_theme_stylebox_override("normal", csb)
+	code.add_theme_stylebox_override("focus", csb)
+	code.add_theme_color_override("font_color", Color.WHITE)
+	code.add_theme_color_override("font_placeholder_color", Color(1, 1, 1, 0.45))
+	code.text_changed.connect(func(tx: String):
+		var clean := ""
+		for ch in tx.to_upper():
+			if CODE_CHARS.contains(ch):
+				clean += ch
+		if clean != tx:
+			code.text = clean
+			code.caret_column = clean.length())
+	crow.add_child(code)
+	var enter := _wk_steel("들어가기", func(): _show_join(code.text), 20)
+	enter.custom_minimum_size = Vector2(180, 66)
+	crow.add_child(enter)
+	col.add_child(crow)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 14)
+	var solo := _wk_steel("혼자 연습", func(): _start_solo(), 20)
+	solo.custom_minimum_size = Vector2(0, 70)
+	solo.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(solo)
+	var deco := _wk_steel("알 꾸미기", func(): _show_puck_picker("home"), 20)
+	deco.custom_minimum_size = Vector2(0, 70)
+	deco.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(deco)
+	col.add_child(row)
+	if not narrow:
+		# 오른쪽 벽: 공방 이름표 줄 + 걸어 둔 부품, 작업대 위 판
+		var signs := HBoxContainer.new()
+		signs.add_theme_constant_override("separation", 10)
+		signs.position = Vector2(vs.x * 0.52 + 4.0, 62)
+		for k in ["junk", "magic", "toon", "lab", "clock", "pirate"]:
+			signs.add_child(_wk_sign(k, false, 18))
+		root.add_child(signs)
+		var wall := Control.new()
+		wall.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		wall.position = Vector2(vs.x * 0.52, 0)
+		wall.size = Vector2(vs.x * 0.46, vs.y)
+		wall.draw.connect(func():
+			wall.draw_line(Vector2(0, 40), Vector2(wall.size.x, 40), Color("1A1412"), 4.0)
+			var hang := [["trex_head", Vector2(0.1, 0.3)], ["claw", Vector2(0.86, 0.3)], ["hook", Vector2(0.22, 0.5)]]
+			for hg in hang:
+				var p: Vector2 = Vector2(hg[1].x * wall.size.x, hg[1].y * wall.size.y)
+				wall.draw_set_transform(p, -PI / 2.0, Vector2.ONE * 2.3)
+				var demo := {"weapon": "", "aux": "", "prop": ""}
+				demo[PartsData.slot_of(hg[0])] = hg[0]
+				Art.skip_body = true
+				Art.draw(wall, demo, 1, Art.NEUTRAL, 1.0, -1)
+				Art.skip_body = false
+				wall.draw_set_transform_matrix(Transform2D.IDENTITY)
+			# 드라이버
+			wall.draw_line(Vector2(wall.size.x * 0.5, wall.size.y * 0.36), Vector2(wall.size.x * 0.53, wall.size.y * 0.44), Color("C3C9D0"), 4.0)
+			wall.draw_line(Vector2(wall.size.x * 0.53, wall.size.y * 0.44), Vector2(wall.size.x * 0.55, wall.size.y * 0.5), Color("D2452F"), 12.0)
+			# 작업대 위 판
+			var c0 := Vector2(wall.size.x * 0.54, wall.size.y * 0.83)
+			var rx := wall.size.x * 0.4
+			var ry := wall.size.y * 0.14
+			var pts := PackedVector2Array()
+			for i in 48:
+				pts.append(c0 + Vector2(cos(TAU * i / 48.0) * (rx + 12), sin(TAU * i / 48.0) * (ry + 10)))
+			wall.draw_colored_polygon(pts, Color("C9A15A"))
+			var pts2 := PackedVector2Array()
+			for i in 48:
+				pts2.append(c0 + Vector2(cos(TAU * i / 48.0) * rx, sin(TAU * i / 48.0) * ry))
+			wall.draw_colored_polygon(pts2, Color("2E7D66"))
+			for i in 48:
+				if i % 2 == 0:
+					wall.draw_line(c0 + Vector2(cos(TAU * i / 48.0) * rx * 0.88, sin(TAU * i / 48.0) * ry * 0.82), c0 + Vector2(cos(TAU * (i + 1) / 48.0) * rx * 0.88, sin(TAU * (i + 1) / 48.0) * ry * 0.82), Color(1, 1, 1, 0.4), 2.0)
+			var pk := [[Vector2(-0.5, -0.1), "coin", 3, 3, 22.0], [Vector2(-0.15, 0.1), "metal", 0, 0, 30.0], [Vector2(0.25, -0.3), "glass", 1, 1, 26.0], [Vector2(0.62, 0.15), "cap", 2, 2, 22.0]]
+			for q in pk:
+				var p2: Vector2 = c0 + Vector2(q[0].x * rx, q[0].y * ry)
+				Art.draw_puck_shadow(wall, p2, q[4])
+				Art.draw_puck_form(wall, p2, q[4], Match.COLORS[int(q[2])], int(q[3]), str(q[1]), -PI / 2.0)
+			for i in 6:
+				wall.draw_circle(c0 + Vector2(-0.18 * rx - i * 18.0, 0.18 * ry + i * 9.0), 3.0, Color(1, 1, 1, 0.8 - i * 0.12))
+			_text_outline_on(wall, c0 + Vector2(0.15 * rx, -0.75 * ry), "딱!", 26, Color.WHITE))
+		root.add_child(wall)
+		root.move_child(signs, root.get_child_count() - 1)
+	var icons := HBoxContainer.new()
+	icons.add_theme_constant_override("separation", 10)
+	icons.position = Vector2(30.0, vs.y - 80.0)
+	icons.add_child(_icon_button("gear", func(): _show_settings(false), "설정"))
+	icons.add_child(_icon_button("sound" if snd.enabled else "mute", func():
+		_toggle_sound()
+		_show_home(), "소리"))
+	root.add_child(icons)
+	if str(my_profile.get("nick", "")) == "":
+		_ask_nick()
+
+
+func _text_outline_on(ci: CanvasItem, p: Vector2, t: String, size: int, col: Color) -> void:
+	for o in [Vector2(-2, 0), Vector2(2, 0), Vector2(0, -2), Vector2(0, 2)]:
+		ci.draw_string(font_display, p + o - Vector2(100, 0), t, HORIZONTAL_ALIGNMENT_CENTER, 200, size, WK_INK)
+	ci.draw_string(font_display, p - Vector2(100, 0), t, HORIZONTAL_ALIGNMENT_CENTER, 200, size, col)
+
+
+# ── 2. 코드로 들어가기 (벽에 걸린 카드) ──────────────────
+func _show_join(prefill: String) -> void:
+	state = "join"
+	wk_join_code = prefill
+	var root := _new_overlay(false)
+	_wk_mark(root, "join")
+	_wk_bg(root)
+	var vs := get_viewport_rect().size
+	var w := minf(940.0, vs.x - 32.0)
+	var card := PanelContainer.new()
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = WK_PAPER
+	sb.border_color = Color("8A6A2E")
+	sb.set_border_width_all(5)
+	sb.set_corner_radius_all(16)
+	sb.content_margin_left = 48
+	sb.content_margin_right = 48
+	sb.content_margin_top = 34
+	sb.content_margin_bottom = 34
+	sb.shadow_color = Color(0, 0, 0, 0.4)
+	sb.shadow_size = 10
+	sb.shadow_offset = Vector2(6, 10)
+	card.add_theme_stylebox_override("panel", sb)
+	card.custom_minimum_size = Vector2(w, 0)
+	card.position = Vector2(vs.x * 0.5 - w * 0.5, maxf(70.0, vs.y * 0.1))
+	root.add_child(card)
+	var wire := Control.new()
+	wire.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	wire.set_anchors_preset(Control.PRESET_FULL_RECT)
+	wire.draw.connect(func():
+		var top := card.position.y
+		var cx := vs.x * 0.5
+		wire.draw_line(Vector2(cx, top - 60), Vector2(card.position.x + 120, top), Color("8A8F96"), 3.0, true)
+		wire.draw_line(Vector2(cx, top - 60), Vector2(card.position.x + w - 120, top), Color("8A8F96"), 3.0, true)
+		wire.draw_circle(Vector2(cx, top - 62), 6, Color("B9BEC6")))
+	root.add_child(wire)
+	root.move_child(wire, 1)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 20)
+	card.add_child(v)
+	var t := _wk_title("방 코드로 들어가기", 40)
+	v.add_child(t)
+	var sub := _label("방장이 알려준 6자리 코드 · 헷갈리는 0, O, 1, I, L은 쓰지 않아요", 16, Color("5A4A38"))
+	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	v.add_child(sub)
+	# 코드 칸 여섯 개 (하나의 입력을 칸으로 보여 준다)
+	var code := LineEdit.new()
+	code.max_length = 6
+	code.text = prefill.to_upper()
+	code.modulate.a = 0.0
+	var tiles := Control.new()
+	tiles.custom_minimum_size = Vector2(0, 96)
+	tiles.draw.connect(func():
+		var tw := 82.0
+		var gap0 := 14.0
+		var total := tw * 6 + gap0 * 5
+		var x0 := tiles.size.x * 0.5 - total * 0.5
+		for i in 6:
+			var r := Rect2(x0 + i * (tw + gap0), 0, tw, 92)
+			tiles.draw_rect(Rect2(r.position + Vector2(0, 6), r.size), Color("4A4F57"))
+			tiles.draw_rect(r, Color("15171A"))
+			if i == mini(code.text.length(), 5) and code.has_focus():
+				tiles.draw_rect(r, WK_BRASS_L, false, 4.0)
+			if i < code.text.length():
+				tiles.draw_string(font_display, r.position + Vector2(0, 66), code.text[i], HORIZONTAL_ALIGNMENT_CENTER, tw, 52, Color.WHITE))
+	tiles.gui_input.connect(func(e):
+		if e is InputEventMouseButton and e.pressed:
+			code.grab_focus())
+	code.text_changed.connect(func(tx: String):
+		var clean := ""
+		for ch in tx.to_upper():
+			if CODE_CHARS.contains(ch):
+				clean += ch
+		if clean != tx:
+			code.text = clean
+			code.caret_column = clean.length()
+		wk_join_code = code.text
+		tiles.queue_redraw())
+	code.focus_entered.connect(func(): tiles.queue_redraw())
+	v.add_child(tiles)
+	tiles.add_child(code)
+	code.position = Vector2(0, 0)
+	code.size = Vector2(4, 4)
+	var nr := HBoxContainer.new()
+	nr.add_theme_constant_override("separation", 20)
+	nr.add_child(_nw(_label("닉네임", 16, Color("5A4A38"))))
+	var nick := LineEdit.new()
+	nick.max_length = 10
+	nick.text = str(my_profile["nick"])
+	nick.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	nick.custom_minimum_size = Vector2(0, 54)
+	nick.add_theme_font_override("font", font_bold)
+	nick.add_theme_font_size_override("font_size", 22)
+	var nsb := StyleBoxFlat.new()
+	nsb.bg_color = WK_TAPE
+	nsb.skew = Vector2(-0.06, 0)
+	nsb.content_margin_left = 18
+	nick.add_theme_stylebox_override("normal", nsb)
+	nick.add_theme_stylebox_override("focus", nsb)
+	nick.add_theme_color_override("font_color", WK_INK)
+	nr.add_child(nick)
+	v.add_child(nr)
+	var me := HBoxContainer.new()
+	me.add_theme_constant_override("separation", 24)
+	me.alignment = BoxContainer.ALIGNMENT_CENTER
+	me.add_child(_puck_view(my_profile, 130))
+	var mv := VBoxContainer.new()
+	mv.alignment = BoxContainer.ALIGNMENT_CENTER
+	mv.add_theme_constant_override("separation", 8)
+	mv.add_child(_label("내 알 · %s · %s %s" % [Art.FORM_NAMES.get(my_profile["form"], "금속 퍽"), Match.NAMES[int(my_profile["color"])], SYMBOL_NAMES[int(my_profile["symbol"])]], 20, WK_INK, 3))
+	mv.add_child(_label("방에 같은 색이 있으면 들어간 뒤 바꿔요", 15, Color("5A4A38")))
+	var chg := _wk_steel("바꾸기", func():
+		if nick.text.strip_edges() != "":
+			my_profile["nick"] = nick.text.strip_edges()
+		_show_puck_picker("join:" + code.text), 18)
+	chg.custom_minimum_size = Vector2(300, 56)
+	mv.add_child(chg)
+	me.add_child(mv)
+	v.add_child(me)
+	var br := HBoxContainer.new()
+	br.add_theme_constant_override("separation", 22)
+	var cancel := _wk_steel("취소", func(): _show_home(), 20)
+	cancel.custom_minimum_size = Vector2(220, 80)
+	br.add_child(cancel)
+	var go := _wk_brass("들어가기", func():
+		if code.text.length() != 6:
+			_banner("코드 6자리를 모두 넣어 주세요")
+			return
+		var nt := nick.text.strip_edges()
+		if nt != "":
+			my_profile["nick"] = nt
+			_save_profile()
+		_join_room(code.text.to_lower()), 34)
+	go.custom_minimum_size = Vector2(0, 80)
+	go.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	br.add_child(go)
+	v.add_child(br)
+	code.grab_focus()
+
+
+# ── 3. 대기실 ────────────────────────────────────────────
+func _show_room() -> void:
+	state = "setup"
+	m = null
+	menu_btn.visible = false
+	parts_btn.visible = false
+	sound_btn.visible = false
+	_ensure_room_arrays()
+	_refresh_seat_profiles()
+	var host_side := online != "guest"
+	if online == "guest" and guest_lobby.has("seats"):
+		var seats0: Array = guest_lobby["seats"]
+		for i in mini(8, seats0.size()):
+			var pf0: Dictionary = seats0[i].get("prof", {})
+			slot_colors[i] = Match.COLORS[int(pf0.get("color", i))]
+			Art.slot_symbols[i] = int(pf0.get("symbol", i))
+			Art.slot_forms[i] = str(pf0.get("form", "metal"))
+	var root := _lobby_root()
+	var bgr := _wk_bg(root)
+	root.move_child(bgr, 0)
+	var vs := get_viewport_rect().size
+	var narrow := vs.x < 900
+	var left_w := (vs.x - 72.0) * 0.64 if not narrow else vs.x - 24.0
+	var right_w := (vs.x - 72.0) * 0.36 if not narrow else vs.x - 24.0
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", 16)
+	col.custom_minimum_size = Vector2(left_w, 0)
+	col.position = Vector2(24.0 if not narrow else 12.0, 20.0)
+	root.add_child(col)
+	lobby_col = col
+	# 방 코드 명판 + 버튼
+	var head := HBoxContainer.new()
+	head.add_theme_constant_override("separation", 14)
+	var ph := HBoxContainer.new()
+	ph.add_theme_constant_override("separation", 40)
+	ph.alignment = BoxContainer.ALIGNMENT_CENTER
+	if online != "":
+		var ct := _wk_title("방 코드", 26)
+		ph.add_child(ct)
+		ph.add_child(_wk_title(net.code().to_upper() if net.code() != "" else "······", 58))
+	else:
+		ph.add_child(_wk_title("혼자 연습", 44))
+	var plq := _wk_plaque(ph, 14)
+	plq.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	head.add_child(plq)
+	if online != "":
+		var link := _wk_steel("링크 복사", func():
+			net.copy(net.invite_url(net.code()))
+			_banner("링크를 복사했어요"), 18)
+		link.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		link.custom_minimum_size = Vector2(0, 62)
+		head.add_child(link)
+		var big := _wk_steel("코드 크게", func(): _show_code_big(), 18)
+		big.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		big.custom_minimum_size = Vector2(0, 62)
+		head.add_child(big)
+	else:
+		head.add_child(_icon_button("book", func(): _show_catalog(true), "부품 도감"))
+		head.add_child(_icon_button("gear", func(): _show_settings(true), "설정"))
+	col.add_child(head)
+	if room_note != "":
+		col.add_child(_label(room_note, 13, WK_BRASS_L, 1))
+	var seats := _room_seats()
+	var mode_now: String = _room_cfg("mode", "survival")
+	if mode_now == "parcel" and host_side:
+		col.add_child(_team_panel(narrow))
+	else:
+		var grid := GridContainer.new()
+		grid.columns = 4 if not narrow else 2
+		grid.add_theme_constant_override("h_separation", 14)
+		grid.add_theme_constant_override("v_separation", 16)
+		for i in seats.size():
+			grid.add_child(_wk_cubby(i, seats[i], host_side))
+		col.add_child(grid)
+	# 한마디
+	if online != "" or not chat_log.is_empty():
+		var chat := HBoxContainer.new()
+		chat.add_theme_constant_override("separation", 10)
+		chat.add_child(_wk_tape("한마디", 18))
+		for line in CHAT_LINES:
+			var ln: String = line
+			var cb := _button(ln, func(): _send_chat(ln))
+			_wk_btn_style(cb, WK_PAPER, Color("C8B48A"), WK_INK, 20)
+			cb.add_theme_font_override("font", font_bold)
+			chat.add_child(cb)
+		var sp := Control.new()
+		sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		chat.add_child(sp)
+		if not chat_log.is_empty():
+			var last: Dictionary = chat_log[chat_log.size() - 1]
+			chat.add_child(_nw(_label("%s: %s" % [last["name"], last["text"]], 16, Color("F3EAD3"))))
+		col.add_child(chat)
+	var bot := HBoxContainer.new()
+	bot.add_theme_constant_override("separation", 14)
+	var leave := _wk_steel("나가기" if online != "" else "처음으로", func():
+		if online != "":
+			_leave_online()
+		_show_home(), 18)
+	leave.custom_minimum_size = Vector2(150, 70)
+	bot.add_child(leave)
+	var mine_btn := _wk_steel("내 알 바꾸기", func(): _show_puck_picker("room"), 18)
+	mine_btn.custom_minimum_size = Vector2(240, 70)
+	bot.add_child(mine_btn)
+	if online == "guest":
+		var mine_ready := seats.size() > my_seat and bool(seats[my_seat].get("ready", false))
+		var rb := _wk_brass("준비 취소" if mine_ready else "준비 완료", func():
+			net.send_to(host_peer, {"t": "ready", "on": not mine_ready}), 28)
+		rb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		rb.custom_minimum_size = Vector2(0, 70)
+		bot.add_child(rb)
+	elif online == "host":
+		var sp3 := Control.new()
+		sp3.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		bot.add_child(sp3)
+		bot.add_child(_icon_button("book", func(): _show_catalog(true), "부품 도감"))
+		bot.add_child(_icon_button("gear", func(): _show_settings(true), "설정"))
+	col.add_child(bot)
+	# 오른쪽: 작업 지시서 (방 설정) + 시작하기
+	var rcol := VBoxContainer.new()
+	rcol.add_theme_constant_override("separation", 16)
+	rcol.custom_minimum_size = Vector2(right_w, 0)
+	rcol.position = Vector2(col.position.x + left_w + 24.0, 34.0) if not narrow else Vector2(12.0, 760.0)
+	root.add_child(rcol)
+	lobby_col2 = rcol
+	var cb2 := _wk_clipboard("작업 지시서", "방장 작성")
+	rcol.add_child(cb2[0])
+	_wk_settings(cb2[1], host_side)
+	var filled := 0
+	for st in seats:
+		if str(st.get("kind", "")) != "empty":
+			filled += 1
+	if host_side:
+		var why := _start_blocker(seats)
+		var sbtn := _wk_brass("시작하기", func():
+			var w2 := _start_blocker(_room_seats())
+			if w2 != "":
+				_banner(w2)
+				return
+			_start_from_room(), 40)
+		sbtn.custom_minimum_size = Vector2(0, 80)
+		if why != "":
+			sbtn.modulate = Color(0.85, 0.8, 0.72, 0.85)
+		rcol.add_child(sbtn)
+		var ready_n := 0
+		var people := 0
+		for st2 in seats:
+			var k2 := str(st2.get("kind", ""))
+			if k2 == "empty":
+				continue
+			people += 1
+			if bool(st2.get("ready", false)) or bool(st2.get("host", false)) or k2 == "me":
+				ready_n += 1
+		var wl := _label((why if why != "" else "모두 준비됐어요") + ("  ·  %d/%d 준비" % [ready_n, people] if online != "" else ""), 15, Color("F3EAD3"))
+		wl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		rcol.add_child(wl)
+	else:
+		var wl2 := _label("방장이 시작하길 기다리고 있어요", 15, Color("F3EAD3"))
+		wl2.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		rcol.add_child(wl2)
+
+
+## 선반 칸: 알 · 이름표 · 준비 불 · 방장 표
+func _wk_cubby(i: int, st: Dictionary, editable: bool) -> Control:
+	var kind := str(st.get("kind", "empty"))
+	var pf: Dictionary = st.get("prof", {})
+	var mine := (online != "guest" and i == 0) or (online == "guest" and i == my_seat)
+	var b := _button("", func(): _seat_menu(i, kind))
+	b.custom_minimum_size = Vector2(150, 196)
+	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	for stn in ["normal", "hover", "pressed"]:
+		var sb := StyleBoxFlat.new()
+		sb.bg_color = Color("2B211A") if stn != "hover" else Color("33281F")
+		sb.border_color = WK_BRASS_L if mine else Color("1A130E")
+		sb.set_border_width_all(4 if mine else 3)
+		sb.set_corner_radius_all(6)
+		b.add_theme_stylebox_override(stn, sb)
+	var rdy: bool = bool(st.get("ready", false)) or bool(st.get("host", false)) or kind == "me" or kind == "cpu"
+	b.draw.connect(func():
+		var r := Rect2(Vector2.ZERO, b.size)
+		# 선반 앞 판
+		b.draw_rect(Rect2(6, r.size.y - 26, r.size.x - 12, 20), Color("A8754A"))
+		if kind == "empty":
+			var c := Vector2(r.size.x * 0.5, r.size.y * 0.4)
+			for q in 24:
+				if q % 2 == 0:
+					b.draw_arc(c, 46, TAU * q / 24.0, TAU * (q + 1) / 24.0, 4, Color(1, 1, 1, 0.25), 2.0)
+			return
+		if online != "" and kind != "wait":
+			b.draw_circle(Vector2(r.size.x - 28, 28), 13, Color("1A130E"))
+			b.draw_circle(Vector2(r.size.x - 28, 28), 9, Color("5CD98A") if rdy else Color("3A3A3A")))
+	var v := VBoxContainer.new()
+	v.set_anchors_preset(Control.PRESET_FULL_RECT)
+	v.offset_bottom = -20
+	v.alignment = BoxContainer.ALIGNMENT_CENTER
+	v.add_theme_constant_override("separation", 6)
+	v.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	if kind == "empty":
+		if editable:
+			var add := _wk_tag("+ CPU" + ("  + 사람" if online == "" else ""), 16, WK_INK, WK_STEEL)
+			add.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+			var sp := Control.new()
+			sp.custom_minimum_size = Vector2(0, 50)
+			v.add_child(sp)
+			v.add_child(add)
+		b.add_child(v)
+		return b
+	if bool(st.get("host", false)):
+		var hb := _wk_tag("방장", 13, WK_INK, WK_BRASS)
+		hb.position = Vector2(12, 12)
+		b.add_child(hb)
+	if not pf.is_empty():
+		var pv := _puck_view(pf, 110)
+		pv.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+		v.add_child(pv)
+	var nh := HBoxContainer.new()
+	nh.alignment = BoxContainer.ALIGNMENT_CENTER
+	nh.add_theme_constant_override("separation", 8)
+	nh.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var nm := "나" if mine else str(pf.get("nick", "친구"))
+	if kind == "wait":
+		nm = "친구 자리"
+	nh.add_child(_wk_tag(nm, 18))
+	var stxt := ""
+	if kind == "cpu":
+		stxt = CPU_LEVELS[clampi(int(pf.get("level", 1)), 0, 2)]
+	elif online != "" and kind != "wait" and not bool(st.get("host", false)):
+		stxt = "준비" if rdy else "고르는 중"
+	elif kind == "me" and online == "" and i > 0:
+		stxt = "같은 기기"
+	if stxt != "":
+		nh.add_child(_nw(_label(stxt, 14, Color("5CD98A") if stxt == "준비" else Color("C9BBA0"), 2)))
+	v.add_child(nh)
+	b.add_child(v)
+	return b
+
+
+## 작업 지시서 내용: 모드 체크 · 공방 도장 · 줄마다 설정
+func _wk_settings(v: VBoxContainer, editable: bool) -> void:
+	var cur_mode: String = _room_cfg("mode", "survival")
+	v.add_child(_label("모드", 14, Color("5A4A38"), 1))
+	for md in [["survival", "최후 생존전", "2~8인"], ["derby", "개조 더비", "2~8인"], ["parcel", "택배 쟁탈전", "4·6·8인"], ["crown", "왕관 쟁탈전", "2~8인"]]:
+		var key: String = md[0]
+		var b := _button("", func():
+			if not editable:
+				return
+			settings["mode"] = key
+			if key == "parcel":
+				_fix_parcel_count()
+			_room_settings_changed())
+		b.flat = true
+		b.custom_minimum_size = Vector2(0, 36)
+		var h := HBoxContainer.new()
+		h.set_anchors_preset(Control.PRESET_FULL_RECT)
+		h.add_theme_constant_override("separation", 12)
+		h.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var on := cur_mode == key
+		var box := Control.new()
+		box.custom_minimum_size = Vector2(28, 28)
+		box.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		box.draw.connect(func():
+			box.draw_rect(Rect2(2, 2, 24, 24), Color.WHITE)
+			box.draw_rect(Rect2(2, 2, 24, 24), WK_INK, false, 2.5)
+			if on:
+				box.draw_polyline(PackedVector2Array([Vector2(6, 14), Vector2(12, 22), Vector2(25, 3)]), Color("D2452F"), 4.0, true))
+		h.add_child(box)
+		var ml := _nw(_label(md[1], 19, WK_INK, 3))
+		h.add_child(ml)
+		h.add_child(_nw(_label(md[2], 14, Color("6B5A45"))))
+		b.add_child(h)
+		v.add_child(b)
+	if cur_mode == "parcel" and not editable:
+		v.add_child(_label("팀 나누기는 방장이 정해요", 12, Color("6B5A45")))
+	v.add_child(_label("공방 도장", 14, Color("5A4A38"), 1))
+	var stamps := HFlowContainer.new()
+	stamps.add_theme_constant_override("h_separation", 8)
+	stamps.add_theme_constant_override("v_separation", 8)
+	var cur_ws: String = _room_cfg("workshop", "random")
+	var rnd := _button("무작위", func():
+		if editable:
+			settings["workshop"] = "random"
+			_room_settings_changed())
+	_wk_btn_style(rnd, Color("D2452F") if cur_ws == "random" else Color.WHITE, WK_INK, Color.WHITE if cur_ws == "random" else WK_INK, 6)
+	rnd.add_theme_font_override("font", font_display)
+	stamps.add_child(rnd)
+	for k in ["junk", "magic", "toon", "lab", "clock", "pirate"]:
+		var wk: String = k
+		var sbn := _button("", func():
+			if editable:
+				settings["workshop"] = wk
+				_room_settings_changed())
+		sbn.flat = true
+		var sg := _wk_sign(k, cur_ws == k, 15)
+		sbn.custom_minimum_size = Vector2(76, 38)
+		sg.set_anchors_preset(Control.PRESET_FULL_RECT)
+		sbn.add_child(sg)
+		stamps.add_child(sbn)
+	v.add_child(stamps)
+	var n_now := int(guest_lobby.get("n", settings["n"])) if online == "guest" else int(settings["n"])
+	v.add_child(_wk_line("최대 인원", "%d명" % n_now, editable, func():
+		var nn := n_now + 1
+		if nn > 8:
+			nn = 2
+		_set_room_size(nn)))
+	var aim: String = str(_room_cfg("aim", "auto"))
+	var aim_txt: String = {"auto": "인원 따라", "none": "제한 없음", "8": "8초", "12": "12초"}.get(aim, aim)
+	v.add_child(_wk_line("조준 시간", aim_txt, editable, func():
+		var order := ["auto", "none", "8", "12"]
+		settings["aim"] = order[(order.find(aim) + 1) % order.size()]
+		_room_settings_changed()))
+	if cur_mode == "survival" or cur_mode == "derby":
+		var stn := int(_room_cfg("stones", 3))
+		v.add_child(_wk_line("알 개수", "%d개씩" % stn, editable, func():
+			settings["stones"] = 2 if stn == 3 else 3
+			_room_settings_changed()))
+	if cur_mode == "crown":
+		var cg := int(_room_cfg("crown_goal", 5))
+		v.add_child(_wk_line("목표 점수", "%d점" % cg, editable, func():
+			settings["crown_goal"] = {3: 5, 5: 7, 7: 3}.get(cg, 5)
+			_room_settings_changed()))
+	v.add_child(_wk_line("빈 자리", "CPU로 채우기" if bool(_room_cfg("fill", false)) else "비워 두기", editable, func():
+		settings["fill"] = not settings.get("fill", false)
+		_room_settings_changed()))
+	v.add_child(_wk_line("공방 스킨", "켜기" if bool(_room_cfg("skins", false)) else "끄기", editable, func():
+		settings["skins"] = not settings.get("skins", false)
+		_room_settings_changed()))
+
+
+## 한마디: 방장이 모두에게 다시 보낸다
+func _send_chat(text: String) -> void:
+	if online == "guest":
+		net.send_to(host_peer, {"t": "chat", "text": text})
+	elif online == "host":
+		_host_chat(0, text)
+
+
+func _host_chat(seat: int, text: String) -> void:
+	if not CHAT_LINES.has(text):
+		return
+	var nm := str(my_profile["nick"]) if seat == 0 else str(settings["prof"][seat].get("nick", "친구")) if settings["prof"][seat] is Dictionary else "친구"
+	var msg := {"t": "chat", "name": nm, "text": text}
+	net.broadcast(msg)
+	_take_chat(msg)
+
+
+func _take_chat(d: Dictionary) -> void:
+	chat_log.append({"name": str(d.get("name", "")), "text": str(d.get("text", "")), "t": time})
+	if chat_log.size() > 20:
+		chat_log.pop_front()
+	snd.play("ui_click", -4.0, 1.3)
+	if state == "setup":
+		_show_setup()
+	else:
+		_banner("%s: %s" % [d.get("name", ""), d.get("text", "")])
+
+
+# ── 4. 알 꾸미기 ─────────────────────────────────────────
+func _build_picker() -> void:
+	var root := _new_overlay(false)
+	_wk_mark(root, "picker")
+	var vs := get_viewport_rect().size
+	var narrow := vs.x < 900
+	_wk_bg(root, 0.235 if not narrow else -1.0)
+	var sc := ScrollContainer.new()
+	sc.set_anchors_preset(Control.PRESET_FULL_RECT)
+	sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	root.add_child(sc)
+	var holder := MarginContainer.new()
+	holder.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	for side in ["left", "right", "top", "bottom"]:
+		holder.add_theme_constant_override("margin_" + side, 24 if not narrow else 10)
+	sc.add_child(holder)
+	var wrap: BoxContainer = HBoxContainer.new() if not narrow else VBoxContainer.new()
+	wrap.add_theme_constant_override("separation", 30)
+	holder.add_child(wrap)
+	var left := VBoxContainer.new()
+	left.add_theme_constant_override("separation", 16)
+	left.custom_minimum_size = Vector2(vs.x * 0.42 if not narrow else 0.0, 0)
+	wrap.add_child(left)
+	left.add_child(_wk_plaque(_wk_title("알 꾸미기", 48), 14))
+	var taken := _taken_colors()
+	# 바이스에 물린 큰 알
+	var vise := Control.new()
+	vise.custom_minimum_size = Vector2(0, 300 if not narrow else 220)
+	vise.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vise.draw.connect(func():
+		var c := Vector2(vise.size.x * 0.5, vise.size.y * 0.52)
+		var u := minf(vise.size.y * 0.3, 110.0)
+		var jaw := Color("4F82A8")
+		vise.draw_rect(Rect2(c.x - u * 2.2, c.y - u * 0.9, u * 1.0, u * 2.1), jaw)
+		vise.draw_rect(Rect2(c.x + u * 1.2, c.y - u * 0.9, u * 1.0, u * 2.1), jaw)
+		vise.draw_rect(Rect2(c.x - u * 2.2, c.y + u * 1.05, u * 4.4, u * 0.65), jaw.darkened(0.15))
+		for r0 in [Rect2(c.x - u * 2.2, c.y - u * 0.9, u * 1.0, u * 2.1), Rect2(c.x + u * 1.2, c.y - u * 0.9, u * 1.0, u * 2.1), Rect2(c.x - u * 2.2, c.y + u * 1.05, u * 4.4, u * 0.65)]:
+			vise.draw_rect(r0, Color("15171A"), false, 3.0)
+		vise.draw_rect(Rect2(c.x - u * 1.3, c.y - u * 0.6, u * 0.12, u * 1.3), Color("B9BEC6"))
+		vise.draw_rect(Rect2(c.x + u * 1.18, c.y - u * 0.6, u * 0.12, u * 1.3), Color("B9BEC6"))
+		vise.draw_line(Vector2(c.x + u * 2.2, c.y + u * 1.35), Vector2(c.x + u * 2.9, c.y + u * 1.35), Color("B9BEC6"), 10.0)
+		vise.draw_circle(Vector2(c.x + u * 2.95, c.y + u * 1.35), 12, Color("C9CED6"))
+		var col: Color = Match.COLORS[int(picker_prof["color"])]
+		var skin0: String = Art.skin
+		Art.skin = picker_skin
+		Art.draw_puck_shadow(vise, c, u)
+		Art.draw_puck_form(vise, c, u, col, int(picker_prof["symbol"]), "metal" if picker_skin != "" else str(picker_prof["form"]), -PI / 2.0)
+		Art.skin = skin0)
+	left.add_child(vise)
+	var sz := VBoxContainer.new()
+	sz.alignment = BoxContainer.ALIGNMENT_CENTER
+	var szl := _label("실제 판 크기", 15, Color("F3EAD3"))
+	szl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	sz.add_child(szl)
+	var mini_c := Control.new()
+	mini_c.custom_minimum_size = Vector2(0, 64)
+	mini_c.draw.connect(func():
+		var r := Rect2(mini_c.size.x * 0.5 - 110, 0, 220, 62)
+		mini_c.draw_rect(r, Color("2E7D66"))
+		var col: Color = Match.COLORS[int(picker_prof["color"])]
+		for q in [[Vector2(r.position.x + 60, 31), 18.0], [Vector2(r.position.x + 140, 31), 12.0]]:
+			Art.draw_puck_shadow(mini_c, q[0], q[1])
+			Art.draw_puck_form(mini_c, q[0], q[1], col, int(picker_prof["symbol"]), str(picker_prof["form"]), -PI / 2.0))
+	sz.add_child(mini_c)
+	left.add_child(sz)
+	var skr := HBoxContainer.new()
+	skr.alignment = BoxContainer.ALIGNMENT_CENTER
+	skr.add_theme_constant_override("separation", 6)
+	skr.add_child(_nw(_label("공방 재질 미리보기", 13, Color("F3EAD3"))))
+	skr.add_child(_seg([["", "기본"], ["clock", "시계탑"], ["pirate", "선착장"], ["magic", "마법"]], picker_skin, func(k):
+		picker_skin = k
+		_build_picker()))
+	left.add_child(skr)
+	# 오른쪽: 형태 통 · 페인트 통 · 각인 도장
+	var right := VBoxContainer.new()
+	right.add_theme_constant_override("separation", 8)
+	right.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	wrap.add_child(right)
+	right.add_child(_wk_tape("형태", 18))
+	var fg := HFlowContainer.new()
+	fg.add_theme_constant_override("h_separation", 10)
+	fg.add_theme_constant_override("v_separation", 10)
+	for form in FORM_ORDER:
+		var f: String = form
+		var unlocked := _form_unlocked(f)
+		var b := _button("", func():
+			if not _form_unlocked(f):
+				_banner("잠긴 형태", ACCENT, str(FORM_LOCK[f][2]) + "하면 열려요")
+				return
+			picker_prof["form"] = f
+			_build_picker())
+		b.flat = true
+		b.custom_minimum_size = Vector2(84, 118)
+		var on: bool = picker_prof["form"] == f
+		b.draw.connect(func():
+			var r := Rect2(6, 4, b.size.x - 12, 76)
+			var bin := PackedVector2Array([r.position, r.position + Vector2(r.size.x, 0), r.position + Vector2(r.size.x - 10, r.size.y), r.position + Vector2(10, r.size.y)])
+			b.draw_colored_polygon(bin, Color("4F82A8") if on else Color("6E757E"))
+			b.draw_rect(Rect2(r.position + Vector2(-3, 0), Vector2(r.size.x + 6, 12)), Color("8A9099"))
+			bin.append(bin[0])
+			b.draw_polyline(bin, Color("15171A"), 3.0, true)
+			if on:
+				b.draw_rect(Rect2(1, 0, b.size.x - 2, 84), WK_BRASS_L, false, 4.0)
+			Art.draw_puck_form(b, r.get_center() + Vector2(0, 4), 24.0, Match.COLORS[int(picker_prof["color"])], int(picker_prof["symbol"]), f, -PI / 2.0, 1.0 if unlocked else 0.5)
+			if not unlocked:
+				b.draw_rect(Rect2(r.end.x - 26, 2, 20, 16), Color("E9B935"))
+				b.draw_arc(Vector2(r.end.x - 16, 2), 7, PI, TAU, 8, Color("15171A"), 2.0)
+			b.draw_string(font_bold, Vector2(0, 100), Art.FORM_NAMES[f], HORIZONTAL_ALIGNMENT_CENTER, b.size.x, 14, Color("F3EAD3"))
+			if not unlocked:
+				b.draw_string(font, Vector2(0, 115), str(FORM_LOCK[f][2]), HORIZONTAL_ALIGNMENT_CENTER, b.size.x, 10, Color("C9BBA0")))
+		fg.add_child(b)
+	right.add_child(fg)
+	right.add_child(_wk_tape("색", 18))
+	var cg := HFlowContainer.new()
+	cg.add_theme_constant_override("h_separation", 6)
+	cg.add_theme_constant_override("v_separation", 8)
+	for ci in 8:
+		var cidx: int = ci
+		var b2 := _button("", func():
+			if taken.has(cidx):
+				_banner("%s 님이 쓰는 색이에요" % taken[cidx])
+				return
+			picker_prof["color"] = cidx
+			_build_picker())
+		b2.flat = true
+		b2.custom_minimum_size = Vector2(68, 104)
+		var used := taken.has(ci)
+		var on2 := int(picker_prof["color"]) == ci
+		b2.draw.connect(func():
+			var cc: Color = Match.COLORS[cidx]
+			if used:
+				cc = cc.darkened(0.45)
+			var r := Rect2(8, 12, b2.size.x - 16, 64)
+			b2.draw_rect(r, Color("C9CED6") if not used else Color("6E757E"))
+			b2.draw_rect(Rect2(r.position.x, r.position.y + 20, r.size.x, 24), cc)
+			b2.draw_rect(r, Color("15171A"), false, 3.0)
+			var top := Rect2(r.position.x - 2, r.position.y - 12, r.size.x + 4, 24)
+			b2.draw_rect(top, cc.darkened(0.1))
+			b2.draw_rect(top, Color("15171A"), false, 3.0)
+			if on2:
+				b2.draw_line(Vector2(b2.size.x * 0.5, -4), Vector2(b2.size.x * 0.52, r.position.y), Color("C08A4E"), 8.0)
+			var lab: String = (str(taken[cidx]) + " 사용 중") if used else Match.NAMES[cidx]
+			b2.draw_string(font_bold, Vector2(0, 96), lab, HORIZONTAL_ALIGNMENT_CENTER, b2.size.x, 13, Color("F3EAD3") if not used else Color("9A8E7A")))
+		cg.add_child(b2)
+	right.add_child(cg)
+	right.add_child(_wk_tape("각인", 18))
+	var sg := HFlowContainer.new()
+	sg.add_theme_constant_override("h_separation", 14)
+	for si in 8:
+		var sidx: int = si
+		var b3 := _button("", func():
+			picker_prof["symbol"] = sidx
+			_build_picker())
+		b3.flat = true
+		b3.custom_minimum_size = Vector2(54, 96)
+		var on3: bool = int(picker_prof["symbol"]) == si
+		b3.draw.connect(func():
+			var r := Rect2(b3.size.x * 0.5 - 18, 0, 36, 70)
+			b3.draw_rect(r, WK_TAPE if on3 else Color("9AA1AA"))
+			b3.draw_rect(r, Color("15171A"), false, 3.0)
+			b3.draw_rect(Rect2(r.position.x - 6, 70, r.size.x + 12, 22), Color("6E757E"))
+			b3.draw_rect(Rect2(r.position.x - 6, 70, r.size.x + 12, 22), Color("15171A"), false, 3.0)
+			if on3:
+				b3.draw_rect(Rect2(r.position.x - 9, -3, r.size.x + 18, 98), WK_BRASS_L, false, 3.0)
+			Art.draw_symbol(b3, sidx, Color("15171A"), 1.0, Vector2(b3.size.x * 0.5, 34), 1.0, false))
+		sg.add_child(b3)
+	right.add_child(sg)
+	var info := HBoxContainer.new()
+	info.add_theme_constant_override("separation", 14)
+	info.add_child(_wk_tag("%s · %s · %s" % [Art.FORM_NAMES.get(picker_prof["form"], ""), Match.NAMES[int(picker_prof["color"])], SYMBOL_NAMES[int(picker_prof["symbol"])]], 19))
+	info.add_child(_nw(_label("공방 스킨을 켠 방에선 공방 재질로 바뀌어요", 14, Color("F3EAD3"))))
+	right.add_child(info)
+	if picker_from == "room":
+		var keep := CheckBox.new()
+		keep.text = "기본 알로도 저장"
+		keep.button_pressed = picker_save
+		keep.add_theme_color_override("font_color", Color("F3EAD3"))
+		keep.toggled.connect(func(on4: bool): picker_save = on4)
+		right.add_child(keep)
+	var br := HBoxContainer.new()
+	br.add_theme_constant_override("separation", 16)
+	var rnd := _wk_steel("무작위", func():
+		var free_forms := FORM_ORDER.filter(func(x): return _form_unlocked(x))
+		picker_prof["form"] = free_forms[randi() % free_forms.size()]
+		var cs: Array = range(8).filter(func(x): return not taken.has(x))
+		picker_prof["color"] = cs[randi() % cs.size()] if not cs.is_empty() else 0
+		picker_prof["symbol"] = randi() % 8
+		_build_picker(), 20)
+	rnd.custom_minimum_size = Vector2(160, 66)
+	br.add_child(rnd)
+	var back := _wk_steel("뒤로", func(): _picker_back(), 20)
+	back.custom_minimum_size = Vector2(130, 66)
+	br.add_child(back)
+	var ok := _wk_brass("이 알로 하기", func(): _picker_done(), 30)
+	ok.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	ok.custom_minimum_size = Vector2(0, 66)
+	br.add_child(ok)
+	right.add_child(br)
+
+
+# ── 5. 결과 ─────────────────────────────────────────────
+func _show_result(rebuild := false) -> void:
+	state = "result"
+	if not rebuild:
+		_record_result()
+		snd.slide(0.0)
+		if m.winners.is_empty():
+			snd.play("draw")
+		again_votes.clear()
+	drag_stone = -1
+	var root := _new_overlay(true)
+	root.get_child(0).color = Color(0, 0, 0, 0.0)
+	_wk_mark(root, "result")
+	_wk_bg(root, 0.5)
+	var vs := get_viewport_rect().size
+	var narrow := vs.x < 900
+	var title := "무승부"
+	if m.winners.size() == 1:
+		title = "%s 우승!" % m.players[m.winners[0]].name
+	elif m.mode == "parcel" and not m.winners.is_empty():
+		title = "%s 팀 우승!" % Match.TEAM_NAMES[m.team_of(m.winners[0])]
+	elif m.winners.size() > 1:
+		title = "공동 우승!"
+	var plq := _wk_plaque(_wk_title(title, 52), 12)
+	plq.position = Vector2(vs.x * 0.5 - 360, 24)
+	plq.custom_minimum_size = Vector2(720, 0)
+	root.add_child(plq)
+	# 순위
+	var rank := _result_rank()
+	var lv := VBoxContainer.new()
+	lv.add_theme_constant_override("separation", 10)
+	lv.position = Vector2(30, 150)
+	lv.custom_minimum_size = Vector2(minf(420.0, vs.x * 0.3), 0)
+	root.add_child(lv)
+	lv.add_child(_wk_tape("순위", 20))
+	var place := 1
+	for pid in rank:
+		var p: Dictionary = m.players[pid]
+		var bgc := Color("2C3038")
+		var ink := Color("F3EAD3")
+		if place == 1:
+			bgc = WK_BRASS
+			ink = WK_INK
+		elif place == 2:
+			bgc = Color("C9CED6")
+			ink = WK_INK
+		elif place == 3:
+			bgc = Color("C98A5A")
+			ink = WK_INK
+		var rowp := PanelContainer.new()
+		var rs := StyleBoxFlat.new()
+		rs.bg_color = bgc
+		rs.set_corner_radius_all(6)
+		rs.border_width_bottom = 4
+		rs.border_color = bgc.darkened(0.35)
+		rs.content_margin_left = 14
+		rs.content_margin_right = 14
+		rs.content_margin_top = 6
+		rs.content_margin_bottom = 6
+		rowp.add_theme_stylebox_override("panel", rs)
+		var h := HBoxContainer.new()
+		h.add_theme_constant_override("separation", 12)
+		h.add_child(_nw(_label("%d" % place, 20, ink, 3)))
+		h.add_child(_icon_pic(p.color, pid, 22))
+		var nm := _label(p.name + (" · 나" if _is_mine(pid) and my_seats.size() == 1 else ""), 18, ink, 2)
+		nm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		h.add_child(nm)
+		if m.mode == "crown":
+			var cs: Dictionary = m.crown_stats[pid]
+			h.add_child(_nw(_label("획득 %d · 방어 %d" % [cs["gain"], cs["defend"]], 12, ink)))
+		elif m.mode == "parcel":
+			h.add_child(_nw(_label("접촉 %d" % int(m.world.parcel.get("touch", {}).get(pid, 0)), 12, ink)))
+		h.add_child(_nw(_label(_result_right(pid), 17, ink, 3)))
+		rowp.add_child(h)
+		lv.add_child(rowp)
+		place += 1
+	# 가운데 시상대
+	var pod := Control.new()
+	pod.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	pod.set_anchors_preset(Control.PRESET_FULL_RECT)
+	var top3: Array = rank.slice(0, 3)
+	# 순위표와 작업 일지 사이에 맞춘다
+	var left_end := 30.0 + lv.custom_minimum_size.x
+	var right_start := vs.x - 420.0 if not narrow else vs.x
+	if narrow:
+		left_end = 0.0
+	var pk := clampf((right_start - left_end - 40.0) / 760.0, 0.35, 1.0)
+	pk = minf(pk, (vs.y * 0.65 - 130.0) / 380.0)
+	var pcx := (left_end + right_start) * 0.5
+	pod.draw.connect(func():
+		var cx := pcx
+		var base := vs.y * 0.65
+		var spots := [[0, Vector2(cx, base), 300.0 * pk, 200.0 * pk], [1, Vector2(cx - 250 * pk, base), 200.0 * pk, 130.0 * pk], [2, Vector2(cx + 250 * pk, base), 200.0 * pk, 100.0 * pk]]
+		for spd in spots:
+			var idx: int = spd[0]
+			var bx: Vector2 = spd[1]
+			var w0: float = spd[2]
+			var h0: float = spd[3]
+			var r := Rect2(bx.x - w0 * 0.5, bx.y - h0, w0, h0)
+			pod.draw_rect(r, Color("A8754A") if idx == 0 else Color("9A6A42"))
+			pod.draw_rect(r, Color("2A1E12"), false, 4.0)
+			pod.draw_string(font_display, Vector2(r.position.x, r.position.y + h0 * 0.62), str(idx + 1), HORIZONTAL_ALIGNMENT_CENTER, w0, int((70 if idx == 0 else 54) * pk), Color("3A2414"))
+			if idx < top3.size():
+				var pid2: int = top3[idx]
+				var u := (90.0 if idx == 0 else 56.0) * pk
+				var pc := Vector2(bx.x, r.position.y - u * 0.9)
+				Art.draw_puck_shadow(pod, pc, u)
+				Art.draw_puck_top(pod, pc, u, m.players[pid2].color, pid2, -PI / 2.0)
+				if idx == 0 and not m.winners.is_empty():
+					var cr := pc + Vector2(0, -u * 1.35)
+					var s := u * 0.6
+					var crown := PackedVector2Array([cr + Vector2(-s, s * 0.4), cr + Vector2(-s, -s * 0.45), cr + Vector2(-s * 0.5, 0), cr + Vector2(0, -s * 0.62), cr + Vector2(s * 0.5, 0), cr + Vector2(s, -s * 0.45), cr + Vector2(s, s * 0.4)])
+					pod.draw_colored_polygon(crown, Color("E9B935"))
+					crown.append(crown[0])
+					pod.draw_polyline(crown, Color("2A1E12"), 4.0, true)
+					pod.draw_rect(Rect2(cr + Vector2(-s, s * 0.4), Vector2(s * 2, s * 0.3)), Color("E9B935"))
+					pod.draw_rect(Rect2(cr + Vector2(-s, s * 0.4), Vector2(s * 2, s * 0.3)), Color("2A1E12"), false, 4.0))
+	root.add_child(pod)
+	# 작업 일지
+	if not narrow:
+		var cb := _wk_clipboard("작업 일지", "")
+		var board: Control = cb[0]
+		board.position = Vector2(vs.x - 30 - 360, 140)
+		board.custom_minimum_size = Vector2(360, 0)
+		root.add_child(board)
+		var v: VBoxContainer = cb[1]
+		var mname: String = {"survival": "최후 생존전", "derby": "개조 더비", "parcel": "택배 쟁탈전", "crown": "왕관 쟁탈전"}.get(m.mode, "")
+		var secs := int(time - match_started_t)
+		v.add_child(_wk_line("모드", mname, false, func(): pass))
+		v.add_child(_wk_line("공방", PartsData.WORKSHOPS.get(m.workshop, {}).get("name", ""), false, func(): pass))
+		v.add_child(_wk_line("바퀴", str(m.round_no), false, func(): pass))
+		v.add_child(_wk_line("발사", "%d발" % m.shots, false, func(): pass))
+		v.add_child(_wk_line("시간", "%d분 %02d초" % [secs / 60, secs % 60], false, func(): pass))
+		var best := -1
+		var best_n := 0
+		for k in ko_by:
+			if int(ko_by[k]) > best_n:
+				best_n = int(ko_by[k])
+				best = int(k)
+		v.add_child(_wk_line("최다 탈락", ("%s · %d" % [m.players[best].name, best_n]) if best >= 0 else "-", false, func(): pass))
+		v.add_child(_wk_line("명장면", highlight if highlight != "" else "-", false, func(): pass))
+		if m.mode == "crown":
+			var steals := 0
+			for cs2 in m.crown_stats:
+				steals += int(cs2["steal"])
+			v.add_child(_wk_line("왕관 강탈", "%d회" % steals, false, func(): pass))
+		if m.mode == "parcel":
+			v.add_child(_wk_line("택배 정산", "%d회 · 무득점 %d" % [m.parcel_stats["settles"], m.parcel_stats["zero"]], false, func(): pass))
+	# 버튼
+	var br := HBoxContainer.new()
+	br.add_theme_constant_override("separation", 24)
+	br.position = Vector2(vs.x * 0.5 - 400, vs.y * 0.7)
+	br.custom_minimum_size = Vector2(800, 0)
+	root.add_child(br)
+	var back := _wk_steel("방 나가기" if online == "guest" else "< 대기실로", func():
+		if online == "guest":
+			_leave_online()
+		else:
+			_back_to_lobby(), 22)
+	back.custom_minimum_size = Vector2(260, 84)
+	br.add_child(back)
+	var again := _wk_brass("+ 한 판 더", func(): _vote_again(), 36)
+	again.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	again.custom_minimum_size = Vector2(0, 84)
+	br.add_child(again)
+	if online != "":
+		var note := _label("모두 「한 판 더」를 누르면 같은 설정으로 바로 시작 · %d/%d" % [again_votes.size(), _human_count()], 16, Color("F3EAD3"))
+		note.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		note.position = Vector2(vs.x * 0.5 - 400, vs.y * 0.7 + 100)
+		note.custom_minimum_size = Vector2(800, 0)
+		note.set_meta("again_note", true)
+		root.add_child(note)
+	if not _reduced():
+		plq.pivot_offset = Vector2(360, 50)
+		plq.scale = Vector2(0.7, 0.7)
+		create_tween().tween_property(plq, "scale", Vector2.ONE, 0.45).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+
+
+func _result_rank() -> Array:
+	var rank: Array = []
+	for p in m.players:
+		if not p.out:
+			rank.append(p.id)
+	if m.mode == "derby" or m.mode == "crown":
+		rank.sort_custom(func(a, b): return m.scores[a] > m.scores[b])
+	elif m.mode == "parcel":
+		var tch: Dictionary = m.world.parcel.get("touch", {})
+		rank.sort_custom(func(a, b):
+			if m.team_scores[m.team_of(a)] != m.team_scores[m.team_of(b)]:
+				return m.team_scores[m.team_of(a)] > m.team_scores[m.team_of(b)]
+			return int(tch.get(a, 0)) > int(tch.get(b, 0)))
+	else:
+		rank.sort_custom(func(a, b):
+			if m.winners.has(a) != m.winners.has(b):
+				return m.winners.has(a)
+			return m.stones_left(a) > m.stones_left(b))
+	var outs: Array = m.out_order.duplicate()
+	outs.reverse()
+	for o in outs:
+		if not rank.has(o):
+			rank.append(o)
+	return rank
+
+
+func _result_right(pid: int) -> String:
+	if m.mode == "derby" or m.mode == "crown" or m.mode == "parcel":
+		return "%d점" % m.scores[pid]
+	var p: Dictionary = m.players[pid]
+	return ("퍽 %d개" % m.stones_left(pid)) if not p.out else "%d바퀴 탈락" % p.out_round
+
+
+func _human_count() -> int:
+	return 1 + friend_peer.size()
+
+
+## 「한 판 더」: 혼자면 바로, 온라인이면 모두 누를 때까지 (방장이 센다)
+func _vote_again() -> void:
+	if online == "":
+		_start_match()
+		return
+	if online == "guest":
+		net.send_to(host_peer, {"t": "again"})
+		_banner("한 판 더! 다른 사람을 기다려요")
+		return
+	_host_again(-1)
+
+
+func _host_again(pid: int) -> void:
+	again_votes[pid] = true
+	net.broadcast({"t": "again_n", "n": again_votes.size(), "of": _human_count()})
+	_update_again_note(again_votes.size(), _human_count())
+	if again_votes.size() >= _human_count():
+		again_votes.clear()
+		_start_match()
+
+
+func _update_again_note(n0: int, of: int) -> void:
+	if overlay == null:
+		return
+	for ch in overlay.get_children():
+		if ch is Label and ch.has_meta("again_note"):
+			ch.text = "모두 「한 판 더」를 누르면 같은 설정으로 바로 시작 · %d/%d" % [n0, of]
