@@ -32,6 +32,9 @@ func _initialize() -> void:
 		var first_out := 0
 		while m.phase != "over" and guard < 4000:
 			guard += 1
+			if m.phase == "fx":
+				m.settle_fx()
+				continue
 			if m.phase == "draft":
 				var pid := m.current_drafter()
 				var c := Bot.choose_draft(m, pid, rng)
@@ -65,6 +68,7 @@ func _initialize() -> void:
 					left.append(m.stones_left(p.id))
 				print("R%d P%d power=%.2f score=%.0f ko=%d left=%s" % [m.round_no, shooter, r["power"], bot.best_score, kos.size(), str(left)])
 			m.finish_shot()
+			m.settle_fx()
 			if first_out == 0 and not m.out_order.is_empty():
 				first_out = m.round_no
 		rounds_sum += m.round_no

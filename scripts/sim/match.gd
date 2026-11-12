@@ -218,6 +218,13 @@ func _begin_round() -> void:
 		order = parcel_order()
 	if (mode == "crown" or mode == "parcel") and not order.is_empty():
 		_respawn_of(order[0])
+	_apply_pending_delays()
+	if _start_fx("round_start"):
+		return
+	_begin_round_rest()
+
+
+func _begin_round_rest() -> void:
 	if is_draft_round(round_no):
 		draft_queue = order.duplicate()
 		offers.clear()
@@ -225,8 +232,7 @@ func _begin_round() -> void:
 			offers[pid] = roll_offer(pid)
 		phase = "draft"
 	else:
-		phase = "aim"
-		_mark_relic_turn()
+		_go_aim()
 
 
 func _mark_relic_turn() -> void:
@@ -364,8 +370,7 @@ func equip(pid: int, part_id: String, stone_id: int, side := 1, reserve := "") -
 		# 이번 바퀴는 고르지 않고 넘긴다
 		draft_queue.pop_front()
 		if draft_queue.is_empty():
-			phase = "aim"
-			_mark_relic_turn()
+			_go_aim()
 		return true
 	if not offers.get(pid, []).has(part_id):
 		return false
@@ -381,8 +386,7 @@ func equip(pid: int, part_id: String, stone_id: int, side := 1, reserve := "") -
 		players[pid].focus = stone_id
 		draft_queue.pop_front()
 		if draft_queue.is_empty():
-			phase = "aim"
-			_mark_relic_turn()
+			_go_aim()
 		return true
 	s.parts[slot] = part_id
 	s.ups.erase(slot)
@@ -400,8 +404,7 @@ func equip(pid: int, part_id: String, stone_id: int, side := 1, reserve := "") -
 			s.magnet_side = 1 if side >= 0 else -1
 	draft_queue.pop_front()
 	if draft_queue.is_empty():
-		phase = "aim"
-		_mark_relic_turn()
+		_go_aim()
 	return true
 
 
@@ -414,6 +417,11 @@ func shoot(stone_id: int, dir: Vector2, power: float, opts := {}) -> bool:
 	var s = world.get_stone(stone_id)
 	if s == null or not s.alive:
 		return false
+	if not bonus_active.is_empty():
+		# 정각 덤 차례: 같은 알로, 힘 70%
+		if stone_id != int(bonus_active["stone"]):
+			return false
+		power *= 0.7
 	if s.owner != current_player():
 		# 리모컨: 내 알 근처의 상대 알을 대신 쏜다 (한 번 쓰면 사라진다)
 		var holder = remote_holder(current_player(), s)
@@ -433,6 +441,8 @@ func shoot(stone_id: int, dir: Vector2, power: float, opts := {}) -> bool:
 
 ## 모든 움직임이 끝난 뒤 부른다: 탈락 정리 → 승패 확인 → 다음 차례.
 func finish_shot() -> void:
+	if world.shot != null:
+		_after_shot_rules(world.shot.ex, world.shot.stone_id)
 	# 개조 더비: 상대 알을 떨어뜨리면 쏜 사람에게 1점 (자멸·원인 불명은 0점)
 	if mode == "crown" and world.shot != null:
 		var start := int(world.shot.ex.get("crown_start", -1))
@@ -493,6 +503,20 @@ func _crown_score(start_holder: int, taker: int) -> bool:
 
 
 func _settle_turn() -> void:
+	# 차례 종료 이벤트 (태엽 시계탑): 움직임이 생기면 다 멈춘 뒤 이어서
+	if not turn_end_done:
+		turn_end_done = true
+		if _start_fx("turn_end"):
+			return
+	# 정각 (시계공 세트): 같은 알로 덤 차례 한 번 (힘 70%)
+	var cur0 := current_player()
+	if not bonus_pending.is_empty() and int(bonus_pending["pid"]) == cur0:
+		bonus_active = bonus_pending.duplicate()
+		bonus_pending = {}
+		turn_end_done = false
+		phase = "aim"
+		return
+	bonus_active = {}
 	# 유품 리본으로 회수한 부품은 다음 내 차례에만 달 수 있다.
 	var cur := current_player()
 	if cur >= 0 and players[cur].relic_turn:
@@ -523,8 +547,7 @@ func _settle_turn() -> void:
 	while turn_pos < order.size() and (players[order[turn_pos]].out or stones_left(order[turn_pos]) == 0):
 		turn_pos += 1
 	if turn_pos < order.size():
-		phase = "aim"
-		_mark_relic_turn()
+		_go_aim()
 		return
 	# 바퀴 끝
 	if mode == "parcel" and round_no % parcel_every == 0 and _parcel_settle():
@@ -892,3 +915,123 @@ func _parcel_settle() -> bool:
 		return true
 	World.Parcel.send_home(world)
 	return false
+
+
+# ── 차례 이벤트 큐 (SYS-01) · 차례 순서 조작 (SYS-02) ─────────
+## fx: 바퀴 시작 · 차례 시작 · 차례 종료에 터지는 효과가 알을 움직이면, 그 움직임이 다 멈출 때까지 phase = "fx".
+## 화면(또는 테스트)이 판을 돌리다가 멈추면 finish_fx() 를 불러 경기를 이어 간다.
+var fx_stage := ""
+var turn_end_done := false
+var bonus_pending := {}       # 정각: 이번 차례가 끝나면 같은 사람에게 덤 차례 {pid, stone}
+var bonus_active := {}        # 지금 덤 차례: 이 알만, 힘 70%
+var bonus_used := {}          # pid → 정각을 쓴 바퀴
+var pending_delay := {}       # 늦잠 열쇠: 다음 바퀴에 한 칸 뒤로 미룰 사람
+var order_log: Array = []     # 화면이 읽고 비우는 차례 순서 변경 {kind, pid}
+
+
+## 새 차례가 시작될 때 (모든 「차례 시작」은 여기로)
+func _go_aim() -> void:
+	phase = "aim"
+	_mark_relic_turn()
+	turn_end_done = false
+	world.turn_no += 1
+	if _start_fx("turn_start"):
+		return
+
+
+func _start_fx(stage: String) -> bool:
+	var moved := false
+	world.knockouts.clear()
+	match stage:
+		"round_start":
+			moved = World.Clock.round_start(world, round_no)
+		"turn_start":
+			moved = World.Clock.turn_start(world, current_player())
+		"turn_end":
+			moved = World.Clock.turn_end(world, current_player())
+	if not moved:
+		return false
+	fx_stage = stage
+	phase = "fx"
+	return true
+
+
+## 바로 끝까지 돌린다 (CPU 계산 · 테스트용)
+func settle_fx() -> void:
+	var guard := 0
+	while phase == "fx" and guard < 10:
+		world.run_until_settled(8.0)
+		finish_fx()
+		guard += 1
+
+
+func finish_fx() -> void:
+	if phase != "fx":
+		return
+	world.end_fx()
+	var st := fx_stage
+	fx_stage = ""
+	# 이벤트로 알이 떨어져 생존전 탈락이 생겼는지
+	if mode == "survival":
+		for p in players:
+			if not p.out and stones_left(p.id) == 0:
+				p.out = true
+				p.out_round = round_no
+				out_order.append(p.id)
+		var alive := alive_players()
+		if alive.size() <= 1:
+			_finish(alive, "last" if alive.size() == 1 else "draw")
+			return
+	match st:
+		"round_start":
+			_begin_round_rest()
+		"turn_start":
+			phase = "aim"
+			if current_player() >= 0 and stones_left(current_player()) == 0 and mode == "survival":
+				_settle_turn()
+		"turn_end":
+			_settle_turn()
+
+
+## 샷이 끝난 뒤: 늦잠 열쇠 · 순서 바꾸개 · 정각
+func _after_shot_rules(ex: Dictionary, shooter_id: int) -> void:
+	if ex.has("delay"):
+		delay_turn(int(ex["delay"]))
+	if ex.has("swap_order"):
+		swap_turn(int(ex["swap_order"]))
+	var s = world.get_stone(shooter_id)
+	var cur := current_player()
+	if s != null and s.alive and bonus_active.is_empty() and not ex.get("auto_bow", false) 			and PartsData.set_complete(s.parts, "clock") and int(bonus_used.get(cur, 0)) != round_no:
+		bonus_used[cur] = round_no
+		bonus_pending = {"pid": cur, "stone": s.id}
+		world.emit({"t": "part", "part": "clock_set", "pos": s.pos, "owner": cur, "text": "정각! 한 번 더", "big": true})
+
+
+## 늦잠 열쇠: pid 의 다음 차례를 한 칸 뒤로. 이번 바퀴에 아직 남았으면 바로, 아니면 다음 바퀴에.
+func delay_turn(pid: int) -> void:
+	var i := order.find(pid)
+	if i > turn_pos and i < order.size() - 1:
+		order[i] = order[i + 1]
+		order[i + 1] = pid
+		order_log.append({"kind": "delay", "pid": pid})
+	else:
+		pending_delay[pid] = true
+		order_log.append({"kind": "delay_next", "pid": pid})
+
+
+func _apply_pending_delays() -> void:
+	for pid in pending_delay.keys():
+		var i := order.find(pid)
+		if i >= 0 and i < order.size() - 1:
+			order[i] = order[i + 1]
+			order[i + 1] = pid
+	pending_delay.clear()
+
+
+## 순서 바꾸개: pid 가 이번 바퀴에 아직 쏠 차례가 남았으면 이번 바퀴 맨 끝으로 보낸다.
+func swap_turn(pid: int) -> void:
+	var i := order.find(pid)
+	if i > turn_pos and i < order.size() - 1:
+		order.remove_at(i)
+		order.append(pid)
+		order_log.append({"kind": "swap", "pid": pid})

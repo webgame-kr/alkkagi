@@ -12,6 +12,7 @@ func _initialize() -> void:
 	var games := int(args[1]) if args.size() > 1 else 10
 	var mode: String = args[2] if args.size() > 2 else "crown"
 	var every := int(args[3]) if args.size() > 3 else 2
+	var ws_only: String = args[4] if args.size() > 4 else ""
 	var settles := 0
 	var zero := 0
 	var rounds := 0
@@ -25,13 +26,16 @@ func _initialize() -> void:
 		var flags := []
 		for i in n:
 			flags.append(true)
-		m.setup(n, flags, 500 + g, false, {"mode": mode, "parcel_every": every, "workshop": ["junk", "magic", "toon", "lab"][g % 4]})
+		m.setup(n, flags, 500 + g, false, {"mode": mode, "parcel_every": every, "workshop": ws_only if ws_only != "" else ["junk", "magic", "toon", "lab"][g % 4]})
 		var rng := RandomNumberGenerator.new()
 		rng.seed = g
 		var first_taker := -1
 		var guard := 0
 		while m.phase != "over" and guard < 3000:
 			guard += 1
+			if m.phase == "fx":
+				m.settle_fx()
+				continue
 			if m.phase == "draft":
 				var pid := m.current_drafter()
 				var c := Bot.choose_draft(m, pid, rng)
@@ -44,12 +48,14 @@ func _initialize() -> void:
 			var r: Dictionary = bot.result()
 			if r.is_empty():
 				m.skip_turn()
+				m.settle_fx()
 				continue
 			m.shoot(r["stone"], r["dir"], r["power"], {"charged": true})
 			m.world.run_until_settled(14.0)
 			if mode == "crown" and first_taker < 0 and m.world.crown["state"] == "held":
 				first_taker = m.world.get_stone(int(m.world.crown["holder"])).owner
 			m.finish_shot()
+			m.settle_fx()
 			m.crown_events.clear()
 			m.parcel_events.clear()
 		rounds += m.round_no
@@ -63,6 +69,8 @@ func _initialize() -> void:
 		if m.winners.has(first_taker):
 			first_taker_won += 1
 		print("game %d: rounds %d shots %d winner %s scores %s teams %s" % [g, m.round_no, m.shots, str(m.winners), str(m.scores), str(m.team_scores)])
+	if mode == "survival":
+		print("SURV n=%d ws %s: rounds %.1f shots %.1f" % [n, ws_only, float(rounds) / games, float(shots) / games])
 	if mode == "parcel":
 		print("PARCEL n=%d every %d: rounds %.1f shots %.1f settles %.1f zero %.1f" % [n, every, float(rounds) / games, float(shots) / games, float(settles) / games, float(zero) / games])
 	print("AVG n=%d rounds %.1f shots %.1f | gain %.1f defend %.1f steal %.1f | first taker won %d/%d" % [n, float(rounds) / games, float(shots) / games, float(gain) / games, float(defend) / games, float(steal) / games, first_taker_won, games])

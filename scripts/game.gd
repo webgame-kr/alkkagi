@@ -487,7 +487,7 @@ func _start_match(seed_value := -1) -> void:
 	m = Match.new()
 	var ws: String = settings.get("workshop", "junk")
 	if ws == "random":
-		ws = ["junk", "magic", "toon"][seed_value % 3]
+		ws = ["junk", "magic", "toon", "lab", "clock"][seed_value % 5]
 	m.setup(settings["n"], settings["cpu"], seed_value, settings["timed"], {"workshop": ws, "mode": settings.get("mode", "survival"), "placement": true,
 		"teams": settings.get("teams", []), "parcel_every": settings.get("parcel_every", 2), "parcel_goal": settings.get("parcel_goal", 3)})
 	state = "play"
@@ -605,6 +605,7 @@ func _update_play(delta: float) -> void:
 		_clear_overlay()
 	_take_crown_scores()
 	_take_parcel_events()
+	_take_order_log()
 	if turn_hold > 0.0:
 		turn_hold -= delta
 		return
@@ -616,7 +617,7 @@ func _update_play(delta: float) -> void:
 	match m.phase:
 		"place":
 			_update_place(delta)
-		"moving":
+		"moving", "fx":
 			var spd := 1.0
 			if slowmo > 0.0:
 				slowmo -= delta
@@ -629,12 +630,15 @@ func _update_play(delta: float) -> void:
 				spd *= 3.0
 			accum += minf(delta, 0.05) * spd * _sp("play")
 			_motion_tick(delta)
-			while accum >= World.DT and m.phase == "moving" and hitstop <= 0.0:
+			while accum >= World.DT and (m.phase == "moving" or m.phase == "fx") and hitstop <= 0.0:
 				accum -= World.DT
 				m.world.step()
 				_consume_events()
 				if m.world.is_settled():
-					_after_shot()
+					if m.phase == "fx":
+						_after_fx()
+					else:
+						_after_shot()
 					break
 			var fastest := 0.0
 			for st in m.world.stones:
@@ -977,6 +981,8 @@ func _consume_events() -> void:
 				fx.append({"k": "ring", "pos": e["pos"], "t": 0.0, "life": 0.4, "r": 24.0, "c": Color("2A2F45")})
 			"crown":
 				_on_crown_event(e)
+			"walker", "replay":
+				_on_clock_event(e)
 			"parcel":
 				_on_parcel_event(e)
 			"respawn":
@@ -1037,6 +1043,8 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	if event.pressed:
 		var sid2 := _stone_at(wp2, m.current_player())
+		if sid2 >= 0 and not m.bonus_active.is_empty() and sid2 != int(m.bonus_active["stone"]):
+			sid2 = -1   # 정각 덤 차례: 같은 알만
 		var other := _stone_at(wp2, -1)
 		if remote_pick >= 0 and other >= 0 and _remote_targets(remote_pick).has(other):
 			sid2 = other   # 리모컨 조종 단계: 고른 상대 알을 당긴다
@@ -1304,6 +1312,7 @@ func _draw_inner() -> void:
 	_draw_board()
 	_draw_gimmicks()
 	_draw_devices()
+	_draw_clock_things()
 	_draw_crown_floor()
 	_draw_parcel()
 	_draw_aim_under()
@@ -2262,6 +2271,10 @@ func _draw_turn_card(r: Rect2) -> void:
 					sub = _crown_hint(pid)
 				elif m.mode == "parcel" and m.phase == "aim":
 					sub = _parcel_hint(pid)
+		"fx":
+			pid = m.current_player()
+			title = _fx_title()
+			sub = "효과가 터지는 중이에요"
 		"place":
 			pid = placing_pid
 			title = "자리 잡기"
@@ -2786,7 +2799,7 @@ func _show_setup() -> void:
 	mv.size_flags_stretch_ratio = 0.85
 	mv.add_child(_label("모드", 14, LABEL, 1))
 	var cur_mode: String = settings.get("mode", "survival")
-	mv.add_child(_seg([["survival", "생존전"], ["derby", "더비"], ["crown", "왕관전"], ["parcel", "택배전"]], cur_mode, func(k):
+	mv.add_child(_seg([["survival", "생존전"], ["derby", "더비"], ["crown", "왕관"], ["parcel", "택배"]], cur_mode, func(k):
 		settings["mode"] = k
 		if k == "parcel":
 			_fix_parcel_count()
@@ -4007,16 +4020,16 @@ func _workshop_row() -> Control:
 	v.add_child(head)
 	var narrow_w := get_viewport_rect().size.x < 600.0
 	var row := GridContainer.new()
-	row.columns = 1 if narrow_w else 2
+	row.columns = 1 if narrow_w else 3
 	row.add_theme_constant_override("h_separation", 10)
 	row.add_theme_constant_override("v_separation", 10)
-	for key in ["junk", "magic", "toon", "lab"]:
+	for key in ["junk", "magic", "toon", "lab", "clock"]:
 		var card := _workshop_card(key, cur == key)
 		card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		row.add_child(card)
 	v.add_child(row)
 	if cur == "random":
-		v.add_child(_label("공방을 열 때 세 공방 중 하나가 정해집니다.", 13, SUB))
+		v.add_child(_label("공방을 열 때 다섯 공방 중 하나가 정해집니다.", 13, SUB))
 	elif cur == "all":
 		v.add_child(_label("전체 부품 섞기: " + PartsData.WORKSHOPS["all"]["desc"] + " (설정에서 끌 수 있어요)", 13, SUB))
 	return v
@@ -4080,6 +4093,11 @@ func _workshop_card(key: String, on: bool) -> Control:
 			ssb.border_color = Color("6A50B8")
 			ssb.set_border_width_all(2)
 			scol = Color("F1EEFF")
+		"clock":
+			ssb.bg_color = Color("141A2E")
+			ssb.border_color = Color("E2C27A")
+			ssb.set_border_width_all(3)
+			scol = Color("F3EAD3")
 		"lab":
 			ssb.bg_color = Color("FFFFFF")
 			ssb.border_color = Color("B6F23C")
@@ -4120,6 +4138,8 @@ func _workshop_card(key: String, on: bool) -> Control:
 		cell.add_child(pic)
 		var nm := _nw(_label(PartsData.part_name(pid), 10, SUB))
 		nm.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		nm.clip_text = true
+		nm.custom_minimum_size = Vector2(0, 0)
 		nm.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		cell.add_child(nm)
 		reps.add_child(cell)
@@ -4175,6 +4195,9 @@ func _draw_shutter() -> void:
 		return
 	if m != null and m.workshop == "magic":
 		_draw_magic_curtain(vs)
+		return
+	if m != null and m.workshop == "clock":
+		_draw_clock_intro(vs)
 		return
 	if m != null and m.workshop == "toon":
 		_draw_manga_cover(vs)
@@ -5390,6 +5413,8 @@ func _draw_gimmicks() -> void:
 					draw_arc(cs, rs, 0, TAU, 32, rc, 6.0, true)
 					draw_arc(cs, rs * 0.7, 0, TAU, 32, Color(rc, 0.4), 2.0, true)
 					_text_outline(cs + Vector2(0, 6), "커짐" if it["big"] else "작아짐", 12, rc, true)
+			"pendulum", "clockhand", "cuckoo":
+				_draw_clock_gimmick(g)
 			"turntable":
 				for it in g["items"]:
 					var ctt := w2s(it["pos"])
@@ -6663,3 +6688,239 @@ func _take_parcel_events() -> void:
 			snd.play("fx_parody_stamp", -6.0, 0.9)
 		turn_hold = maxf(turn_hold, 0.6 if _reduced() else 1.3)
 	m.parcel_events.clear()
+
+
+# ── 태엽 시계탑 화면 ─────────────────────────────────────
+const CLOCK_GOLD := Color("E2C27A")
+var bonus_shown := -1
+
+
+## 차례 이벤트의 움직임이 다 멈췄을 때
+func _after_fx() -> void:
+	last_fastest = 9999.0
+	var outs: Array = m.world.knockouts.duplicate()
+	m.finish_fx()
+	_consume_events()
+	turn_hold = maxf(turn_hold, _sp("hold") + (0.3 if not outs.is_empty() else 0.0))
+	for k in outs:
+		var cz: Dictionary = k.get("cause", {})
+		var victim: String = m.players[int(k["owner"])].name
+		_log("%s 퍽이 %s 떨어졌어요" % [victim, _j(_part_word(str(cz.get("part", "body"))), "으로", "로")], m.players[int(k["owner"])].color)
+
+
+func _fx_title() -> String:
+	match m.fx_stage:
+		"round_start":
+			return "바퀴 시작 장치"
+		"turn_start":
+			return "차례 시작 장치"
+		_:
+			return "차례 끝 장치"
+
+
+## 차례 순서가 바뀌었을 때 (늦잠 열쇠 · 순서 바꾸개) · 정각 덤 차례 안내
+func _take_order_log() -> void:
+	if m == null:
+		return
+	for ev in m.order_log:
+		var pl: Dictionary = m.players[int(ev["pid"])]
+		match str(ev["kind"]):
+			"delay":
+				_log("늦잠! %s 차례가 한 칸 뒤로 밀렸어요" % pl.name, pl.color)
+				_banner("늦잠!", pl.color, "%s 차례가 한 칸 뒤로" % pl.name)
+			"delay_next":
+				_log("늦잠! %s 다음 바퀴 차례가 한 칸 뒤로 밀려요" % pl.name, pl.color)
+			"swap":
+				_log("순서 바꾸기! %s 이번 바퀴 맨 끝으로" % _j(pl.name, "은", "는"), pl.color)
+				_banner("순서 바꾸기", pl.color, "%s 이번 바퀴 맨 끝으로" % _j(pl.name, "은", "는"))
+	m.order_log.clear()
+	if m.phase == "aim" and not m.bonus_active.is_empty() and bonus_shown != m.world.turn_no:
+		bonus_shown = m.world.turn_no
+		var bp: Dictionary = m.players[int(m.bonus_active["pid"])]
+		_banner("정각!", CLOCK_GOLD, "%s 같은 알로 한 번 더 (힘 70%%)" % bp.name)
+		snd.play("set_complete", -4.0, 1.2)
+
+
+## 시계탑 기믹 (진자 · 뻐꾸기 · 시곗바늘) 과 판 위 장치 (화살 · 쥐 · 자명종 · 캡슐)
+func _draw_clock_gimmick(g: Dictionary) -> void:
+	var k := view_scale
+	match str(g["kind"]):
+		"pendulum":
+			var it: Dictionary = g["items"][0]
+			var a := w2s(it["a"])
+			var b := w2s(it["b"])
+			var at: int = int(it["at"])
+			var cur := a if at == 0 else b
+			var nxt := b if at == 0 else a
+			draw_dashed_line(a, b, Color(CLOCK_GOLD, 0.35), 2.0, 10.0)
+			# 다음 자리: 점선 원
+			var rr: float = float(it["r"]) * k
+			for i in 16:
+				if i % 2 == 0:
+					draw_arc(nxt, rr, TAU * i / 16.0, TAU * (i + 1) / 16.0, 4, Color(CLOCK_GOLD, 0.7), 2.0, true)
+			# 매단 줄 (화면 위쪽에서) + 추
+			draw_line(cur + Vector2(0, -rr * 2.2), cur, Color(0.75, 0.68, 0.5, 0.8), 2.0, true)
+			draw_circle(cur + Vector2(0, rr * 0.25), rr * 1.02, Color(0, 0, 0, 0.35))
+			draw_circle(cur, rr, Color("B8913F"))
+			draw_circle(cur + Vector2(-rr * 0.3, -rr * 0.3), rr * 0.35, Color("E2C27A"))
+			draw_arc(cur, rr, 0, TAU, 28, Art.outline, 2.0, true)
+		"clockhand":
+			var it2: Dictionary = g["items"][0]
+			var ang: float = float(it2["ang"])
+			var L: float = float(it2["len"])
+			var c := w2s(Vector2.ZERO)
+			var tip := w2s(Vector2.from_angle(ang) * L)
+			# 다음 30도 부채꼴 예고
+			var pts := PackedVector2Array([c])
+			for i in 9:
+				pts.append(c + Vector2.from_angle(ang + deg_to_rad(30.0) * i / 8.0) * L * k)
+			draw_colored_polygon(pts, Color(CLOCK_GOLD, 0.08))
+			draw_line(c, tip, Color(0, 0, 0, 0.35), 12.0 * k + 2.0, true)
+			draw_line(c, tip, Color("B8913F"), 9.0 * k, true)
+			draw_line(c, tip, Color("E2C27A"), 3.0 * k, true)
+			poly_arrow(tip, Vector2.from_angle(ang), 12.0 * k, Color("B8913F"))
+			draw_circle(c, 10.0 * k, Color("7A5C22"))
+			draw_circle(c, 5.0 * k, Color("E2C27A"))
+		"cuckoo":
+			var dir := Vector2.from_angle(float(g["dir"]))
+			var edge := w2s(-dir * (m.world.size + CELL * 0.9))
+			# 뻐꾸기 집 (판 바깥, 미는 방향의 반대편)
+			var hs := 18.0 * k
+			draw_rect(Rect2(edge - Vector2(hs, hs * 0.8), Vector2(hs * 2.0, hs * 1.8)), Color("6B4523"))
+			draw_colored_polygon(PackedVector2Array([edge + Vector2(-hs * 1.2, -hs * 0.8), edge + Vector2(hs * 1.2, -hs * 0.8), edge + Vector2(0, -hs * 1.8)]), Color("8A6237"))
+			draw_circle(edge + Vector2(0, -hs * 0.05), hs * 0.45, Color("F3EAD3"))
+			# 예고: 3·5바퀴 시작 한 바퀴 전부터 큰 화살표
+			var soon: bool = m.round_no == 2 or m.round_no == 4
+			var al := 0.65 + 0.3 * sin(time * 5.0) if soon else 0.25
+			var c2 := w2s(Vector2.ZERO)
+			draw_line(c2 - dir * CELL * 2.0 * k, c2 + dir * CELL * 2.0 * k, Color(CLOCK_GOLD, al), 6.0 * k, true)
+			poly_arrow(c2 + dir * CELL * 2.0 * k, dir, 16.0 * k, Color(CLOCK_GOLD, al))
+			if soon:
+				_text_outline(c2 + Vector2(0, -CELL * 2.6 * k), "다음 바퀴 뻐꾹! 모두 1칸", 14, CLOCK_GOLD, true)
+
+
+func poly_arrow(tip: Vector2, dir: Vector2, s: float, col: Color) -> void:
+	var side := dir.orthogonal()
+	draw_colored_polygon(PackedVector2Array([tip + dir * s, tip - dir * s * 0.2 + side * s * 0.7, tip - dir * s * 0.2 - side * s * 0.7]), col)
+
+
+## 차례를 넘는 물체와 알 위 표식
+func _draw_clock_things() -> void:
+	if m == null or m.world.clock.is_empty() and m.workshop != "clock":
+		return
+	var k := view_scale
+	var st: Dictionary = m.world.clock
+	for wk in st.get("walkers", []):
+		var p := w2s(wk["pos"])
+		var dir: Vector2 = wk["dir"]
+		var nxt := w2s((wk["pos"] as Vector2) + dir * (2.5 if wk["kind"] == "arrow" else 2.0) * CELL)
+		draw_dashed_line(p, nxt, Color(CLOCK_GOLD, 0.45), 2.0, 8.0)
+		if wk["kind"] == "arrow":
+			draw_line(p - dir * 16.0 * k, p + dir * 10.0 * k, Color("8A6237"), 3.0, true)
+			poly_arrow(p + dir * 10.0 * k, dir, 7.0 * k, Color("C3C9D0"))
+		else:
+			draw_circle(p, 9.0 * k, Color("A7ADB4"))
+			draw_circle(p + dir * 7.0 * k, 4.0 * k, Color("E7B7B0"))
+			draw_arc(p, 9.0 * k, 0, TAU, 16, Art.outline, 1.5, true)
+		_text_outline(p + Vector2(0, -16.0 * k), "%d" % int(wk["left"]), 12, CLOCK_GOLD, true)
+	for al in st.get("alarms", []):
+		var ap := w2s(al["pos"])
+		draw_arc(ap, 2.0 * CELL * k, 0, TAU, 40, Color(m.players[int(al["owner"])].color, 0.3), 2.0, true)
+		draw_circle(ap, 8.0 * k, Color("D2452F"))
+		draw_circle(ap, 5.5 * k, Color("F3EAD3"))
+		_text_outline(ap + Vector2(0, -14.0 * k), "따르릉 다음 바퀴", 11, CLOCK_GOLD, true)
+	for s in m.world.stones:
+		var u := World.STONE_R * k
+		if s.status.has("capsule") and not s.status.has("capsule_used"):
+			var cp := w2s(s.status["capsule"])
+			for i in 12:
+				if i % 2 == 0:
+					draw_arc(cp, u * 0.9, TAU * i / 12.0, TAU * (i + 1) / 12.0, 4, Color(m.players[s.owner].color, 0.6), 1.5, true)
+			draw_rect(Rect2(cp - Vector2(4, 6) * k, Vector2(8, 12) * k), Color("9FC4E8"))
+		if not s.alive:
+			continue
+		var p2 := w2s(s.pos)
+		var icons: Array = []
+		if s.status.has("hand_mark"):
+			icons.append("hand")
+		if s.status.has("bomb"):
+			icons.append("bomb")
+		if s.status.has("bow"):
+			var b: Dictionary = s.status["bow"]
+			draw_dashed_line(p2, p2 + (b["dir"] as Vector2) * 3.0 * CELL * k, Color(m.players[s.owner].color, 0.7), 2.0, 8.0)
+			icons.append("bow")
+		if s.status.has("hourglass"):
+			icons.append("hourglass")
+		var x0 := p2 + Vector2(-u * 0.9, -u * 1.15)
+		for ic in icons.slice(0, 2):
+			_draw_status_icon(x0, ic, u * 0.42)
+			x0.x += u * 0.9
+
+
+func _draw_status_icon(c: Vector2, kind: String, r: float) -> void:
+	draw_circle(c, r, Color("141A2E"))
+	draw_arc(c, r, 0, TAU, 16, CLOCK_GOLD, 1.5, true)
+	match kind:
+		"hand":
+			draw_line(c, c + Vector2(0, -r * 0.7), CLOCK_GOLD, 2.0, true)
+			draw_line(c, c + Vector2(r * 0.5, 0), CLOCK_GOLD, 2.0, true)
+		"bomb":
+			draw_string(font_bold, c + Vector2(-r, r * 0.45), "1", HORIZONTAL_ALIGNMENT_CENTER, r * 2.0, int(r * 1.3), Color("FF8A5C"))
+		"bow":
+			draw_line(c + Vector2(-r * 0.6, r * 0.6), c + Vector2(r * 0.6, -r * 0.6), CLOCK_GOLD, 2.0, true)
+		"hourglass":
+			draw_colored_polygon(PackedVector2Array([c + Vector2(-r * 0.5, -r * 0.6), c + Vector2(r * 0.5, -r * 0.6), c, c + Vector2(r * 0.5, r * 0.6), c + Vector2(-r * 0.5, r * 0.6), c]), CLOCK_GOLD)
+
+
+## 차례 이벤트 연출: 진자·시곗바늘·화살·쥐가 지나간 자리, 다시보기 잔상
+func _on_clock_event(e: Dictionary) -> void:
+	match str(e["t"]):
+		"walker":
+			fx.append({"k": "line", "a": e["a"], "b": e["b"], "t": 0.0, "life": 0.6, "c": CLOCK_GOLD})
+			snd.play("fx_mech_spring", -6.0, 0.8)
+		"replay":
+			var path: Array = e["path"]
+			for i in range(path.size() - 1):
+				fx.append({"k": "line", "a": path[i], "b": path[i + 1], "t": -0.02 * i, "life": 0.7, "c": Color(m.players[int(e["owner"])].color, 0.8)})
+			snd.play("fx_magic_shadow", -6.0, 1.2)
+
+
+## 입장: 시계 문자판이 12시를 가리키는 순간 둘로 갈라진다.
+func _draw_clock_intro(vs: Vector2) -> void:
+	var k := _intro_k()
+	var half := vs.x * 0.5
+	var off := half * 1.05 * k
+	var c := vs * 0.5
+	var R := minf(vs.x, vs.y) * 0.42
+	for side in [-1, 1]:
+		var dx: float = -off if side < 0 else off
+		var r := Rect2((0.0 if side < 0 else half) + dx, 0, half, vs.y)
+		shutter.draw_rect(r, Color("141A2E"))
+		# 문자판 반쪽
+		var pts := PackedVector2Array()
+		for i in 33:
+			var a: float = -PI / 2.0 + PI * i / 32.0
+			pts.append(c + Vector2(dx, 0) + Vector2(cos(a) * float(side), sin(a)) * R)
+		shutter.draw_colored_polygon(pts, Color("F3EAD3"))
+		pts.append(pts[0])
+		shutter.draw_polyline(pts, Color("B8913F"), 8.0, true)
+		for h in 12:
+			var ha := -PI / 2.0 + TAU * h / 12.0
+			var hp := Vector2.from_angle(ha)
+			if (hp.x >= -0.01 and side > 0) or (hp.x <= 0.01 and side < 0):
+				var p1 := c + Vector2(dx, 0) + hp * R * 0.86
+				var p2 := c + Vector2(dx, 0) + hp * R * 0.96
+				shutter.draw_line(p1, p2, Color("26305A"), 6.0 if h % 3 == 0 else 3.0, true)
+	# 바늘: 닫힌 동안 12시로 돌아간다
+	if k <= 0.0:
+		var t := clampf(shutter_t / INTRO_CLOSED, 0.0, 1.0)
+		var ma := -PI / 2.0 - TAU * (1.0 - t) * 1.5
+		var ha2 := -PI / 2.0 - PI * (1.0 - t)
+		shutter.draw_line(c, c + Vector2.from_angle(ha2) * R * 0.5, Color("26305A"), 10.0, true)
+		shutter.draw_line(c, c + Vector2.from_angle(ma) * R * 0.78, Color("26305A"), 6.0, true)
+		shutter.draw_circle(c, 12.0, Color("B8913F"))
+		if m != null:
+			var info: Dictionary = PartsData.WORKSHOPS["clock"]
+			shutter.draw_string(font_bold, c + Vector2(-200, R * 0.42), "오늘의 공방" + _mode_suffix(), HORIZONTAL_ALIGNMENT_CENTER, 400, 14, Color("7A5C22"))
+			shutter.draw_string(font_display, c + Vector2(-200, R * 0.42 + 44), info["name"], HORIZONTAL_ALIGNMENT_CENTER, 400, 36, Color("141A2E"))
+			_draw_intro_gimmicks(vs, c.y + R + 16.0, CLOCK_GOLD, Color("141A2E"))

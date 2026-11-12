@@ -4,7 +4,7 @@ extends RefCounted
 
 ## "auto": 공방 따라가기 — 그날 공방의 경기장 (디자인 「오늘의 공방 프로토타입」).
 const ORDER := ["auto", "play", "workshop", "neon"]
-const WS_THEME := {"junk": "ws_junk", "magic": "ws_magic", "toon": "ws_toon", "lab": "ws_lab"}
+const WS_THEME := {"junk": "ws_junk", "magic": "ws_magic", "toon": "ws_toon", "lab": "ws_lab", "clock": "ws_clock"}
 
 const THEMES := {
 	"play": {
@@ -79,6 +79,17 @@ const THEMES := {
 		"panel": Color(1.0, 1.0, 1.0, 0.94), "text": Color("16191C"), "sub": Color("5A6168"),
 		"line": Color(60 / 255.0, 90 / 255.0, 20 / 255.0, 0.30), "accent_bg": Color(182 / 255.0, 242 / 255.0, 60 / 255.0, 0.22),
 		"gauge": Color("8CCB16"), "gold": Color("5E8F0C"), "dark": false, "accent": Color("8CCB16"), "accent_ink": Color("16191C"),
+	},
+	"ws_clock": {
+		"name": "태엽 시계탑", "deco": "clock", "panel_style": "",
+		"bg": Color("141A2E"), "grain": Color(0, 0, 0, 0), "bg_center": Color("1C2440"), "bg2": Color("0E1322"),
+		"rail_hi": Color("E2C27A"), "rail": Color("B8913F"), "rail_lo": Color("7A5C22"), "rail_glow": Color(226 / 255.0, 194 / 255.0, 122 / 255.0, 0.15),
+		"felt_c": Color("26305A"), "felt_e": Color("1A2244"), "grid": false,
+		"danger": Color("E2C27A"), "danger_line": Color(226 / 255.0, 194 / 255.0, 122 / 255.0, 0.8),
+		"outline": Color("0B0F1C"), "shadow": Color(0, 0, 0, 0.45), "spark": Color("FFE3A0"), "light": 0.10,
+		"panel": Color(20 / 255.0, 26 / 255.0, 46 / 255.0, 0.9), "text": Color("F3EAD3"), "sub": Color("B9AE92"),
+		"line": Color(226 / 255.0, 194 / 255.0, 122 / 255.0, 0.30), "accent_bg": Color(226 / 255.0, 194 / 255.0, 122 / 255.0, 0.16),
+		"gauge": Color("E2C27A"), "gold": Color("E2C27A"), "dark": true, "accent": Color("E2C27A"), "accent_ink": Color("141A2E"),
 	},
 	"ws_toon": {
 		"name": "만화 소품 창고", "deco": "manga", "panel_style": "manga",

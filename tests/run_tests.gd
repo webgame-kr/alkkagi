@@ -36,7 +36,7 @@ func _initialize() -> void:
 		"test_mushroom_and_wind", "test_second_step", "test_rebound_and_string", "test_at_field_and_beam",
 		"test_hero_band_and_shoes", "test_all_parts_have_art",
 		"test_workshop_pools", "test_offer_fits_empty_slots", "test_min_power_moves_one_cell",
-		"test_knockout_causes", "test_derby_mode", "test_gimmicks_junk", "test_start_placement", "test_upgrades", "test_gimmicks_magic_toon", "test_lab_parts", "test_lab_gimmicks", "test_draft_pass", "test_playtest_fixes", "test_crown_rules", "test_crown_match", "test_parcel_physics", "test_parcel_match",
+		"test_knockout_causes", "test_derby_mode", "test_gimmicks_junk", "test_start_placement", "test_upgrades", "test_gimmicks_magic_toon", "test_lab_parts", "test_lab_gimmicks", "test_draft_pass", "test_playtest_fixes", "test_crown_rules", "test_crown_match", "test_parcel_physics", "test_parcel_match", "test_clock_parts", "test_clock_flow",
 	]
 	for t in tests:
 		var before := failures
@@ -1214,9 +1214,10 @@ func test_all_parts_have_art() -> void:
 		"umbrella", "spring", "carousel", "bubble", "mine", "rocket", "retro", "reel", "chute", "trex_head", "sucker",
 		"umbrella_gun", "roller", "trex_arm", "shield", "tambourine", "track", "trex_leg", "crab", "clockwork", "brake",
 		"merge_bolt", "decoy", "split_capsule", "weight", "shrink_ray", "remote", "sticky", "tilter", "coupling", "repel", "ghost", "inflate"]
+	hand.append_array(PartsData.WORKSHOPS["clock"]["parts"])
 	for id in PartsData.ids():
 		check(hand.has(id) or AD.SHAPES.has(id), "art for " + id)
-	check(PartsData.ids().size() == 78, "78 parts: %d" % PartsData.ids().size())
+	check(PartsData.ids().size() == 95, "95 parts: %d" % PartsData.ids().size())
 
 
 # ── 오늘의 공방 ──────────────────────────────────────────
@@ -1829,3 +1830,108 @@ func test_parcel_match() -> void:
 			break
 		m.skip_turn()
 	check(m.phase == "over" and m.winners.size() == 2 and m.team_of(m.winners[0]) == 0, "red team wins at 3")
+
+
+func test_clock_parts() -> void:
+	# 시침 망치: 표식 → 그 주인의 다음 차례 끝에 같은 방향으로 밀림
+	var w := make_world("circle", 400.0)
+	var a := w.add_stone(0, Vector2(-200, 0), 0)
+	var b := w.add_stone(1, Vector2(-120, 0), 0)
+	a.parts["weapon"] = "hour_hammer"
+	w.turn_no = 1
+	shoot(w, a.id, Vector2.RIGHT, 0.3)
+	check(b.status.has("hand_mark"), "hour mark set")
+	var bx := b.pos.x
+	w.turn_no = 2
+	check(World.Clock.turn_end(w, 1), "mark fires at the owner's turn end")
+	w.run_until_settled(5.0)
+	check(b.pos.x > bx + 30.0 and not b.status.has("hand_mark"), "pushed the same way again: %s" % b.pos)
+	# 시한 태엽: 다음 바퀴 주인 차례 끝에 바깥쪽으로
+	var w2 := make_world("circle", 400.0)
+	var c := w2.add_stone(0, Vector2(-100, 0), 0)
+	var d := w2.add_stone(1, Vector2(0, 0), 0)
+	c.parts["weapon"] = "time_spring"
+	w2.round_no = 1
+	shoot(w2, c.id, Vector2.RIGHT, 0.25)
+	check(d.status.has("bomb"), "time spring attached")
+	check(not World.Clock.turn_end(w2, 1), "not this round")
+	w2.round_no = 2
+	var dlen := d.pos.length()
+	check(World.Clock.turn_end(w2, 1), "fires next round")
+	w2.run_until_settled(5.0)
+	check(d.pos.length() > dlen + 40.0 or not d.alive, "pushed outward")
+	# 예약 석궁: 이번엔 멈춰 있고, 다음 내 차례 시작에 자동 발사
+	var w3 := make_world("circle", 400.0)
+	var e := w3.add_stone(0, Vector2(-200, 0), 0)
+	w3.add_stone(1, Vector2(200, 100), 0)
+	e.parts["weapon"] = "reserve_bow"
+	w3.turn_no = 1
+	shoot(w3, e.id, Vector2.RIGHT, 0.5)
+	check(e.pos.x < -190.0 and e.status.has("bow"), "aim saved, no move")
+	w3.turn_no = 2
+	check(World.Clock.turn_start(w3, 0), "auto fire at my next turn")
+	w3.run_until_settled(5.0)
+	check(e.pos.x > -100.0, "fired: %s" % e.pos)
+	# 되감기 회중시계
+	var w4 := make_world("circle", 400.0)
+	var f := w4.add_stone(0, Vector2(-200, 0), 0)
+	var g := w4.add_stone(1, Vector2(-100, 0), 0)
+	f.parts["weapon"] = "rewind_watch"
+	shoot(w4, f.id, Vector2.RIGHT, 0.5)
+	check(g.pos.distance_to(Vector2(-100, 0)) < 1.0, "rewound to its start: %s" % g.pos)
+	# 모래시계 방패: 남의 차례에 맞은 충격은 미뤄 둔다
+	var w5 := make_world("circle", 400.0)
+	var h := w5.add_stone(0, Vector2(-200, 0), 0)
+	var k := w5.add_stone(1, Vector2(-120, 0), 0)
+	k.parts["aux"] = "hourglass"
+	shoot(w5, h.id, Vector2.RIGHT, 0.5)
+	check(k.pos.x < -100.0 and k.status.has("hourglass"), "hit postponed: %s" % k.pos)
+	check(World.Clock.turn_start(w5, 1), "delayed hit at my turn start")
+	w5.run_until_settled(5.0)
+	check(k.pos.x > -60.0, "received later: %s" % k.pos)
+	# 느림보 태엽: 느리게 출발해도 오래 간다
+	var w6 := make_world("circle", 900.0)
+	var m1 := w6.add_stone(0, Vector2(-600, 0), 0)
+	var m2 := w6.add_stone(0, Vector2(-600, 200), 0)
+	m2.parts["prop"] = "slow_spring"
+	shoot(w6, m1.id, Vector2.RIGHT, 0.4)
+	shoot(w6, m2.id, Vector2.RIGHT, 0.4)
+	check(m2.pos.x > m1.pos.x, "slow spring rolls further: %.0f vs %.0f" % [m2.pos.x, m1.pos.x])
+
+
+func test_clock_flow() -> void:
+	# 시계탑 판: 진자가 차례 끝마다 움직이고 (fx), 경기는 그다음에 이어진다
+	var m := Match.new()
+	m.setup(4, [], 5, false, {"workshop": "clock"})
+	m.world.gimmicks = [{"kind": "pendulum", "items": [{"a": Vector2(-100, 0), "b": Vector2(100, 0), "at": 0, "r": 33.0}]}]
+	check(m.phase == "aim", "round 1 bare")
+	var cur := m.current_player()
+	var st = m.world.alive_stones_of(cur)[0]
+	st.pos = Vector2(0, 10)
+	m.skip_turn()
+	check(m.phase == "fx" and m.current_player() == cur, "turn end fx before the next turn")
+	m.settle_fx()
+	check(m.phase == "aim" and m.current_player() != cur, "next turn after the fx")
+	check(int(m.world.gimmicks[0]["items"][0]["at"]) == 1, "pendulum moved to the other end")
+	# 늦잠 열쇠: 다음 차례 한 칸 뒤로
+	var nxt: int = m.order[m.turn_pos + 1]
+	m.delay_turn(nxt)
+	check(m.order[m.turn_pos + 2] == nxt, "delayed one slot: %s" % str(m.order))
+	# 정각: 세트 완성 알은 바퀴마다 한 번 덤 차례
+	var m2 := Match.new()
+	m2.setup(2, [], 8, false, {"workshop": "clock"})
+	var p := m2.current_player()
+	var s0 = m2.world.alive_stones_of(p)[0]
+	s0.parts = {"weapon": "hour_hammer", "aux": "late_key", "prop": "minute_spring"}
+	m2.shoot(s0.id, Vector2.UP, 0.1)
+	m2.world.run_until_settled(5.0)
+	m2.finish_shot()
+	m2.settle_fx()
+	check(m2.phase == "aim" and m2.current_player() == p and not m2.bonus_active.is_empty(), "bonus turn for the same player")
+	var other = m2.world.alive_stones_of(p)[1]
+	check(not m2.shoot(other.id, Vector2.UP, 0.5), "bonus turn: same stone only")
+	m2.shoot(s0.id, Vector2.UP, 0.1)
+	m2.world.run_until_settled(5.0)
+	m2.finish_shot()
+	m2.settle_fx()
+	check(m2.current_player() != p, "only once per round")

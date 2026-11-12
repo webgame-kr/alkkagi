@@ -48,6 +48,13 @@ static func background(ci: CanvasItem, rect: Rect2, th: Dictionary, t := 0.0) ->
 				var sy := fposmod(sin(i * 78.233) * 12345.678, 1.0)
 				var sr := 0.3 + fposmod(sin(i * 3.1) * 999.0, 1.0) * 1.4
 				ci.draw_circle(rect.position + Vector2(sx, sy) * rect.size, sr, Color(220 / 255.0, 225 / 255.0, 1.0, 0.35))
+		"clock":
+			# 남색 바탕에 흐린 톱니바퀴들
+			for i in 7:
+				var gx2 := rect.position.x + fposmod(i * 311.0 + 60.0, maxf(1.0, rect.size.x))
+				var gy2 := rect.position.y + fposmod(i * 173.0 + 30.0, maxf(1.0, rect.size.y))
+				var gr := 30.0 + fposmod(i * 47.0, 40.0)
+				_gear(ci, Vector2(gx2, gy2), gr, Color(226 / 255.0, 194 / 255.0, 122 / 255.0, 0.07))
 		"lab":
 			# 흰 실험실 타일과 비커·배선 장식
 			var ts := 48.0
@@ -101,6 +108,16 @@ static func board(ci: CanvasItem, c: Vector2, R: float, u: float, square: bool, 
 		_shape_line(ci, c, R + 0.3 * u, square, Color.WHITE, 0.08 * u)
 	else:
 		_rail(ci, c, rail_r, square, th)
+	if deco == "clock" and not square:
+		# 황동 톱니 테두리
+		var teeth := 72
+		for i in teeth:
+			var a0 := TAU * i / teeth
+			var p1 := c + Vector2.from_angle(a0 - 0.012) * (R + 0.55 * u)
+			var p2 := c + Vector2.from_angle(a0 + 0.012) * (R + 0.55 * u)
+			var p3 := c + Vector2.from_angle(a0 + 0.02) * (R + 0.8 * u)
+			var p4 := c + Vector2.from_angle(a0 - 0.02) * (R + 0.8 * u)
+			ci.draw_colored_polygon(PackedVector2Array([p1, p2, p3, p4]), Color("B8913F"))
 	if deco == "lab":
 		# 형광 연두·검정 경고 띠
 		if square:
@@ -172,6 +189,15 @@ static func board(ci: CanvasItem, c: Vector2, R: float, u: float, square: bool, 
 			var h := R if square else sqrt(maxf(0.0, R * R - k * k))
 			ci.draw_line(c + Vector2(-h, k), c + Vector2(h, k), Color(0, 0, 0, 0.12), maxf(1.0, 0.06 * u))
 			k += 0.6 * u
+	elif deco == "clock" and not square:
+		# 시간 눈금: 12칸 굵게, 60칸 가늘게, 가운데 법랑 원
+		for i in 60:
+			var a1 := TAU * i / 60.0
+			var big := i % 5 == 0
+			var r0 := R * (0.86 if big else 0.9)
+			ci.draw_line(c + Vector2.from_angle(a1) * r0, c + Vector2.from_angle(a1) * R * 0.95, Color(226 / 255.0, 194 / 255.0, 122 / 255.0, 0.35 if big else 0.18), maxf(1.0, (0.08 if big else 0.03) * u))
+		ci.draw_arc(c, R * 0.3, 0, TAU, 48, Color(226 / 255.0, 194 / 255.0, 122 / 255.0, 0.14), 1.5, true)
+		ci.draw_arc(c, R * 0.62, 0, TAU, 64, Color(226 / 255.0, 194 / 255.0, 122 / 255.0, 0.10), 1.0, true)
 	elif deco == "lab":
 		var tk := u
 		var k2 := -R
@@ -388,3 +414,15 @@ static func magic_live(ci: CanvasItem, c: Vector2, R: float, u: float, t: float)
 	for i in segs:
 		var a0 := TAU * i / segs - t * 0.3 * u / maxf(1.0, R)
 		ci.draw_arc(c, R + 0.32 * u, a0, a0 + TAU / segs * 0.22, 3, col, 1.5, true)
+
+
+static func _gear(ci: CanvasItem, c: Vector2, r: float, col: Color) -> void:
+	var pts := PackedVector2Array()
+	var n := 12
+	for i in n * 2:
+		var a := TAU * i / (n * 2)
+		var rr := r if i % 2 == 0 else r * 0.82
+		pts.append(c + Vector2.from_angle(a) * rr)
+	pts.append(pts[0])
+	ci.draw_polyline(pts, col, 2.0, true)
+	ci.draw_arc(c, r * 0.35, 0, TAU, 16, col, 2.0, true)

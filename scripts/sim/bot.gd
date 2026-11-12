@@ -5,6 +5,7 @@ extends RefCounted
 const PartsData = preload("res://scripts/sim/parts_data.gd")
 const Crown = preload("res://scripts/sim/crown.gd")
 const Parcel = preload("res://scripts/sim/parcel.gd")
+const World = preload("res://scripts/sim/world.gd")
 
 const POWERS := [0.45, 0.7, 0.95]
 const ANGLES_DEG := [-5.0, 0.0, 5.0]
@@ -30,6 +31,9 @@ func begin(m, player_id: int, seed_value: int) -> void:
 	best_score = -INF
 	var w = m.world
 	var mine: Array = w.alive_stones_of(pid)
+	if not m.bonus_active.is_empty():
+		# 정각 덤 차례: 같은 알만
+		mine = mine.filter(func(x): return x.id == int(m.bonus_active["stone"]))
 	for s in mine:
 		var targets: Array = []
 		var my_team: int = m.team_of(pid) if m.mode == "parcel" else -1
@@ -110,6 +114,11 @@ func evaluate(c: Dictionary) -> float:
 	w.launch(c["stone"], c["dir"], c["power"], {"charged": true})
 	w.run_until_settled(5.0)
 	w.end_shot()
+	if m.workshop == "clock":
+		# 태엽 시계탑: 이번 차례가 끝날 때 터질 일(진자 · 시곗바늘 · 표식)까지 보고 고른다
+		w.turn_no = m.world.turn_no
+		if World.Clock.turn_end(w, pid):
+			w.run_until_settled(4.0)
 	var score := 0.0
 	var crown_mode: bool = not m.world.crown.is_empty() or m.mode == "parcel"
 	if not m.world.crown.is_empty():

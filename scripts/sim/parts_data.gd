@@ -8,6 +8,41 @@ const SLOTS := ["weapon", "aux", "prop"]
 ## power: 상대 알에 주는 속도 변화(px/s). range: 작동 거리(px).
 const CATALOG := {
 	# ── 엉뚱한 발명 연구소: 규칙 파괴 부품 ──
+	# ── 태엽 시계탑 (세트 「시계공」 + 단품 14) ──
+	"hour_hammer": {"name": "시침 망치", "slot": "weapon", "when": "첫 정면 충돌", "set": "clock", "clock": true,
+		"desc": "맞힌 알에 시곗바늘 표식. 그 알 주인의 다음 차례가 끝날 때 같은 방향으로 1.5칸 한 번 더 밀린다."},
+	"late_key": {"name": "늦잠 열쇠", "slot": "aux", "when": "첫 측면 충돌", "set": "clock", "clock": true,
+		"desc": "옆으로 맞힌 상대의 다음 차례를 한 칸 뒤로 미룬다."},
+	"minute_spring": {"name": "분침 태엽", "slot": "prop", "when": "발사 순간", "set": "clock", "clock": true,
+		"desc": "이번 샷 힘의 절반을 저장해 다음 내 샷에 더한다."},
+	"time_spring": {"name": "시한 태엽", "slot": "weapon", "when": "첫 정면 충돌", "clock": true,
+		"desc": "맞힌 알에 태엽을 붙인다. 다음 바퀴 그 주인 차례가 끝날 때 터져 바깥쪽으로 1.5칸 밀어낸다."},
+	"reserve_bow": {"name": "예약 석궁", "slot": "weapon", "when": "발사 순간", "clock": true,
+		"desc": "이번엔 조준만 저장하고, 다음 내 차례가 시작될 때 그 조준 그대로 자동 발사한다."},
+	"rewind_watch": {"name": "되감기 회중시계", "slot": "weapon", "when": "첫 정면 충돌", "clock": true,
+		"desc": "맞힌 알을 샷이 끝날 때 그 샷이 시작될 때의 자리로 되감는다."},
+	"slow_arrow": {"name": "느린 화살", "slot": "weapon", "when": "발사 순간", "clock": true,
+		"desc": "판에 남는 화살을 쏜다. 다음 두 차례 동안 차례가 끝날 때마다 2.5칸씩 날며 닿은 알을 민다."},
+	"order_swap": {"name": "순서 바꾸개", "slot": "weapon", "when": "첫 정면 충돌", "clock": true,
+		"desc": "맞힌 알의 주인이 이번 바퀴에 아직 쏠 차례가 남았으면 이번 바퀴 맨 끝으로 보낸다."},
+	"hourglass": {"name": "모래시계 방패", "slot": "aux", "when": "남의 차례에 맞을 때", "clock": true,
+		"desc": "내 차례가 아닐 때 처음 맞은 충격을 미뤘다가 다음 내 차례가 시작될 때 받는다."},
+	"metronome": {"name": "메트로놈", "slot": "aux", "when": "남의 차례가 끝날 때", "clock": true,
+		"desc": "멈춘 뒤 다음 내 차례까지, 남의 차례가 끝날 때마다 좌우로 번갈아 옆 1.5칸 안의 알을 툭 친다."},
+	"alarm_clock": {"name": "자명종", "slot": "aux", "when": "알이 멈출 때", "clock": true,
+		"desc": "멈춘 자리에 자명종을 둔다. 다음 바퀴가 시작될 때 2칸 안의 알을 시계 쪽으로 끌어모은다."},
+	"wind_mouse": {"name": "태엽 장난감 쥐", "slot": "aux", "when": "첫 측면 충돌", "clock": true,
+		"desc": "쥐가 떨어져, 다음 두 차례 동안 차례가 끝날 때마다 2칸씩 달리며 부딪힌 알을 민다."},
+	"shock_spring": {"name": "충격 태엽", "slot": "aux", "when": "맞을 때", "clock": true,
+		"desc": "남의 샷에 맞은 힘을 모아 두었다가 다음 내 샷 힘에 더한다."},
+	"slow_spring": {"name": "느림보 태엽", "slot": "prop", "when": "발사 순간", "clock": true,
+		"desc": "발사 속도 70%, 대신 감속이 절반이라 오래 굴러간다."},
+	"replay_spring": {"name": "다시보기 태엽", "slot": "prop", "when": "다음 상대 차례가 끝날 때", "clock": true,
+		"desc": "다음 상대 차례가 끝날 때 내 이번 샷의 잔상이 같은 길을 한 번 더 달리며 닿은 알을 민다."},
+	"time_capsule": {"name": "타임캡슐", "slot": "prop", "when": "알이 멈출 때", "clock": true,
+		"desc": "처음 멈춘 자리에 캡슐을 묻는다. 이 알이 떨어지면 다음 내 차례가 시작될 때 그 자리로 돌아온다(판당 1회)."},
+	"tick_step": {"name": "똑딱 걸음", "slot": "prop", "when": "발사 순간", "clock": true,
+		"desc": "세 구간으로 끊어 간다. 구간마다 잠깐 멈췄다가 다시 출발한다."},
 	"merge_bolt": {"name": "합체 볼트", "slot": "aux", "when": "내 알과 부딪힐 때", "lab": true,
 		"desc": "발사한 알이 내 다른 알과 부딪히면 둘이 합쳐 큰 알 하나가 된다. 지름 1.4배, 무게 2배."},
 	"decoy": {"name": "미끼 풍선", "slot": "aux", "when": "알이 멈출 때", "lab": true,
@@ -241,6 +276,9 @@ const SETS := {
 	"moon": {"name": "달그림자 마도사", "parts": ["moon_staff", "star_cloak", "moon_boots"],
 		"move": "궤도 마법", "short": {"moon_staff": "지팡이", "star_cloak": "망토", "moon_boots": "장화"},
 		"power": 520.0},
+	"clock": {"name": "시계공", "parts": ["hour_hammer", "late_key", "minute_spring"],
+		"move": "정각", "move_desc": "바퀴마다 한 번, 내 샷이 끝나면 같은 알로 바로 한 번 더 쏜다 (두 번째 샷은 힘 70%)",
+		"short": {"hour_hammer": "망치", "late_key": "열쇠", "minute_spring": "태엽"}},
 	"hero": {"name": "최후의 주인공", "parts": ["hero_band", "torn_cape", "awaken_shoes"],
 		"move": "라스트 컷", "move_desc": "투지 3칸 + 세트 완성: 판 끝까지 관통 돌진, 부딪힌 알은 옆으로, 판 끝에서 망토로 반드시 멈춘다", "short": {"hero_band": "머리띠", "torn_cape": "망토", "awaken_shoes": "운동화"}},
 }
@@ -262,9 +300,14 @@ const WORKSHOPS := {
 		"desc": "알끼리 합치고, 쪼개고, 상대 알을 조종한다. 세트 대신 부품 하나하나가 규칙을 바꾼다.",
 		"parts": ["merge_bolt", "decoy", "split_capsule", "weight", "shrink_ray", "remote", "sticky", "tilter", "coupling", "repel", "ghost", "inflate", "bumper"],
 		"rep": ["merge_bolt", "split_capsule", "remote"], "set": ""},
+	"clock": {"name": "태엽 시계탑", "tag": "효과가 다음 차례에 터지는 곳",
+		"desc": "지금이 아니라 다음 차례 끝, 다음 바퀴 시작에 터지는 효과로 남의 차례에도 판을 움직인다.",
+		"parts": ["hour_hammer", "late_key", "minute_spring", "time_spring", "reserve_bow", "rewind_watch", "slow_arrow", "order_swap",
+			"hourglass", "metronome", "alarm_clock", "wind_mouse", "shock_spring", "slow_spring", "replay_spring", "time_capsule", "tick_step"],
+		"rep": ["hour_hammer", "time_spring", "alarm_clock"], "set": "clock"},
 	"all": {"name": "잡동사니 창고", "tag": "모든 부품이 섞여 나오는 곳", "desc": "모든 부품 66종이 섞여 나온다.", "parts": [], "rep": ["pea", "moon_staff", "rubber_fist"], "set": ""},
 }
-const WORKSHOP_ORDER := ["junk", "magic", "toon", "lab", "all"]
+const WORKSHOP_ORDER := ["junk", "magic", "toon", "lab", "clock", "all"]
 
 
 ## 이 공방에서 나오는 부품 id 목록.

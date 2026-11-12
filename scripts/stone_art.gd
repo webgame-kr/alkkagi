@@ -303,7 +303,7 @@ static func _weapon(ci: CanvasItem, w: String, a: float) -> void:
 	if ArtData.SHAPES.has(w):
 		draw_data(ci, w, a, false)
 		return
-	if _lab(ci, w, a, false):
+	if _lab(ci, w, a, false) or _clock(ci, w, a, false):
 		return
 	match w:
 		"pea":
@@ -391,7 +391,7 @@ static func _aux(ci: CanvasItem, x: String, a: float, m: bool) -> void:
 	if ArtData.SHAPES.has(x):
 		draw_data(ci, x, a, m)
 		return
-	if _lab(ci, x, a, m):
+	if _lab(ci, x, a, m) or _clock(ci, x, a, m):
 		return
 	match x:
 		"magnet":
@@ -474,7 +474,7 @@ static func _prop(ci: CanvasItem, p: String, a: float) -> void:
 	if ArtData.SHAPES.has(p):
 		draw_data(ci, p, a, false)
 		return
-	if _lab(ci, p, a, false):
+	if _lab(ci, p, a, false) or _clock(ci, p, a, false):
 		return
 	match p:
 		"rocket":
@@ -773,6 +773,121 @@ static func _lab(ci: CanvasItem, id: String, a: float, m: bool) -> bool:
 			circ(ci, Vector2(60, 98), 11, Color("FFB347"), a)
 			line(ci, [Vector2(60, 86), Vector2(60, 82)], OUT, 2.0, a)
 			line(ci, [Vector2(54, 93), Vector2(57, 91)], Color.WHITE, 2.0, a)
+		_:
+			return false
+	return true
+
+
+# ── 태엽 시계탑 부품 ─────────────────────────────────────
+const NAVY := Color("26305A")
+const CREAM := Color("F3EAD3")
+
+
+static func _spiral(ci: CanvasItem, c: Vector2, r: float, turns: float, col: Color, w: float, a: float, m := false) -> void:
+	var pts: Array = []
+	var n := int(24 * turns)
+	for i in n + 1:
+		var t := float(i) / n
+		pts.append(c + Vector2.from_angle(t * TAU * turns) * r * (0.15 + 0.85 * t))
+	line(ci, pts, col, w, a, m)
+
+
+static func _clock(ci: CanvasItem, id: String, a: float, m: bool) -> bool:
+	match id:
+		# 무기 (위)
+		"hour_hammer":
+			rect(ci, 57, 16, 6, 24, BRASS, a)
+			rect(ci, 46, 8, 28, 11, STEEL_D, a)
+			poly(ci, [Vector2(60, 2), Vector2(64, 9), Vector2(56, 9)], NAVY, a, false, 1.2)
+		"time_spring":
+			rect(ci, 57, 26, 6, 14, STEEL_D, a)
+			circ(ci, Vector2(60, 20), 10, BRASS, a)
+			_spiral(ci, Vector2(60, 20), 8, 2.5, OUT, 1.4, a)
+			rect(ci, 44, 17, 6, 6, BRASS, a, false, 1.2)
+			rect(ci, 70, 17, 6, 6, BRASS, a, false, 1.2)
+		"reserve_bow":
+			rect(ci, 57, 10, 6, 30, Color("8A6237"), a)
+			line(ci, [Vector2(42, 22), Vector2(50, 14), Vector2(60, 12), Vector2(70, 14), Vector2(78, 22)], STEEL_D, 3.0, a)
+			line(ci, [Vector2(42, 22), Vector2(60, 28), Vector2(78, 22)], OUT, 1.0, a)
+			poly(ci, [Vector2(60, 3), Vector2(63, 9), Vector2(57, 9)], STEEL, a, false, 1.2)
+		"rewind_watch":
+			rect(ci, 57, 28, 6, 12, BRASS, a)
+			circ(ci, Vector2(60, 20), 11, CREAM, a)
+			ring(ci, Vector2(60, 20), 11, BRASS, 2.5, a)
+			line(ci, [Vector2(60, 20), Vector2(60, 13)], OUT, 1.6, a)
+			line(ci, [Vector2(60, 20), Vector2(55, 23)], OUT, 1.6, a)
+			line(ci, [Vector2(66, 12), Vector2(70, 16), Vector2(66, 17)], RED, 1.6, a)
+		"slow_arrow":
+			rect(ci, 58.5, 8, 3, 32, Color("8A6237"), a, false, 1.0)
+			poly(ci, [Vector2(60, 0), Vector2(65, 9), Vector2(55, 9)], STEEL, a, false, 1.2)
+			poly(ci, [Vector2(60, 34), Vector2(66, 40), Vector2(54, 40)], CREAM, a, false, 1.0)
+			circ(ci, Vector2(68, 24), 4, CREAM, a, false, 1.0)
+		"order_swap":
+			rect(ci, 57, 30, 6, 10, STEEL_D, a)
+			rect(ci, 46, 12, 28, 18, NAVY, a)
+			line(ci, [Vector2(50, 18), Vector2(68, 18)], BRASS, 2.0, a)
+			poly(ci, [Vector2(70, 18), Vector2(65, 15), Vector2(65, 21)], BRASS, a, false, 0)
+			line(ci, [Vector2(70, 25), Vector2(52, 25)], BRASS, 2.0, a)
+			poly(ci, [Vector2(50, 25), Vector2(55, 22), Vector2(55, 28)], BRASS, a, false, 0)
+		# 보조 (옆)
+		"late_key":
+			rect(ci, 82, 59, 16, 6, BRASS, a, m)
+			circ(ci, Vector2(103, 62), 7, BRASS, a, m)
+			circ(ci, Vector2(103, 62), 3, NAVY, a, m, 1.0)
+			rect(ci, 86, 65, 3, 5, BRASS, a, m, 1.0)
+		"hourglass":
+			rect(ci, 82, 59, 8, 6, STEEL_D, a, m)
+			rect(ci, 90, 46, 18, 3, Color("8A6237"), a, m)
+			rect(ci, 90, 75, 18, 3, Color("8A6237"), a, m)
+			poly(ci, [Vector2(92, 49), Vector2(106, 49), Vector2(99, 62), Vector2(106, 75), Vector2(92, 75), Vector2(99, 62)], Color(0.85, 0.92, 1.0, 0.8), a, m, 1.2)
+			poly(ci, [Vector2(94, 74), Vector2(104, 74), Vector2(99, 66)], Color("E2C27A"), a, m, 0)
+		"metronome":
+			rect(ci, 82, 59, 8, 6, STEEL_D, a, m)
+			poly(ci, [Vector2(92, 76), Vector2(110, 76), Vector2(104, 46), Vector2(98, 46)], Color("8A6237"), a, m)
+			line(ci, [Vector2(101, 72), Vector2(106, 50)], OUT, 1.6, a, m)
+			circ(ci, Vector2(105, 55), 2.5, BRASS, a, m, 1.0)
+		"alarm_clock":
+			rect(ci, 82, 59, 8, 6, STEEL_D, a, m)
+			circ(ci, Vector2(100, 63), 10, RED, a, m)
+			circ(ci, Vector2(100, 63), 7, CREAM, a, m, 1.0)
+			circ(ci, Vector2(94, 52), 4, BRASS, a, m, 1.2)
+			circ(ci, Vector2(106, 52), 4, BRASS, a, m, 1.2)
+			line(ci, [Vector2(100, 63), Vector2(100, 58)], OUT, 1.4, a, m)
+		"wind_mouse":
+			rect(ci, 82, 59, 6, 6, STEEL_D, a, m)
+			poly(ci, [Vector2(88, 66), Vector2(96, 54), Vector2(108, 58), Vector2(112, 66), Vector2(104, 72), Vector2(92, 72)], Color("A7ADB4"), a, m)
+			circ(ci, Vector2(100, 54), 4, Color("E7B7B0"), a, m, 1.2)
+			circ(ci, Vector2(108, 63), 1.4, OUT, a, m, 0)
+			line(ci, [Vector2(96, 72), Vector2(94, 78), Vector2(100, 78)], BRASS, 2.0, a, m)
+		"shock_spring":
+			rect(ci, 82, 58, 6, 8, STEEL_D, a, m)
+			line(ci, [Vector2(88, 62), Vector2(92, 52), Vector2(96, 72), Vector2(100, 52), Vector2(104, 72), Vector2(108, 52), Vector2(110, 62)], BRASS, 3.0, a, m)
+			rect(ci, 109, 52, 5, 20, STEEL, a, m)
+		# 추진 (뒤)
+		"minute_spring":
+			rect(ci, 56, 84, 8, 6, STEEL_D, a)
+			circ(ci, Vector2(60, 100), 12, BRASS, a)
+			_spiral(ci, Vector2(60, 100), 10, 3.0, OUT, 1.4, a)
+			line(ci, [Vector2(60, 100), Vector2(68, 94)], NAVY, 2.0, a)
+		"slow_spring":
+			rect(ci, 56, 84, 8, 6, STEEL_D, a)
+			circ(ci, Vector2(60, 101), 12, Color("C08A4E"), a)
+			_spiral(ci, Vector2(60, 101), 10, 2.2, Color("6B4523"), 2.0, a)
+		"replay_spring":
+			rect(ci, 56, 84, 8, 6, STEEL_D, a)
+			circ(ci, Vector2(60, 101), 12, Color("2A2E35"), a)
+			for k in 5:
+				circ(ci, Vector2(60, 101) + Vector2.from_angle(TAU * k / 5.0) * 7.0, 2.2, CREAM, a, false, 0)
+			circ(ci, Vector2(60, 101), 2.5, BRASS, a, false, 0)
+		"time_capsule":
+			rect(ci, 56, 84, 8, 6, STEEL_D, a)
+			rect(ci, 52, 90, 16, 22, Color("9FC4E8"), a)
+			rect(ci, 52, 90, 16, 9, Color("E2C27A"), a)
+			circ(ci, Vector2(60, 106), 2.5, NAVY, a, false, 0)
+		"tick_step":
+			rect(ci, 56, 84, 8, 6, STEEL_D, a)
+			for k in 3:
+				poly(ci, [Vector2(48 + k * 9, 92), Vector2(55 + k * 9, 92), Vector2(56 + k * 9, 106), Vector2(47 + k * 9, 106)], BRASS if k == 1 else STEEL, a, false, 1.2)
 		_:
 			return false
 	return true

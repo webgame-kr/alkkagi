@@ -12,6 +12,7 @@ const BY_WORKSHOP := {
 	"magic": ["gwell", "twins", "meteor"],
 	"toon": ["cutline", "blocks", "nextch"],
 	"lab": ["zerog", "sizering", "turntable"],
+	"clock": ["pendulum", "cuckoo", "clockhand"],
 }
 
 const INFO := {
@@ -26,6 +27,9 @@ const INFO := {
 	"nextch": {"name": "다음 화 테두리", "desc": "이 구간으로 넘어간 알은 반대편에서 다시 들어와요 (알마다 한 번)"},
 	"zerog": {"name": "무중력 구역", "desc": "안에서는 마찰이 없어 속도가 줄지 않아요"},
 	"sizering": {"name": "크기 변환 링", "desc": "파란 링을 지나면 작아지고, 빨간 링을 지나면 커져요 (바퀴가 끝날 때까지)"},
+	"pendulum": {"name": "흔들 진자", "desc": "차례가 끝날 때마다 추가 좌우 끝을 오가며 지나는 길의 알을 밀어내요. 다음 자리는 점선"},
+	"cuckoo": {"name": "뻐꾸기 시계", "desc": "3·5바퀴 시작에 판 위 모든 알을 가리키는 방향으로 1칸 밀어요. 한 바퀴 전부터 화살표로 예고"},
+	"clockhand": {"name": "시곗바늘 막대", "desc": "차례가 끝날 때마다 30도씩 돌며 쓸고 지나간 자리의 알을 밀어내요"},
 	"turntable": {"name": "회전 원판", "desc": "샷이 끝날 때마다 가운데 원판이 45도 돌고, 위의 알도 함께 돌아요"},
 }
 
@@ -149,6 +153,15 @@ static func _place(kind: String, w, rng: RandomNumberGenerator) -> Dictionary:
 			return {"kind": "sizering", "items": [{"pos": Vector2.from_angle(base) * d7, "r": 0.8 * CELL, "big": false}, {"pos": Vector2.from_angle(base + PI) * d7, "r": 0.8 * CELL, "big": true}]}
 		"turntable":
 			return {"kind": "turntable", "items": [{"pos": Vector2.ZERO, "r": 3.0 * CELL, "ang": 0.0}]}
+		"pendulum":
+			var c0 := Vector2.from_angle(base) * rng.randf_range(0.0, 1.2) * CELL
+			var half := maxf(1.6 * CELL, w.size - 6.8 * CELL)
+			var ax := Vector2.from_angle(base).orthogonal()
+			return {"kind": "pendulum", "items": [{"a": c0 - ax * half, "b": c0 + ax * half, "at": 0, "r": 0.75 * CELL}]}
+		"cuckoo":
+			return {"kind": "cuckoo", "items": [], "dir": snappedf(base, PI / 4.0)}
+		"clockhand":
+			return {"kind": "clockhand", "items": [{"ang": base, "len": maxf(2.0 * CELL, w.size - 3.0 * CELL)}]}
 	return {"kind": kind, "items": []}
 
 

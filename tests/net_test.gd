@@ -90,7 +90,7 @@ func _wire() -> void:
 	guest.add_child(gn)
 	host.settings["speed"] = 2
 	host.settings["n"] = 4
-	for ws in ["magic", "toon", "lab"]:
+	for ws in ["magic", "toon", "lab", "clock"]:
 		if OS.get_cmdline_user_args().has(ws):
 			host.settings["workshop"] = ws
 	for md in ["derby", "crown", "parcel"]:

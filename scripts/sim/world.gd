@@ -11,6 +11,7 @@ const Lab = preload("res://scripts/sim/lab.gd")
 const Hero = preload("res://scripts/sim/hero.gd")
 const Crown = preload("res://scripts/sim/crown.gd")
 const Parcel = preload("res://scripts/sim/parcel.gd")
+const Clock = preload("res://scripts/sim/clock.gd")
 
 const STONE_R := 22.0
 const MAX_SPEED := Parts.LAUNCH_V
@@ -190,6 +191,8 @@ var shot_no := 0              # 지금까지 쏜 횟수 (샷 단위로 사라지
 var relics: Array = []        # 유품 리본으로 회수한 부품 {owner, part}. 경기 관리가 가져간다.
 var crown := {}               # 왕관 쟁탈전의 왕관 (crown.gd). 비어 있으면 다른 모드
 var parcel := {}              # 택배 쟁탈전의 택배 (parcel.gd). 비어 있으면 다른 모드
+var clock := {}               # 태엽 시계탑: 차례를 넘는 물체·잔상·자명종 (clock.gd)
+var turn_no := 0              # 지금까지 시작한 차례 수 (다음 차례 판정용)
 
 
 func clone():
@@ -206,6 +209,8 @@ func clone():
 	w.glue = glue.duplicate(true)
 	w.crown = crown.duplicate(true)
 	w.parcel = parcel.duplicate(true)
+	w.clock = clock.duplicate(true)
+	w.turn_no = turn_no
 	w.next_device_id = next_device_id
 	w.round_no = round_no
 	w.shot_no = shot_no
@@ -504,6 +509,7 @@ func launch(stone_id: int, dir: Vector2, power: float, opts := {}) -> void:
 	Lab.on_launch(self, s)
 	Hero.on_launch(self, s)
 	Crown.on_launch(self, s)
+	Clock.on_launch(self, s)
 
 
 ## 구름 우편함: 표식 자리가 비어 있으면 그 알을 그리로 옮긴다 (발사 직전).
@@ -536,9 +542,11 @@ func end_shot() -> void:
 	var s := shooter()
 	if s != null and s.alive:
 		Lab.on_stop(self, s)
+		Clock.on_stop(self, s)
 		Parts.on_stop(self, s)
 	Ex.on_end(self, s)
 	Lab.end_shot(self)
+	Clock.end_shot(self)
 	Hero.on_end(self)
 	Gm.after_shot(self)
 	Crown.end_shot(self)
@@ -546,10 +554,16 @@ func end_shot() -> void:
 	shot = null
 
 
+## 차례 이벤트로 생긴 움직임이 다 멈췄을 때 (샷이 없는 움직임)
+func end_fx() -> void:
+	Crown.end_shot(self)
+	Parcel.end_shot(self)
+
+
 func is_settled() -> bool:
 	if not projs.is_empty():
 		return false
-	if Parcel.moving(self):
+	if Parcel.moving(self) or Clock.busy(self):
 		return false
 	if shot != null and (shot.grip_timer > 0.0 or shot.reel_timer > 0.0 or shot.clock_timer > 0.0):
 		return false
@@ -600,6 +614,7 @@ func step() -> void:
 	Ex.before_move(self, dt)
 	Gm.before_move(self, dt)
 	Lab.before_move(self, dt)
+	Clock.before_move(self, dt)
 	for s in stones:
 		if not s.alive or Ex.is_frozen(self, s):
 			continue
@@ -608,6 +623,7 @@ func step() -> void:
 			var gk := Gm.friction_scale(self, s.pos)
 			if shot != null and s.id == shot.stone_id and shot.ex.get("lastcut", false):
 				gk = 0.0   # 라스트 컷: 판 끝까지 줄지 않고 달린다
+			gk *= Clock.friction_k(self, s)
 			var fr := FRICTION * _friction_scale(s.pos) * Ex.friction_scale(self, s.pos) * gk
 			var ns := sp - fr * dt - sp * DRAG * gk * dt
 			if ns < STOP_SPEED:
@@ -620,6 +636,7 @@ func step() -> void:
 	Hero.lastcut_step(self)
 	_hold_grip(dt)
 	_collide_stones()
+	Clock.collide(self)
 	Parcel.collide(self)
 	Gm.collide(self)
 	_check_parachutes()
@@ -764,6 +781,7 @@ func _collide_stones() -> void:
 			b.vel += nrm * imp / mb
 			Lab.post_collision(self, a, b, nrm, imp)
 			Crown.on_hit(self, a, b)
+			Clock.post_collision(self, a, b, imp)
 			emit({"t": "hit", "pos": a.pos + nrm * STONE_R, "strength": rel, "a": a.id, "b": b.id, "n": nrm})
 			if shot != null and record_events:
 				var body_part := "remote" if shot.ex.has("remote_of") else "body"
@@ -780,9 +798,11 @@ func _collide_stones() -> void:
 				if (a.id == shot.stone_id or b.id == shot.stone_id) and not shot.contacted:
 					Hero.on_first_contact(self, a if a.id == shot.stone_id else b)
 				if a.id == shot.stone_id:
+					Clock.on_contact(self, a, b, nrm)
 					if not Lab.on_contact(self, a, b, nrm, not shot.contacted):
 						Parts.on_contact(self, a, b, nrm, va, vb)
 				elif b.id == shot.stone_id:
+					Clock.on_contact(self, b, a, -nrm)
 					if not Lab.on_contact(self, b, a, -nrm, not shot.contacted):
 						Parts.on_contact(self, b, a, -nrm, vb, va)
 				Ex.post_collision(self, a, b, a.pos + nrm * STONE_R)
