@@ -48,6 +48,17 @@ static func background(ci: CanvasItem, rect: Rect2, th: Dictionary, t := 0.0) ->
 				var sy := fposmod(sin(i * 78.233) * 12345.678, 1.0)
 				var sr := 0.3 + fposmod(sin(i * 3.1) * 999.0, 1.0) * 1.4
 				ci.draw_circle(rect.position + Vector2(sx, sy) * rect.size, sr, Color(220 / 255.0, 225 / 255.0, 1.0, 0.35))
+		"pirate":
+			# 바다 물결
+			var wy := rect.position.y + 20.0
+			var row := 0
+			while wy < rect.end.y:
+				var wx := rect.position.x - 40.0 + (row % 2) * 30.0
+				while wx < rect.end.x:
+					ci.draw_arc(Vector2(wx, wy), 14.0, PI * 1.15, PI * 1.85, 8, Color(1, 1, 1, 0.10), 2.0, true)
+					wx += 60.0
+				wy += 34.0
+				row += 1
 		"clock":
 			# 남색 바탕에 흐린 톱니바퀴들
 			for i in 7:
@@ -108,6 +119,14 @@ static func board(ci: CanvasItem, c: Vector2, R: float, u: float, square: bool, 
 		_shape_line(ci, c, R + 0.3 * u, square, Color.WHITE, 0.08 * u)
 	else:
 		_rail(ci, c, rail_r, square, th)
+	if deco == "pirate" and not square:
+		# 굵은 밧줄 테두리: 꼬임 무늬
+		var twists := 90
+		for i in twists:
+			var a0 := TAU * i / twists
+			var p1 := c + Vector2.from_angle(a0) * (R + 0.18 * u)
+			var p2 := c + Vector2.from_angle(a0 + TAU / twists * 0.9) * (R + 0.62 * u)
+			ci.draw_line(p1, p2, Color("8A6F3E"), maxf(1.5, 0.09 * u), true)
 	if deco == "clock" and not square:
 		# 황동 톱니 테두리
 		var teeth := 72
@@ -189,6 +208,22 @@ static func board(ci: CanvasItem, c: Vector2, R: float, u: float, square: bool, 
 			var h := R if square else sqrt(maxf(0.0, R * R - k * k))
 			ci.draw_line(c + Vector2(-h, k), c + Vector2(h, k), Color(0, 0, 0, 0.12), maxf(1.0, 0.06 * u))
 			k += 0.6 * u
+	elif deco == "pirate":
+		# 갑판 널: 가로 판자와 못 자국
+		var py := -R
+		var pi2 := 0
+		while py < R:
+			var h3 := R if square else sqrt(maxf(0.0, R * R - py * py))
+			ci.draw_line(c + Vector2(-h3, py), c + Vector2(h3, py), Color(0, 0, 0, 0.16), maxf(1.0, 0.05 * u))
+			var off := (pi2 % 3) * 0.33
+			var jx := -R + off * 3.0 * u
+			while jx < R:
+				if absf(jx) < h3 - 4.0:
+					ci.draw_line(c + Vector2(jx, py), c + Vector2(jx, py + 0.9 * u), Color(0, 0, 0, 0.12), 1.0)
+					ci.draw_circle(c + Vector2(jx + 0.15 * u, py + 0.2 * u), maxf(1.0, 0.05 * u), Color(0, 0, 0, 0.22))
+				jx += 3.0 * u
+			py += 0.9 * u
+			pi2 += 1
 	elif deco == "clock" and not square:
 		# 시간 눈금: 12칸 굵게, 60칸 가늘게, 가운데 법랑 원
 		for i in 60:

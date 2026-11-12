@@ -4,7 +4,7 @@ extends RefCounted
 
 ## "auto": 공방 따라가기 — 그날 공방의 경기장 (디자인 「오늘의 공방 프로토타입」).
 const ORDER := ["auto", "play", "workshop", "neon"]
-const WS_THEME := {"junk": "ws_junk", "magic": "ws_magic", "toon": "ws_toon", "lab": "ws_lab", "clock": "ws_clock"}
+const WS_THEME := {"junk": "ws_junk", "magic": "ws_magic", "toon": "ws_toon", "lab": "ws_lab", "clock": "ws_clock", "pirate": "ws_pirate"}
 
 const THEMES := {
 	"play": {
@@ -90,6 +90,17 @@ const THEMES := {
 		"panel": Color(20 / 255.0, 26 / 255.0, 46 / 255.0, 0.9), "text": Color("F3EAD3"), "sub": Color("B9AE92"),
 		"line": Color(226 / 255.0, 194 / 255.0, 122 / 255.0, 0.30), "accent_bg": Color(226 / 255.0, 194 / 255.0, 122 / 255.0, 0.16),
 		"gauge": Color("E2C27A"), "gold": Color("E2C27A"), "dark": true, "accent": Color("E2C27A"), "accent_ink": Color("141A2E"),
+	},
+	"ws_pirate": {
+		"name": "해적 선착장", "deco": "pirate", "panel_style": "",
+		"bg": Color("1F5E78"), "grain": Color(0, 0, 0, 0), "bg_center": Color("2A7391"), "bg2": Color("174A60"),
+		"rail_hi": Color("E8D49A"), "rail": Color("C9A86A"), "rail_lo": Color("8A6F3E"), "rail_glow": Color(0, 0, 0, 0),
+		"felt_c": Color("A87B4C"), "felt_e": Color("8C6238"), "grid": false,
+		"danger": Color("7FD0E8"), "danger_line": Color(220 / 255.0, 245 / 255.0, 1.0, 0.85),
+		"outline": Color("1A140E"), "shadow": Color(0, 0, 0, 0.35), "spark": Color("FFFFFF"), "light": 0.08,
+		"panel": Color(247 / 255.0, 238 / 255.0, 222 / 255.0, 0.95), "text": Color("2A1E12"), "sub": Color("6B5A45"),
+		"line": Color(42 / 255.0, 30 / 255.0, 18 / 255.0, 0.25), "accent_bg": Color(62 / 255.0, 143 / 255.0, 176 / 255.0, 0.18),
+		"gauge": Color("3E8FB0"), "gold": Color("B8732E"), "dark": false, "accent": Color("3E8FB0"), "accent_ink": Color.WHITE,
 	},
 	"ws_toon": {
 		"name": "만화 소품 창고", "deco": "manga", "panel_style": "manga",

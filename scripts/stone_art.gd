@@ -303,7 +303,7 @@ static func _weapon(ci: CanvasItem, w: String, a: float) -> void:
 	if ArtData.SHAPES.has(w):
 		draw_data(ci, w, a, false)
 		return
-	if _lab(ci, w, a, false) or _clock(ci, w, a, false):
+	if _lab(ci, w, a, false) or _clock(ci, w, a, false) or _pirate(ci, w, a, false):
 		return
 	match w:
 		"pea":
@@ -391,7 +391,7 @@ static func _aux(ci: CanvasItem, x: String, a: float, m: bool) -> void:
 	if ArtData.SHAPES.has(x):
 		draw_data(ci, x, a, m)
 		return
-	if _lab(ci, x, a, m) or _clock(ci, x, a, m):
+	if _lab(ci, x, a, m) or _clock(ci, x, a, m) or _pirate(ci, x, a, m):
 		return
 	match x:
 		"magnet":
@@ -474,7 +474,7 @@ static func _prop(ci: CanvasItem, p: String, a: float) -> void:
 	if ArtData.SHAPES.has(p):
 		draw_data(ci, p, a, false)
 		return
-	if _lab(ci, p, a, false) or _clock(ci, p, a, false):
+	if _lab(ci, p, a, false) or _clock(ci, p, a, false) or _pirate(ci, p, a, false):
 		return
 	match p:
 		"rocket":
@@ -888,6 +888,103 @@ static func _clock(ci: CanvasItem, id: String, a: float, m: bool) -> bool:
 			rect(ci, 56, 84, 8, 6, STEEL_D, a)
 			for k in 3:
 				poly(ci, [Vector2(48 + k * 9, 92), Vector2(55 + k * 9, 92), Vector2(56 + k * 9, 106), Vector2(47 + k * 9, 106)], BRASS if k == 1 else STEEL, a, false, 1.2)
+		_:
+			return false
+	return true
+
+
+# ── 해적 선착장 부품 ─────────────────────────────────────
+const WOOD := Color("9A6A3A")
+const WOOD_D := Color("6B4523")
+const ROPE := Color("D8C08A")
+const SEA := Color("3E8FB0")
+
+
+static func _pirate(ci: CanvasItem, id: String, a: float, m: bool) -> bool:
+	match id:
+		# 무기 (위)
+		"parrot_hat":
+			poly(ci, [Vector2(42, 30), Vector2(78, 30), Vector2(70, 18), Vector2(60, 22), Vector2(50, 18)], Color("1E2228"), a)
+			circ(ci, Vector2(60, 26), 2.5, WHITE, a, false, 0)
+			poly(ci, [Vector2(62, 18), Vector2(70, 8), Vector2(74, 12), Vector2(68, 20)], Color("2FA35A"), a, false, 1.2)
+			circ(ci, Vector2(71, 9), 3.5, Color("E0533D"), a, false, 1.2)
+			poly(ci, [Vector2(74, 9), Vector2(78, 11), Vector2(74, 12)], Color("F2C14E"), a, false, 0)
+		"hole_cannon":
+			rect(ci, 53, 10, 14, 30, Color("2A2E35"), a)
+			rect(ci, 51, 8, 18, 5, STEEL_D, a)
+			circ(ci, Vector2(60, 34), 6, WOOD, a)
+		"spyglass":
+			poly(ci, [Vector2(55, 40), Vector2(65, 40), Vector2(66, 24), Vector2(54, 24)], BRASS, a)
+			rect(ci, 56, 10, 8, 15, Color("C9A15A"), a)
+			circ(ci, Vector2(60, 9), 4, Color("9FD3F0"), a, false, 1.2)
+		"bolas":
+			rect(ci, 57, 28, 6, 12, WOOD_D, a)
+			line(ci, [Vector2(60, 28), Vector2(48, 14)], STEEL_D, 2.0, a)
+			line(ci, [Vector2(60, 28), Vector2(72, 14)], STEEL_D, 2.0, a)
+			circ(ci, Vector2(47, 12), 5, Color("5A6068"), a)
+			circ(ci, Vector2(73, 12), 5, Color("5A6068"), a)
+		"smoke_powder":
+			rect(ci, 55, 26, 10, 14, Color("2A2E35"), a)
+			circ(ci, Vector2(60, 18), 8, Color("C9CED6"), a, false, 1.2)
+			circ(ci, Vector2(52, 12), 6, Color("DDE1E6"), a, false, 1.2)
+			circ(ci, Vector2(68, 11), 6, Color("DDE1E6"), a, false, 1.2)
+		"flag_signal":
+			rect(ci, 58.5, 6, 3, 34, WOOD_D, a, false, 1.0)
+			poly(ci, [Vector2(61, 7), Vector2(76, 11), Vector2(61, 17)], RED, a, false, 1.2)
+			poly(ci, [Vector2(61, 18), Vector2(72, 21), Vector2(61, 25)], Color("F2C14E"), a, false, 1.0)
+		# 보조 (옆)
+		"hook_hand":
+			rect(ci, 82, 58, 10, 8, WOOD_D, a, m)
+			line(ci, [Vector2(92, 62), Vector2(104, 62), Vector2(110, 56), Vector2(108, 48), Vector2(102, 46)], STEEL, 3.5, a, m)
+		"rum_barrel":
+			rect(ci, 82, 59, 6, 6, STEEL_D, a, m)
+			rect(ci, 88, 50, 22, 24, WOOD, a, m)
+			rect(ci, 88, 55, 22, 3, Color("3A3F45"), a, m, 0)
+			rect(ci, 88, 66, 22, 3, Color("3A3F45"), a, m, 0)
+		"water_pump":
+			rect(ci, 82, 58, 10, 8, STEEL_D, a, m)
+			rect(ci, 92, 52, 12, 20, SEA, a, m)
+			rect(ci, 104, 58, 8, 8, STEEL, a, m)
+			line(ci, [Vector2(96, 52), Vector2(96, 46), Vector2(102, 46)], STEEL_D, 2.0, a, m)
+		"plank_dock":
+			rect(ci, 82, 58, 6, 8, STEEL_D, a, m)
+			rect(ci, 88, 54, 24, 16, WOOD, a, m)
+			line(ci, [Vector2(88, 59), Vector2(112, 59)], WOOD_D, 1.2, a, m)
+			line(ci, [Vector2(88, 65), Vector2(112, 65)], WOOD_D, 1.2, a, m)
+			circ(ci, Vector2(92, 56.5), 1.2, OUT, a, m, 0)
+		"treasure_chest":
+			rect(ci, 82, 59, 6, 6, STEEL_D, a, m)
+			rect(ci, 88, 56, 22, 16, WOOD, a, m)
+			poly(ci, [Vector2(88, 56), Vector2(110, 56), Vector2(106, 48), Vector2(92, 48)], WOOD_D, a, m)
+			rect(ci, 97, 58, 4, 5, Color("F2C14E"), a, m, 1.0)
+		"jump_board":
+			rect(ci, 82, 59, 6, 6, STEEL_D, a, m)
+			poly(ci, [Vector2(88, 74), Vector2(112, 74), Vector2(112, 52)], WOOD, a, m)
+			line(ci, [Vector2(94, 70), Vector2(108, 58)], WOOD_D, 1.2, a, m)
+		# 추진 (뒤)
+		"wind_sail":
+			rect(ci, 58.5, 84, 3, 28, WOOD_D, a, false, 1.0)
+			poly(ci, [Vector2(62, 88), Vector2(78, 98), Vector2(62, 108)], Color("F3EAD3"), a, false, 1.4)
+			poly(ci, [Vector2(58, 90), Vector2(46, 100), Vector2(58, 106)], Color("F3EAD3"), a, false, 1.4)
+		"lifeboat":
+			rect(ci, 56, 84, 8, 5, STEEL_D, a)
+			poly(ci, [Vector2(44, 92), Vector2(76, 92), Vector2(70, 108), Vector2(50, 108)], Color("E06A3C"), a)
+			ring(ci, Vector2(60, 100), 5, WHITE, 2.5, a)
+		"oar":
+			rect(ci, 56, 84, 8, 5, STEEL_D, a)
+			line(ci, [Vector2(52, 88), Vector2(70, 110)], WOOD_D, 3.0, a)
+			poly(ci, [Vector2(66, 104), Vector2(74, 106), Vector2(76, 116), Vector2(70, 114)], WOOD, a, false, 1.2)
+		"helm":
+			rect(ci, 56, 84, 8, 5, STEEL_D, a)
+			ring(ci, Vector2(60, 100), 9, WOOD, 3.0, a)
+			for k in 6:
+				var d := Vector2.from_angle(TAU * k / 6.0)
+				line(ci, [Vector2(60, 100) + d * 3.0, Vector2(60, 100) + d * 13.0], WOOD_D, 2.0, a)
+			circ(ci, Vector2(60, 100), 3, BRASS, a, false, 1.0)
+		"peg_leg":
+			rect(ci, 56, 84, 8, 6, STEEL_D, a)
+			poly(ci, [Vector2(56, 90), Vector2(64, 90), Vector2(62, 112), Vector2(58, 112)], WOOD, a)
+			rect(ci, 55, 110, 10, 3, Color("3A3F45"), a, false, 1.0)
 		_:
 			return false
 	return true

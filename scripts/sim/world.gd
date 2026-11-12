@@ -12,6 +12,7 @@ const Hero = preload("res://scripts/sim/hero.gd")
 const Crown = preload("res://scripts/sim/crown.gd")
 const Parcel = preload("res://scripts/sim/parcel.gd")
 const Clock = preload("res://scripts/sim/clock.gd")
+const Pirate = preload("res://scripts/sim/pirate.gd")
 
 const STONE_R := 22.0
 const MAX_SPEED := Parts.LAUNCH_V
@@ -192,6 +193,7 @@ var relics: Array = []        # 유품 리본으로 회수한 부품 {owner, par
 var crown := {}               # 왕관 쟁탈전의 왕관 (crown.gd). 비어 있으면 다른 모드
 var parcel := {}              # 택배 쟁탈전의 택배 (parcel.gd). 비어 있으면 다른 모드
 var clock := {}               # 태엽 시계탑: 차례를 넘는 물체·잔상·자명종 (clock.gd)
+var pirate := {}              # 해적 선착장: 바람·밀물·널빤지·구멍·줄·술통 … (pirate.gd)
 var turn_no := 0              # 지금까지 시작한 차례 수 (다음 차례 판정용)
 
 
@@ -210,6 +212,7 @@ func clone():
 	w.crown = crown.duplicate(true)
 	w.parcel = parcel.duplicate(true)
 	w.clock = clock.duplicate(true)
+	w.pirate = pirate.duplicate(true)
 	w.turn_no = turn_no
 	w.next_device_id = next_device_id
 	w.round_no = round_no
@@ -223,13 +226,16 @@ func clone():
 
 func is_inside(p: Vector2) -> bool:
 	if shape == "circle":
+		if not pirate.is_empty():
+			# 판 경계 함수: 밀물로 잠긴 고리는 빼고, 널빤지는 더한다
+			return p.length() <= size - Pirate.shrink(self) or Pirate.in_plank(self, p)
 		return p.length() <= size
 	return absf(p.x) <= size and absf(p.y) <= size
 
 
 func edge_distance(p: Vector2) -> float:
 	if shape == "circle":
-		return size - p.length()
+		return size - Pirate.shrink(self) - p.length()
 	return size - maxf(absf(p.x), absf(p.y))
 
 
@@ -244,8 +250,9 @@ func outward(p: Vector2) -> Vector2:
 ## 판 안의 점 p에서 dir 방향으로 판 끝까지의 거리.
 func ray_to_edge(p: Vector2, dir: Vector2) -> float:
 	if shape == "circle":
+		var es := size - Pirate.shrink(self)
 		var b := p.dot(dir)
-		var c := p.length_squared() - size * size
+		var c := p.length_squared() - es * es
 		var disc := b * b - c
 		if disc < 0.0:
 			return 0.0
@@ -278,6 +285,7 @@ func radius_of(s) -> float:
 
 func mass_of(s) -> float:
 	var k: float = s.base_mass
+	k *= Pirate.mass_k(s)
 	for key in s.mods:
 		k *= float(s.mods[key].get("mass", 1.0))
 	if s.parts.get("prop", "") == "weight":
@@ -510,6 +518,7 @@ func launch(stone_id: int, dir: Vector2, power: float, opts := {}) -> void:
 	Hero.on_launch(self, s)
 	Crown.on_launch(self, s)
 	Clock.on_launch(self, s)
+	Pirate.on_launch(self, s)
 
 
 ## 구름 우편함: 표식 자리가 비어 있으면 그 알을 그리로 옮긴다 (발사 직전).
@@ -543,10 +552,12 @@ func end_shot() -> void:
 	if s != null and s.alive:
 		Lab.on_stop(self, s)
 		Clock.on_stop(self, s)
+		Pirate.on_stop(self, s)
 		Parts.on_stop(self, s)
 	Ex.on_end(self, s)
 	Lab.end_shot(self)
 	Clock.end_shot(self)
+	Pirate.end_shot(self)
 	Hero.on_end(self)
 	Gm.after_shot(self)
 	Crown.end_shot(self)
@@ -563,7 +574,7 @@ func end_fx() -> void:
 func is_settled() -> bool:
 	if not projs.is_empty():
 		return false
-	if Parcel.moving(self) or Clock.busy(self):
+	if Parcel.moving(self) or Clock.busy(self) or Pirate.busy(self):
 		return false
 	if shot != null and (shot.grip_timer > 0.0 or shot.reel_timer > 0.0 or shot.clock_timer > 0.0):
 		return false
@@ -615,6 +626,7 @@ func step() -> void:
 	Gm.before_move(self, dt)
 	Lab.before_move(self, dt)
 	Clock.before_move(self, dt)
+	Pirate.before_move(self, dt)
 	for s in stones:
 		if not s.alive or Ex.is_frozen(self, s):
 			continue
@@ -633,10 +645,12 @@ func step() -> void:
 				s.pos += s.vel * dt
 	Parcel.move(self, dt)
 	Lab.after_move(self)
+	Pirate.after_move(self, dt)
 	Hero.lastcut_step(self)
 	_hold_grip(dt)
 	_collide_stones()
 	Clock.collide(self)
+	Pirate.collide(self)
 	Parcel.collide(self)
 	Gm.collide(self)
 	_check_parachutes()
@@ -754,7 +768,7 @@ func _collide_stones() -> void:
 				continue
 			if a.vel == Vector2.ZERO and b.vel == Vector2.ZERO:
 				continue
-			if _is_grip_pair(a, b) or Ex.is_frozen(self, a) or Ex.is_frozen(self, b) or Lab.skip_pair(self, a, b):
+			if _is_grip_pair(a, b) or Ex.is_frozen(self, a) or Ex.is_frozen(self, b) or Lab.skip_pair(self, a, b) or Pirate.skip_pair(self, a, b):
 				continue
 			var min_d := radius_of(a) + radius_of(b)
 			var d := b.pos - a.pos
@@ -782,6 +796,7 @@ func _collide_stones() -> void:
 			Lab.post_collision(self, a, b, nrm, imp)
 			Crown.on_hit(self, a, b)
 			Clock.post_collision(self, a, b, imp)
+			Pirate.post_collision(self, a, b, imp)
 			emit({"t": "hit", "pos": a.pos + nrm * STONE_R, "strength": rel, "a": a.id, "b": b.id, "n": nrm})
 			if shot != null and record_events:
 				var body_part := "remote" if shot.ex.has("remote_of") else "body"
@@ -799,10 +814,12 @@ func _collide_stones() -> void:
 					Hero.on_first_contact(self, a if a.id == shot.stone_id else b)
 				if a.id == shot.stone_id:
 					Clock.on_contact(self, a, b, nrm)
+					Pirate.on_contact(self, a, b, nrm)
 					if not Lab.on_contact(self, a, b, nrm, not shot.contacted):
 						Parts.on_contact(self, a, b, nrm, va, vb)
 				elif b.id == shot.stone_id:
 					Clock.on_contact(self, b, a, -nrm)
+					Pirate.on_contact(self, b, a, -nrm)
 					if not Lab.on_contact(self, b, a, -nrm, not shot.contacted):
 						Parts.on_contact(self, b, a, -nrm, vb, va)
 				Ex.post_collision(self, a, b, a.pos + nrm * STONE_R)
@@ -1034,6 +1051,14 @@ func _explode(d: Device) -> void:
 
 func _check_out() -> void:
 	for s in stones:
+		if s.alive and Pirate.in_hole(self, s):
+			# 구멍에 빠짐
+			s.alive = false
+			s.vel = Vector2.ZERO
+			var hc: Dictionary = s.cause.duplicate() if not s.cause.is_empty() else {"part": "hole_cannon"}
+			knockouts.append({"stone": s.id, "owner": s.owner, "cause": hc})
+			emit({"t": "out", "pos": s.pos, "owner": s.owner, "cause": hc, "stone": s.id, "hole": true})
+			continue
 		if s.alive and not is_inside(s.pos) and Ex.save_from_edge(self, s):
 			continue
 		if s.alive and not is_inside(s.pos) and Gm.save_from_edge(self, s):

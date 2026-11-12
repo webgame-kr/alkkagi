@@ -43,6 +43,41 @@ const CATALOG := {
 		"desc": "처음 멈춘 자리에 캡슐을 묻는다. 이 알이 떨어지면 다음 내 차례가 시작될 때 그 자리로 돌아온다(판당 1회)."},
 	"tick_step": {"name": "똑딱 걸음", "slot": "prop", "when": "발사 순간", "clock": true,
 		"desc": "세 구간으로 끊어 간다. 구간마다 잠깐 멈췄다가 다시 출발한다."},
+	# ── 해적 선착장 (세트 「선장」 + 단품 14) ──
+	"parrot_hat": {"name": "앵무새 모자", "slot": "weapon", "when": "발사 순간", "set": "captain", "pirate": true,
+		"desc": "앵무새가 정면 첫 상대 알 위에 앉는다. 이 알의 다음 샷은 그 알 쪽으로 살짝 휘어 간다."},
+	"hook_hand": {"name": "갈고리손", "slot": "aux", "when": "첫 측면 충돌", "set": "captain", "pirate": true,
+		"desc": "옆으로 스친 상대 알에 갈고리를 걸어, 그 알을 축으로 반 바퀴 휘돌며 방향을 튼다."},
+	"peg_leg": {"name": "나무 의족", "slot": "prop", "when": "알이 멈출 때", "set": "captain", "pirate": true,
+		"desc": "멈추면 바닥에 박혀 다음 내 차례까지 잘 밀리지 않는다. 큰 충격 한 번이면 빠진다."},
+	"hole_cannon": {"name": "구멍 대포", "slot": "weapon", "when": "발사 순간", "pirate": true,
+		"desc": "정면 3칸 앞(그 사이에 알이 있으면 그 자리)에 포탄을 떨어뜨려 구멍을 낸다(1바퀴). 구멍 위에 멈추거나 느리게 지나면 빠진다."},
+	"spyglass": {"name": "망원경", "slot": "weapon", "when": "조준할 때", "pirate": true,
+		"desc": "조준할 때 첫 충돌 이후 경로까지 보이고, 그 샷만 힘 +10%."},
+	"bolas": {"name": "쇠사슬 볼라스", "slot": "weapon", "when": "닿은 상대 알 둘", "pirate": true,
+		"desc": "처음 닿은 상대 알 두 개를 1.5칸 사슬로 묶는다(다음 바퀴 끝까지)."},
+	"smoke_powder": {"name": "연막 화약", "slot": "weapon", "when": "발사 순간", "pirate": true,
+		"desc": "정면 부채꼴 3칸에 연막. 안의 알은 다음 바퀴 동안 조준선이 절반만 보인다."},
+	"flag_signal": {"name": "깃발 신호기", "slot": "weapon", "when": "첫 충돌", "pirate": true,
+		"desc": "맞힌 알에 깃발을 꽂아, 다음 두 바퀴 동안 바퀴 시작마다 바람 방향으로 1칸 흘러가게 한다."},
+	"rum_barrel": {"name": "술통", "slot": "aux", "when": "첫 측면 충돌", "pirate": true,
+		"desc": "통이 떨어져 부딪힌 방향으로 판 끝까지 굴러가며 길 위의 알을 민다."},
+	"water_pump": {"name": "물대포 펌프", "slot": "aux", "when": "알이 멈출 때", "pirate": true, "side": true,
+		"desc": "멈춘 순간 장착한 쪽 일직선 3칸 안의 알을 조금씩 밀어낸다."},
+	"plank_dock": {"name": "널빤지 부두", "slot": "aux", "when": "판 끝에 닿을 때", "pirate": true,
+		"desc": "판 끝에 닿은 자리에 널빤지를 깔아 판을 1칸 늘린다(1바퀴, 모두 이용)."},
+	"treasure_chest": {"name": "보물 상자", "slot": "aux", "when": "알이 멈출 때", "pirate": true,
+		"desc": "멈춘 자리에 상자를 둔다. 다음 바퀴 끝에 상자 1칸 안에 알이 있는 사람은 다음 개조 후보 +1장."},
+	"jump_board": {"name": "점프 판자", "slot": "aux", "when": "첫 측면 충돌", "pirate": true,
+		"desc": "그 자리에 경사로를 만든다(1바퀴). 지나는 알은 한 번 튀어 올라 바로 앞 알을 넘어간다."},
+	"wind_sail": {"name": "바람돛", "slot": "prop", "when": "움직이는 동안", "pirate": true,
+		"desc": "경로가 바람 쪽으로 크게 휜다. 바람을 등지면 더 멀리 간다."},
+	"lifeboat": {"name": "구명보트", "slot": "prop", "when": "떨어질 때", "pirate": true,
+		"desc": "떨어지면 한 번, 다음 내 차례를 쉬는 대신 가장 가까운 판 끝으로 돌아온다."},
+	"oar": {"name": "노 젓기", "slot": "prop", "when": "첫 충돌 직후", "pirate": true,
+		"desc": "첫 충돌 직후 바람 방향으로 1.5칸 미끄러진다."},
+	"helm": {"name": "타륜", "slot": "prop", "when": "알이 멈출 때", "pirate": true,
+		"desc": "멈출 때 제자리에서 반 바퀴 돌며 1칸 안의 알을 회전 방향으로 쓸어낸다."},
 	"merge_bolt": {"name": "합체 볼트", "slot": "aux", "when": "내 알과 부딪힐 때", "lab": true,
 		"desc": "발사한 알이 내 다른 알과 부딪히면 둘이 합쳐 큰 알 하나가 된다. 지름 1.4배, 무게 2배."},
 	"decoy": {"name": "미끼 풍선", "slot": "aux", "when": "알이 멈출 때", "lab": true,
@@ -279,6 +314,9 @@ const SETS := {
 	"clock": {"name": "시계공", "parts": ["hour_hammer", "late_key", "minute_spring"],
 		"move": "정각", "move_desc": "바퀴마다 한 번, 내 샷이 끝나면 같은 알로 바로 한 번 더 쏜다 (두 번째 샷은 힘 70%)",
 		"short": {"hour_hammer": "망치", "late_key": "열쇠", "minute_spring": "태엽"}},
+	"captain": {"name": "선장", "parts": ["parrot_hat", "hook_hand", "peg_leg"],
+		"move": "포격 명령", "move_desc": "바퀴마다 한 번, 내 샷이 끝나면 판 바깥에서 대포알이 그 샷 방향으로 판을 가로지르며 길 위의 알을 민다",
+		"short": {"parrot_hat": "모자", "hook_hand": "갈고리", "peg_leg": "의족"}},
 	"hero": {"name": "최후의 주인공", "parts": ["hero_band", "torn_cape", "awaken_shoes"],
 		"move": "라스트 컷", "move_desc": "투지 3칸 + 세트 완성: 판 끝까지 관통 돌진, 부딪힌 알은 옆으로, 판 끝에서 망토로 반드시 멈춘다", "short": {"hero_band": "머리띠", "torn_cape": "망토", "awaken_shoes": "운동화"}},
 }
@@ -305,9 +343,14 @@ const WORKSHOPS := {
 		"parts": ["hour_hammer", "late_key", "minute_spring", "time_spring", "reserve_bow", "rewind_watch", "slow_arrow", "order_swap",
 			"hourglass", "metronome", "alarm_clock", "wind_mouse", "shock_spring", "slow_spring", "replay_spring", "time_capsule", "tick_step"],
 		"rep": ["hour_hammer", "time_spring", "alarm_clock"], "set": "clock"},
+	"pirate": {"name": "해적 선착장", "tag": "바람이 불고 판이 바뀌는 곳",
+		"desc": "바퀴마다 바뀌는 바람을 타고, 구멍·널빤지·밀물로 판 자체를 바꾼다.",
+		"parts": ["parrot_hat", "hook_hand", "peg_leg", "hole_cannon", "spyglass", "bolas", "smoke_powder", "flag_signal",
+			"rum_barrel", "water_pump", "plank_dock", "treasure_chest", "jump_board", "wind_sail", "lifeboat", "oar", "helm"],
+		"rep": ["parrot_hat", "hole_cannon", "wind_sail"], "set": "captain"},
 	"all": {"name": "잡동사니 창고", "tag": "모든 부품이 섞여 나오는 곳", "desc": "모든 부품 66종이 섞여 나온다.", "parts": [], "rep": ["pea", "moon_staff", "rubber_fist"], "set": ""},
 }
-const WORKSHOP_ORDER := ["junk", "magic", "toon", "lab", "clock", "all"]
+const WORKSHOP_ORDER := ["junk", "magic", "toon", "lab", "clock", "pirate", "all"]
 
 
 ## 이 공방에서 나오는 부품 id 목록.
@@ -352,7 +395,7 @@ static func match_pool(ws: String, rng: RandomNumberGenerator) -> Array:
 
 
 ## 장착할 때 좌우를 고르는 부품. 보조는 Stone.magnet_side, 추진은 Stone.prop_side 에 저장.
-const SIDE_PARTS := ["magnet", "shield", "crab", "side_scroll"]
+const SIDE_PARTS := ["magnet", "shield", "crab", "side_scroll", "water_pump"]
 
 ## 탄환을 쏘는 무기(데칼코마니 포신의 조건).
 const BULLET_WEAPONS := ["pea", "shotgun"]

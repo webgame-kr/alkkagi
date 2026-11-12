@@ -487,7 +487,7 @@ func _start_match(seed_value := -1) -> void:
 	m = Match.new()
 	var ws: String = settings.get("workshop", "junk")
 	if ws == "random":
-		ws = ["junk", "magic", "toon", "lab", "clock"][seed_value % 5]
+		ws = ["junk", "magic", "toon", "lab", "clock", "pirate"][seed_value % 6]
 	m.setup(settings["n"], settings["cpu"], seed_value, settings["timed"], {"workshop": ws, "mode": settings.get("mode", "survival"), "placement": true,
 		"teams": settings.get("teams", []), "parcel_every": settings.get("parcel_every", 2), "parcel_goal": settings.get("parcel_goal", 3)})
 	state = "play"
@@ -983,6 +983,8 @@ func _consume_events() -> void:
 				_on_crown_event(e)
 			"walker", "replay":
 				_on_clock_event(e)
+			"shell", "cannonball", "swing", "jump":
+				_on_pirate_event(e)
 			"parcel":
 				_on_parcel_event(e)
 			"respawn":
@@ -1312,6 +1314,7 @@ func _draw_inner() -> void:
 	_draw_board()
 	_draw_gimmicks()
 	_draw_devices()
+	_draw_pirate_board()
 	_draw_clock_things()
 	_draw_crown_floor()
 	_draw_parcel()
@@ -1992,6 +1995,8 @@ func _draw_aim_over() -> void:
 		if item["k"] == "move":
 			var a := w2s(item["a"])
 			var b := w2s(item["b"])
+			if int(s.status.get("smoke", -1)) >= m.round_no:
+				b = a.lerp(b, 0.5)   # 연막: 조준선이 절반만 보인다
 			var pw: float = item.get("power", 0.0)
 			var acol := Color.WHITE if pw < 0.6 else (Color("FFD27A") if pw < 0.85 else Color("FF7A5C"))
 			if pw > 0.9 and not _reduced():
@@ -2004,6 +2009,9 @@ func _draw_aim_over() -> void:
 			draw_colored_polygon(head, acol)
 			head.append(head[0])
 			draw_polyline(head, INK, 2.0, true)
+
+
+	_draw_pirate_aim(info)
 
 
 ## 메카 티라노 조준: 팔이 닿는 측면(주인 색 부채꼴)과 던질 방향(황동 점선).
@@ -2084,10 +2092,10 @@ func _current_aim() -> Dictionary:
 		s.pos = _origin_of(drag_stone)
 		var pv := Parts.aim_preview(m.world, s, aim["dir"], aim["power"])
 		s.pos = saved
-		return {"stone": s, "power": aim["power"], "finger": drag_screen, "preview": pv, "origin": _origin_of(drag_stone)}
+		return {"stone": s, "power": aim["power"], "dir": aim["dir"], "finger": drag_screen, "preview": pv, "origin": _origin_of(drag_stone)}
 	if not cpu_aim.is_empty():
 		var s2 = m.world.get_stone(cpu_aim["stone"])
-		return {"stone": s2, "power": cpu_aim["power"],
+		return {"stone": s2, "power": cpu_aim["power"], "dir": cpu_aim["dir"],
 			"preview": Parts.aim_preview(m.world, s2, cpu_aim["dir"], cpu_aim["power"])}
 	return {}
 
@@ -2241,6 +2249,7 @@ func _draw_hud(vs: Vector2) -> void:
 		else:
 			_draw_timeline(vs)
 	_draw_mode_alerts(vs)
+	_draw_wind_vane(vs)
 	_draw_ko_pills(vs)
 	_draw_gimmick_chips(vs)
 	_draw_toast(vs)
@@ -4023,13 +4032,13 @@ func _workshop_row() -> Control:
 	row.columns = 1 if narrow_w else 3
 	row.add_theme_constant_override("h_separation", 10)
 	row.add_theme_constant_override("v_separation", 10)
-	for key in ["junk", "magic", "toon", "lab", "clock"]:
+	for key in ["junk", "magic", "toon", "lab", "clock", "pirate"]:
 		var card := _workshop_card(key, cur == key)
 		card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		row.add_child(card)
 	v.add_child(row)
 	if cur == "random":
-		v.add_child(_label("공방을 열 때 다섯 공방 중 하나가 정해집니다.", 13, SUB))
+		v.add_child(_label("공방을 열 때 여섯 공방 중 하나가 정해집니다.", 13, SUB))
 	elif cur == "all":
 		v.add_child(_label("전체 부품 섞기: " + PartsData.WORKSHOPS["all"]["desc"] + " (설정에서 끌 수 있어요)", 13, SUB))
 	return v
@@ -4093,6 +4102,11 @@ func _workshop_card(key: String, on: bool) -> Control:
 			ssb.border_color = Color("6A50B8")
 			ssb.set_border_width_all(2)
 			scol = Color("F1EEFF")
+		"pirate":
+			ssb.bg_color = Color("F3EAD3")
+			ssb.border_color = Color("6B4523")
+			ssb.set_border_width_all(3)
+			scol = Color("2A1E12")
 		"clock":
 			ssb.bg_color = Color("141A2E")
 			ssb.border_color = Color("E2C27A")
@@ -4198,6 +4212,9 @@ func _draw_shutter() -> void:
 		return
 	if m != null and m.workshop == "clock":
 		_draw_clock_intro(vs)
+		return
+	if m != null and m.workshop == "pirate":
+		_draw_pirate_intro(vs)
 		return
 	if m != null and m.workshop == "toon":
 		_draw_manga_cover(vs)
@@ -6924,3 +6941,245 @@ func _draw_clock_intro(vs: Vector2) -> void:
 			shutter.draw_string(font_bold, c + Vector2(-200, R * 0.42), "오늘의 공방" + _mode_suffix(), HORIZONTAL_ALIGNMENT_CENTER, 400, 14, Color("7A5C22"))
 			shutter.draw_string(font_display, c + Vector2(-200, R * 0.42 + 44), info["name"], HORIZONTAL_ALIGNMENT_CENTER, 400, 36, Color("141A2E"))
 			_draw_intro_gimmicks(vs, c.y + R + 16.0, CLOCK_GOLD, Color("141A2E"))
+
+
+# ── 해적 선착장 화면 ─────────────────────────────────────
+const SEA_COL := Color("3E8FB0")
+const DECK_WOOD := Color("9A6A3A")
+var _simpath_key := ""
+var _simpath: PackedVector2Array = PackedVector2Array()
+
+
+## 판 위: 밀물 · 구멍 · 널빤지 · 판자 · 상자 · 술통 · 사슬 · 소용돌이 · 나무 상자
+func _draw_pirate_board() -> void:
+	if m == null or m.world.pirate.is_empty():
+		return
+	var w = m.world
+	var pr: Dictionary = w.pirate
+	var k := view_scale
+	var c := w2s(Vector2.ZERO)
+	var R: float = w.size * k
+	if World.Pirate.has_tide(w):
+		if int(pr.get("tide", 0)) > 0:
+			# 밀물: 가장자리 1칸이 물에 잠김
+			draw_arc(c, R - CELL * k * 0.5, 0, TAU, 96, Color(SEA_COL, 0.75), CELL * k, false)
+			for i in 24:
+				var a := TAU * i / 24.0 + time * 0.3
+				draw_arc(c, R - CELL * k * 0.5, a, a + 0.12, 4, Color(1, 1, 1, 0.35), 2.0, true)
+		elif World.Pirate.tide_round(m.round_no + 1):
+			# 다음 바퀴 밀물 예고: 물결무늬
+			for i in 36:
+				var a2 := TAU * i / 36.0
+				var rr := R - CELL * k * 0.5 + sin(time * 3.0 + i) * 3.0
+				draw_arc(c, rr, a2, a2 + 0.1, 4, Color(SEA_COL, 0.6), 3.0, true)
+	for g in w.gimmicks:
+		match str(g["kind"]):
+			"whirlpool":
+				var it: Dictionary = g["items"][0]
+				var wc := w2s(it["pos"])
+				var wr: float = float(it["r"]) * k
+				draw_circle(wc, wr, Color(SEA_COL, 0.22))
+				for j in 3:
+					var pts := PackedVector2Array()
+					for q in 30:
+						var t := q / 29.0
+						pts.append(wc + Vector2.from_angle(-time * 1.4 + TAU * j / 3.0 + t * 5.0) * wr * (1.0 - t * 0.9))
+					draw_polyline(pts, Color(1, 1, 1, 0.45), 2.0, true)
+				draw_arc(wc, CELL * k, 0, TAU, 32, Color(1, 1, 1, 0.35), 1.5, true)
+			"crates":
+				for it2 in g["items"]:
+					var cp := w2s(it2["pos"])
+					var hs := World.Pirate.CRATE_R * k * 0.92
+					var wnd := World.Pirate.wind(w)
+					draw_dashed_line(cp, cp + wnd * CELL * k, Color(1, 1, 1, 0.5), 2.0, 6.0)
+					draw_rect(Rect2(cp - Vector2(hs, hs) + Vector2(3, 4), Vector2.ONE * hs * 2.0), Color(0, 0, 0, 0.3))
+					draw_rect(Rect2(cp - Vector2(hs, hs), Vector2.ONE * hs * 2.0), DECK_WOOD)
+					draw_line(cp + Vector2(-hs, -hs), cp + Vector2(hs, hs), Color("6B4523"), 3.0)
+					draw_line(cp + Vector2(hs, -hs), cp + Vector2(-hs, hs), Color("6B4523"), 3.0)
+					draw_rect(Rect2(cp - Vector2(hs, hs), Vector2.ONE * hs * 2.0), Art.outline, false, 2.0)
+	for pk in pr.get("planks", []):
+		var o: Vector2 = pk["dir"]
+		var base: Vector2 = pk["pos"]
+		var side := o.orthogonal()
+		var pts2 := PackedVector2Array([w2s(base - o * CELL * 0.4 + side * CELL * 0.8), w2s(base + o * CELL * 1.5 + side * CELL * 0.8),
+			w2s(base + o * CELL * 1.5 - side * CELL * 0.8), w2s(base - o * CELL * 0.4 - side * CELL * 0.8)])
+		draw_colored_polygon(pts2, Color("B98A55"))
+		for q2 in 3:
+			var off := side * CELL * (-0.53 + q2 * 0.53)
+			draw_line(w2s(base - o * CELL * 0.4 + off), w2s(base + o * CELL * 1.5 + off), Color(0, 0, 0, 0.2), 1.0)
+		pts2.append(pts2[0])
+		draw_polyline(pts2, Art.outline, 2.0, true)
+	for h in pr.get("holes", []):
+		var hp := w2s(h["pos"])
+		var hr := World.Pirate.HOLE_R * k
+		var jag := PackedVector2Array()
+		for q3 in 14:
+			var a3 := TAU * q3 / 14.0
+			jag.append(hp + Vector2.from_angle(a3) * hr * (0.85 + 0.2 * float(q3 % 2)))
+		draw_colored_polygon(jag, Color("0E2A36"))
+		draw_circle(hp, hr * 0.6, Color(SEA_COL.darkened(0.4), 0.9))
+		jag.append(jag[0])
+		draw_polyline(jag, Color("6B4523"), 2.0, true)
+	for rp in pr.get("ramps", []):
+		var rc := w2s(rp["pos"])
+		var rd: Vector2 = rp["dir"]
+		var rs := rd.orthogonal()
+		var tri := PackedVector2Array([rc - rd * 16.0 * k + rs * 14.0 * k, rc - rd * 16.0 * k - rs * 14.0 * k, rc + rd * 16.0 * k - rs * 14.0 * k, rc + rd * 16.0 * k + rs * 14.0 * k])
+		draw_colored_polygon(tri, Color("C79A63"))
+		draw_line(rc - rd * 16.0 * k, rc + rd * 16.0 * k, Color("6B4523"), 2.0, true)
+		tri.append(tri[0])
+		draw_polyline(tri, Art.outline, 1.5, true)
+	for ch in pr.get("chests", []):
+		var cc := w2s(ch["pos"])
+		draw_arc(cc, (CELL + World.STONE_R) * k, 0, TAU, 40, Color("F2C14E", 0.4), 2.0, true)
+		draw_rect(Rect2(cc - Vector2(11, 8) * k, Vector2(22, 16) * k), DECK_WOOD)
+		draw_rect(Rect2(cc - Vector2(11, 8) * k, Vector2(22, 6) * k), Color("6B4523"))
+		draw_rect(Rect2(cc - Vector2(2, 2) * k, Vector2(4, 5) * k), Color("F2C14E"))
+		draw_rect(Rect2(cc - Vector2(11, 8) * k, Vector2(22, 16) * k), Art.outline, false, 1.5)
+	for b in pr.get("barrels", []):
+		var bp := w2s(b["pos"])
+		var br := World.Pirate.BARREL_R * k
+		draw_circle(bp, br, DECK_WOOD)
+		draw_arc(bp, br * 0.7, 0, TAU, 20, Color("3A3F45"), 2.0, true)
+		draw_arc(bp, br, 0, TAU, 20, Art.outline, 2.0, true)
+	for rope in pr.get("ropes", []):
+		var a = w.get_stone(int(rope["a"]))
+		var bb = w.get_stone(int(rope["b"]))
+		if a == null or bb == null or not a.alive or not bb.alive:
+			continue
+		var pa := w2s(a.pos)
+		var pb := w2s(bb.pos)
+		var n := int(pa.distance_to(pb) / 7.0)
+		for q4 in n:
+			var t2 := float(q4) / maxf(1.0, n)
+			draw_arc(pa.lerp(pb, t2), 3.2, 0, TAU, 8, Color("5A6068"), 2.0, true)
+	# 알 위 표식: 깃발 · 앵무새 · 연막 · 의족
+	for s in w.stones:
+		if not s.alive:
+			continue
+		var sp := w2s(s.pos)
+		var u := World.STONE_R * k
+		if int(s.status.get("flag", -1)) >= m.round_no:
+			draw_line(sp + Vector2(u * 0.4, 0), sp + Vector2(u * 0.4, -u * 1.6), Color("6B4523"), 2.0, true)
+			var wnd2 := World.Pirate.wind(w)
+			draw_colored_polygon(PackedVector2Array([sp + Vector2(u * 0.4, -u * 1.6), sp + Vector2(u * 0.4, -u * 1.0), sp + Vector2(u * 0.4, -u * 1.3) + wnd2 * u * 0.8]), Color("D2452F"))
+		if s.status.has("smoke") and int(s.status["smoke"]) >= m.round_no:
+			for q5 in 3:
+				draw_circle(sp + Vector2.from_angle(time * 0.6 + TAU * q5 / 3.0) * u * 0.6, u * 0.55, Color(0.85, 0.87, 0.9, 0.35))
+		if s.status.has("anchored"):
+			draw_arc(sp, u * 1.12, 0, TAU, 24, Color("6B4523"), 3.0, true)
+	for s2 in w.stones:
+		for key in ["parrot", "parrot_next"]:
+			if s2.alive and s2.status.has(key):
+				var tgt = w.get_stone(int(s2.status[key]))
+				if tgt != null and tgt.alive:
+					var tp := w2s(tgt.pos) + Vector2(0, -World.STONE_R * k * 1.2)
+					draw_circle(tp, 6.0 * k, Color("2FA35A"))
+					draw_circle(tp + Vector2(4, -3) * k, 3.5 * k, Color("E0533D"))
+					draw_arc(tp, 6.0 * k, 0, TAU, 12, Art.outline, 1.2, true)
+
+
+## 위쪽: 풍향계 (이번 바퀴 바람 + 다음 바퀴 예고)
+func _draw_wind_vane(vs: Vector2) -> void:
+	if m == null or m.world.pirate.is_empty() or portrait:
+		return
+	var r := Rect2(vs.x * 0.5 + 196.0, 24, 132, 62)
+	_panel(r)
+	var c := r.position + Vector2(32, 31)
+	var wd := World.Pirate.wind(m.world)
+	draw_arc(c, 20, 0, TAU, 24, Color(TEXT, 0.4), 1.5, true)
+	draw_line(c - wd * 16, c + wd * 16, SEA_COL, 4.0, true)
+	draw_colored_polygon(PackedVector2Array([c + wd * 20, c + wd * 10 + wd.orthogonal() * 7, c + wd * 10 - wd.orthogonal() * 7]), SEA_COL)
+	_txt(r.position + Vector2(62, 26), "바람", 13, TEXT, font_bold)
+	var nd := World.Pirate.wind_of(m.world, m.round_no + 1)
+	_txt(r.position + Vector2(62, 46), "다음", 11, SUB, font)
+	var nc := r.position + Vector2(108, 42)
+	draw_line(nc - nd * 9, nc + nd * 9, Color(SUB, 0.9), 2.0, true)
+	draw_colored_polygon(PackedVector2Array([nc + nd * 11, nc + nd * 5 + nd.orthogonal() * 4, nc + nd * 5 - nd.orthogonal() * 4]), Color(SUB, 0.9))
+
+
+## 망원경 · 바람돛 · 앵무새 유도: 실제로 미리 굴려 본 경로 (첫 충돌 이후까지)
+func _draw_pirate_aim(info: Dictionary) -> void:
+	var s = info["stone"]
+	if m.world.pirate.is_empty() or info.has("cancel") or not info.has("dir"):
+		return
+	var need: bool = s.parts.get("weapon", "") == "spyglass" or s.parts.get("prop", "") == "wind_sail" or s.status.has("parrot_next")
+	if not need:
+		return
+	var dir: Vector2 = info["dir"]
+	var pw: float = info["power"]
+	var key := "%d|%d|%d|%d" % [s.id, int(round(rad_to_deg(dir.angle()))), int(round(pw * 50.0)), m.world.turn_no]
+	if key != _simpath_key:
+		_simpath_key = key
+		_simpath = PackedVector2Array()
+		var w = m.world.clone()
+		w.launch(s.id, dir, pw, {"charged": true})
+		var t := 0.0
+		var clk := 0.0
+		while t < 3.0 and not w.is_settled():
+			w.step()
+			t += World.DT
+			clk += World.DT
+			var ss = w.get_stone(s.id)
+			if ss == null or not ss.alive:
+				break
+			if clk >= 0.05:
+				clk = 0.0
+				_simpath.append(ss.pos)
+	var col: Color = m.players[s.owner].color.lightened(0.35)
+	for i in _simpath.size():
+		if i % 2 == 0:
+			draw_circle(w2s(_simpath[i]), 2.6, Color(col, 0.85))
+	if not _simpath.is_empty():
+		_dashed_ring(w2s(_simpath[_simpath.size() - 1]), World.STONE_R * view_scale, Color(col, 0.8))
+
+
+func _on_pirate_event(e: Dictionary) -> void:
+	match str(e["t"]):
+		"shell":
+			fx.append({"k": "line", "a": e["a"], "b": e["b"], "t": 0.0, "life": 0.5, "c": Color("2A2E35")})
+			snd.play("fx_mech_shot", -2.0, 0.6)
+		"cannonball":
+			fx.append({"k": "line", "a": e["a"], "b": e["b"], "t": 0.0, "life": 0.6, "c": Color("1A1D21")})
+			shake = maxf(shake, 6.0)
+			snd.play("fx_mech_shot", 0.0, 0.5)
+		"swing":
+			fx.append({"k": "ring", "pos": e["pos"], "t": 0.0, "life": 0.5, "r": 50.0, "c": Color("D8C08A")})
+		"jump":
+			fx.append({"k": "text", "pos": e["pos"] + Vector2(0, -36), "t": 0.0, "life": 0.8, "text": "점프!", "c": Color("F2C14E"), "size": 18})
+			snd.play("fx_mech_spring", -4.0, 1.3)
+
+
+## 입장: 돛이 위에서 아래로 펼쳐졌다가 바람에 날려 간다.
+func _draw_pirate_intro(vs: Vector2) -> void:
+	var k := _intro_k()
+	var drop := clampf(shutter_t / 0.45, 0.0, 1.0)
+	var e := 1.0 - pow(1.0 - drop, 3.0)
+	var off := Vector2(vs.x * 1.2 * k, -vs.y * 0.3 * k * k)
+	shutter.draw_rect(Rect2(Vector2.ZERO, vs), Color("1F5E78", 1.0 - k))
+	var top := 24.0
+	var h := vs.y * 0.95 * e
+	var bulge := 30.0 + 60.0 * k
+	var pts := PackedVector2Array()
+	for i in 21:
+		var t := float(i) / 20.0
+		pts.append(Vector2(vs.x * 0.08 + vs.x * 0.84 * t, top + sin(PI * t) * 6.0) + off)
+	for i in 21:
+		var t2 := 1.0 - float(i) / 20.0
+		pts.append(Vector2(vs.x * 0.08 + vs.x * 0.84 * t2, top + h + sin(PI * t2) * bulge) + off)
+	shutter.draw_colored_polygon(pts, Color("F3EAD3"))
+	pts.append(pts[0])
+	shutter.draw_polyline(pts, Color("8A6F3E"), 4.0, true)
+	# 돛대 가로대
+	shutter.draw_rect(Rect2(Vector2(vs.x * 0.04, top - 10) + off, Vector2(vs.x * 0.92, 14)), Color("6B4523"))
+	if m != null and e > 0.6:
+		var c := Vector2(vs.x * 0.5, top + h * 0.5) + off
+		var info: Dictionary = PartsData.WORKSHOPS["pirate"]
+		shutter.draw_string(font_bold, c + Vector2(-200, -30), "오늘의 공방" + _mode_suffix(), HORIZONTAL_ALIGNMENT_CENTER, 400, 14, Color("6B4523"))
+		shutter.draw_string(font_display, c + Vector2(-200, 16), info["name"], HORIZONTAL_ALIGNMENT_CENTER, 400, 44, Color("2A1E12"))
+		# 해골 대신 닻 표시
+		var ac := c + Vector2(0, 54)
+		shutter.draw_line(ac + Vector2(0, -14), ac + Vector2(0, 14), Color("2A1E12"), 4.0)
+		shutter.draw_arc(ac + Vector2(0, 2), 14, 0.2, PI - 0.2, 12, Color("2A1E12"), 4.0)
+		shutter.draw_arc(ac + Vector2(0, -18), 4, 0, TAU, 10, Color("2A1E12"), 3.0)
+		_draw_intro_gimmicks(vs, c.y + 90.0, SEA_COL, Color.WHITE)

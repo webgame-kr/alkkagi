@@ -36,7 +36,7 @@ func _initialize() -> void:
 		"test_mushroom_and_wind", "test_second_step", "test_rebound_and_string", "test_at_field_and_beam",
 		"test_hero_band_and_shoes", "test_all_parts_have_art",
 		"test_workshop_pools", "test_offer_fits_empty_slots", "test_min_power_moves_one_cell",
-		"test_knockout_causes", "test_derby_mode", "test_gimmicks_junk", "test_start_placement", "test_upgrades", "test_gimmicks_magic_toon", "test_lab_parts", "test_lab_gimmicks", "test_draft_pass", "test_playtest_fixes", "test_crown_rules", "test_crown_match", "test_parcel_physics", "test_parcel_match", "test_clock_parts", "test_clock_flow",
+		"test_knockout_causes", "test_derby_mode", "test_gimmicks_junk", "test_start_placement", "test_upgrades", "test_gimmicks_magic_toon", "test_lab_parts", "test_lab_gimmicks", "test_draft_pass", "test_playtest_fixes", "test_crown_rules", "test_crown_match", "test_parcel_physics", "test_parcel_match", "test_clock_parts", "test_clock_flow", "test_pirate_board", "test_pirate_parts", "test_pirate_flow",
 	]
 	for t in tests:
 		var before := failures
@@ -1215,9 +1215,10 @@ func test_all_parts_have_art() -> void:
 		"umbrella_gun", "roller", "trex_arm", "shield", "tambourine", "track", "trex_leg", "crab", "clockwork", "brake",
 		"merge_bolt", "decoy", "split_capsule", "weight", "shrink_ray", "remote", "sticky", "tilter", "coupling", "repel", "ghost", "inflate"]
 	hand.append_array(PartsData.WORKSHOPS["clock"]["parts"])
+	hand.append_array(PartsData.WORKSHOPS["pirate"]["parts"])
 	for id in PartsData.ids():
 		check(hand.has(id) or AD.SHAPES.has(id), "art for " + id)
-	check(PartsData.ids().size() == 95, "95 parts: %d" % PartsData.ids().size())
+	check(PartsData.ids().size() == 112, "112 parts: %d" % PartsData.ids().size())
 
 
 # ── 오늘의 공방 ──────────────────────────────────────────
@@ -1935,3 +1936,113 @@ func test_clock_flow() -> void:
 	m2.finish_shot()
 	m2.settle_fx()
 	check(m2.current_player() != p, "only once per round")
+
+
+func _pirate_world() -> World:
+	var w := make_world("circle", 400.0)
+	var r := RandomNumberGenerator.new()
+	r.seed = 3
+	World.Pirate.setup(w, r)
+	return w
+
+
+func test_pirate_board() -> void:
+	# 밀물: 판 경계가 1칸 줄고, 그 고리에 있던 알은 바퀴 시작에 떨어진다
+	var w := _pirate_world()
+	w.gimmicks = [{"kind": "tide", "items": []}]
+	var a := w.add_stone(0, Vector2(380, 0), 0)
+	var b := w.add_stone(1, Vector2(0, 0), 0)
+	World.Pirate.round_start(w, 2)
+	check(not a.alive and b.alive, "tide sank the edge ring")
+	check(not w.is_inside(Vector2(370, 0)) and w.is_inside(Vector2(340, 0)), "boundary shrank")
+	World.Pirate.round_start(w, 3)
+	check(w.is_inside(Vector2(390, 0)), "ebb restores the board")
+	# 널빤지: 판 밖이 1칸 늘어난다
+	w.pirate["planks"].append({"pos": Vector2(400, 0), "dir": Vector2.RIGHT, "until": 9, "owner": 0})
+	check(w.is_inside(Vector2(440, 0)) and not w.is_inside(Vector2(0, 440)), "plank extends the boundary there")
+	# 구멍: 위에 멈추면 빠진다
+	var w2 := _pirate_world()
+	var c := w2.add_stone(0, Vector2(-130, 0), 0)
+	var fast := w2.add_stone(0, Vector2(-120, 100), 0)
+	w2.pirate["holes"].append({"pos": Vector2(-120, 0), "until": 9, "owner": 1})
+	w2.pirate["holes"].append({"pos": Vector2(-60, 100), "until": 9, "owner": 1})
+	c.vel = Vector2(80, 0)
+	fast.vel = Vector2(1200, 0)
+	w2.run_until_settled(5.0)
+	check(not c.alive, "slow over a hole: fell in (at %s)" % c.pos)
+	check(fast.alive, "fast over a hole: passed")
+	# 바람 순서표는 같은 씨앗이면 같다
+	var w3 := _pirate_world()
+	check(w3.pirate["winds"] == _pirate_world().pirate["winds"], "wind table is deterministic")
+
+
+func test_pirate_parts() -> void:
+	# 쇠사슬 볼라스: 두 알이 1.5칸 넘게 벌어지지 않는다
+	var w := _pirate_world()
+	var a := w.add_stone(0, Vector2(-250, 0), 0)
+	var b := w.add_stone(1, Vector2(-150, 32), 0)
+	var c := w.add_stone(1, Vector2(-150, -32), 0)
+	a.parts["weapon"] = "bolas"
+	shoot(w, a.id, Vector2.RIGHT, 0.6)
+	check(w.pirate["ropes"].size() == 1, "bolas chained two stones")
+	if w.pirate["ropes"].size() == 1:
+		var L: float = float(w.pirate["ropes"][0]["len"])
+		check(b.pos.distance_to(c.pos) <= L + 2.0 or not (b.alive and c.alive), "rope keeps them close: %.0f" % b.pos.distance_to(c.pos))
+	# 나무 의족: 박히면 잘 밀리지 않는다
+	var w2 := _pirate_world()
+	var p := w2.add_stone(0, Vector2(0, 0), 0)
+	p.parts["prop"] = "peg_leg"
+	shoot(w2, p.id, Vector2.RIGHT, 0.05)
+	check(p.status.has("anchored"), "peg leg anchored")
+	var e := w2.add_stone(1, Vector2(-120, 0), 0)
+	var px := p.pos.x
+	shoot(w2, e.id, Vector2.RIGHT, 0.3)
+	check(absf(p.pos.x - px) < 20.0, "anchored stone barely moved: %.0f" % (p.pos.x - px))
+	# 구명보트: 떨어지면 다음 내 차례에 판 끝으로 돌아온다
+	var w3 := _pirate_world()
+	var l := w3.add_stone(0, Vector2(300, 0), 0)
+	w3.add_stone(1, Vector2(-300, 0), 0)
+	l.parts["prop"] = "lifeboat"
+	shoot(w3, l.id, Vector2.RIGHT, 1.0)
+	check(not l.alive and l.status.has("lifeboat"), "fell with a lifeboat")
+	World.Pirate.turn_start(w3, 0)
+	check(l.alive and int(w3.pirate["skip"]) == 0, "came back at the edge, skips this turn")
+	# 노 젓기: 첫 충돌 뒤 바람 방향으로
+	var w4 := _pirate_world()
+	w4.pirate["winds"] = [2, 2, 2, 2]   # 바람: 아래(+y)
+	var o := w4.add_stone(0, Vector2(-200, 0), 0)
+	w4.add_stone(1, Vector2(-120, 0), 0)
+	o.parts["prop"] = "oar"
+	shoot(w4, o.id, Vector2.RIGHT, 0.3)
+	check(o.pos.y > 30.0, "oar slid with the wind: %s" % o.pos)
+	# 점프 판자: 지나는 알이 공중에 뜬다
+	var w5 := _pirate_world()
+	w5.pirate["ramps"].append({"pos": Vector2(-100, 0), "dir": Vector2.RIGHT, "until": 9, "owner": 0})
+	var j := w5.add_stone(0, Vector2(-200, 0), 0)
+	var k := w5.add_stone(1, Vector2(-40, 0), 0)
+	shoot(w5, j.id, Vector2.RIGHT, 0.45)
+	check(j.pos.x > k.pos.x or count_events(w5, "jump", "") >= 1, "jumped over")
+	# 보물 상자: 다음 바퀴 끝에 1칸 안의 알 주인 +1
+	var w6 := _pirate_world()
+	w6.pirate["chests"].append({"pos": Vector2(0, 0), "round": 1, "owner": 0})
+	w6.add_stone(1, Vector2(30, 0), 0)
+	var ex := World.Pirate.round_end(w6, 2)
+	check(int(ex.get(1, 0)) == 1, "chest gives an extra card")
+
+
+func test_pirate_flow() -> void:
+	var m := Match.new()
+	m.setup(4, [], 4, false, {"workshop": "pirate"})
+	check(not m.world.pirate.is_empty(), "pirate state ready")
+	m.extra_offer[0] = 1
+	check(m.roll_offer(0).size() == 4, "treasure: 4 cards")
+	var guard := 0
+	while m.phase != "over" and guard < 300 and m.round_no < 10:
+		guard += 1
+		if m.phase == "fx":
+			m.settle_fx()
+		elif m.phase == "draft":
+			m.equip(m.current_drafter(), "", -1)
+		else:
+			m.skip_turn()
+	check(m.round_no >= 10 or m.phase == "over", "pirate match keeps running: round %d" % m.round_no)

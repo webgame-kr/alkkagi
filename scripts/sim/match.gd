@@ -100,6 +100,10 @@ func setup(n_players: int, cpu_flags: Array, seed_value: int, timed: bool, opts 
 	_place_stones()
 	if mode == "crown":
 		world.crown = World.Crown.make(world.stones.size())
+	if workshop == "pirate":
+		var wrng := RandomNumberGenerator.new()
+		wrng.seed = seed_value * 17 + 3
+		World.Pirate.setup(world, wrng)
 	world.gimmicks = World.Gm.generate(workshop, n, world, gimmick_rng)
 	homes.clear()
 	for st in world.stones:
@@ -151,7 +155,13 @@ func _place_stones() -> void:
 
 
 func stones_left(pid: int) -> int:
-	return world.alive_stones_of(pid).size()
+	var n0: int = world.alive_stones_of(pid).size()
+	if not world.pirate.is_empty():
+		# 구명보트를 탄 알은 아직 남은 것으로 센다
+		for s in world.stones:
+			if not s.alive and s.owner == pid and s.status.has("lifeboat"):
+				n0 += 1
+	return n0
 
 
 func alive_players() -> Array:
@@ -295,7 +305,9 @@ func roll_offer(pid: int) -> Array:
 	for id in out:
 		if fits.call(id):
 			fit_count += 1
-	while out.size() < OFFER_COUNT and not pool.is_empty():
+	var want: int = OFFER_COUNT + int(extra_offer.get(pid, 0))
+	extra_offer.erase(pid)
+	while out.size() < want and not pool.is_empty():
 		var candidates: Array = pool
 		# 후보 중 공용 부품은 최대 1장 (나머지는 공방 전용)
 		var commons := out.filter(func(x): return PartsData.COMMON_PARTS.has(x)).size()
@@ -550,6 +562,10 @@ func _settle_turn() -> void:
 		_go_aim()
 		return
 	# 바퀴 끝
+	var chest := World.Pirate.round_end(world, round_no)
+	for cp in chest:
+		extra_offer[cp] = int(extra_offer.get(cp, 0)) + int(chest[cp])
+		order_log.append({"kind": "chest", "pid": cp})
 	if mode == "parcel" and round_no % parcel_every == 0 and _parcel_settle():
 		return
 	round_no += 1
@@ -927,6 +943,7 @@ var bonus_active := {}        # 지금 덤 차례: 이 알만, 힘 70%
 var bonus_used := {}          # pid → 정각을 쓴 바퀴
 var pending_delay := {}       # 늦잠 열쇠: 다음 바퀴에 한 칸 뒤로 미룰 사람
 var order_log: Array = []     # 화면이 읽고 비우는 차례 순서 변경 {kind, pid}
+var extra_offer := {}         # 보물 상자: pid → 다음 개조 후보 추가 장 수
 
 
 ## 새 차례가 시작될 때 (모든 「차례 시작」은 여기로)
@@ -937,6 +954,14 @@ func _go_aim() -> void:
 	world.turn_no += 1
 	if _start_fx("turn_start"):
 		return
+	_check_forced_skip()
+
+
+## 구명보트로 돌아온 사람은 이번 차례를 쉰다
+func _check_forced_skip() -> void:
+	if not world.pirate.is_empty() and int(world.pirate.get("skip", -1)) == current_player() and phase == "aim":
+		world.pirate["skip"] = -1
+		skip_turn()
 
 
 func _start_fx(stage: String) -> bool:
@@ -945,10 +970,13 @@ func _start_fx(stage: String) -> bool:
 	match stage:
 		"round_start":
 			moved = World.Clock.round_start(world, round_no)
+			moved = World.Pirate.round_start(world, round_no) or moved
 		"turn_start":
 			moved = World.Clock.turn_start(world, current_player())
+			moved = World.Pirate.turn_start(world, current_player()) or moved
 		"turn_end":
 			moved = World.Clock.turn_end(world, current_player())
+			moved = World.Pirate.turn_end(world, current_player()) or moved
 	if not moved:
 		return false
 	fx_stage = stage
@@ -987,7 +1015,8 @@ func finish_fx() -> void:
 			_begin_round_rest()
 		"turn_start":
 			phase = "aim"
-			if current_player() >= 0 and stones_left(current_player()) == 0 and mode == "survival":
+			_check_forced_skip()
+			if phase == "aim" and current_player() >= 0 and stones_left(current_player()) == 0 and mode == "survival":
 				_settle_turn()
 		"turn_end":
 			_settle_turn()

@@ -13,6 +13,7 @@ const BY_WORKSHOP := {
 	"toon": ["cutline", "blocks", "nextch"],
 	"lab": ["zerog", "sizering", "turntable"],
 	"clock": ["pendulum", "cuckoo", "clockhand"],
+	"pirate": ["tide", "whirlpool", "crates"],
 }
 
 const INFO := {
@@ -30,6 +31,9 @@ const INFO := {
 	"pendulum": {"name": "흔들 진자", "desc": "차례가 끝날 때마다 추가 좌우 끝을 오가며 지나는 길의 알을 밀어내요. 다음 자리는 점선"},
 	"cuckoo": {"name": "뻐꾸기 시계", "desc": "3·5바퀴 시작에 판 위 모든 알을 가리키는 방향으로 1칸 밀어요. 한 바퀴 전부터 화살표로 예고"},
 	"clockhand": {"name": "시곗바늘 막대", "desc": "차례가 끝날 때마다 30도씩 돌며 쓸고 지나간 자리의 알을 밀어내요"},
+	"tide": {"name": "밀물·썰물", "desc": "짝수 바퀴는 밀물: 판 가장자리 1칸이 잠겨요. 잠긴 칸에 있던 알은 바퀴 시작에 떨어져요. 한 바퀴 전부터 물결로 예고"},
+	"whirlpool": {"name": "소용돌이", "desc": "지름 4칸 안을 지나는 알이 중심 쪽으로 휘고, 중심 1칸 안에 멈춘 알은 다음 차례 시작에 바람 방향으로 2칸 튕겨 나가요"},
+	"crates": {"name": "떠다니는 나무 상자", "desc": "상자 2개가 차례가 끝날 때마다 바람 방향으로 1칸 떠가요. 판 끝에 닿으면 반대편에서 다시 들어와요"},
 	"turntable": {"name": "회전 원판", "desc": "샷이 끝날 때마다 가운데 원판이 45도 돌고, 위의 알도 함께 돌아요"},
 }
 
@@ -81,7 +85,7 @@ static func _keep_out_of_zones(g: Dictionary, w) -> Dictionary:
 			continue
 		var p: Vector2 = it["pos"]
 		var r: float = float(it.get("r", 0.0))
-		if g["kind"] == "gwell":
+		if g["kind"] == "gwell" or g["kind"] == "whirlpool":
 			r = 0.6 * CELL   # 우물은 가운데 몸통만 (끌어당기는 범위는 넓게 걸쳐도 된다)
 		var lim: float = maxf(1.05 * CELL, w.size - 6.6 * CELL - r)   # 판 중심 1칸 안은 계속 피한다
 		if p.length() > lim:
@@ -160,6 +164,14 @@ static func _place(kind: String, w, rng: RandomNumberGenerator) -> Dictionary:
 			return {"kind": "pendulum", "items": [{"a": c0 - ax * half, "b": c0 + ax * half, "at": 0, "r": 0.75 * CELL}]}
 		"cuckoo":
 			return {"kind": "cuckoo", "items": [], "dir": snappedf(base, PI / 4.0)}
+		"tide":
+			return {"kind": "tide", "items": []}
+		"whirlpool":
+			var dw := rng.randf_range(ring.x, ring.y)
+			return {"kind": "whirlpool", "items": [{"pos": Vector2.from_angle(base) * dw, "r": 2.0 * CELL}]}
+		"crates":
+			var dc := rng.randf_range(ring.x + 0.4 * CELL, ring.y)
+			return {"kind": "crates", "items": [{"pos": Vector2.from_angle(base) * dc, "r": 0.6 * CELL}, {"pos": Vector2.from_angle(base + PI) * dc, "r": 0.6 * CELL}]}
 		"clockhand":
 			return {"kind": "clockhand", "items": [{"ang": base, "len": maxf(2.0 * CELL, w.size - 3.0 * CELL)}]}
 	return {"kind": kind, "items": []}
