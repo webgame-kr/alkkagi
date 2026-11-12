@@ -364,11 +364,25 @@ func _debug_args() -> void:
 			get_viewport().get_texture().get_image().save_png("%s/s%03d.png" % [_shot_dir, _shot_n]))
 		add_child(t)
 	mu_force_cut = args.has("--cut")
-	if args.has("--mudemo") and m.workshop == "museum":
-		# 그랑 뮤제 연출 확인용: 처음부터 부품을 달아 둔다
-		var kits := [["megaphone", "director_chair", "clapper"], ["wave_print", "scream_bridge", "starry_brush"], ["rolling_boulder", "laser_glove", "shark_fin"],
+	if args.has("--mudemo"):
+		# 공방 연출 확인용: 처음부터 부품을 달아 둔다
+		var kits := [["hour_hammer", "late_key", "minute_spring"], ["time_spring", "metronome", "replay_spring"], ["rewind_watch", "alarm_clock", "tick_step"], ["order_swap", "wind_mouse", "slow_spring"]] if m.workshop == "clock" else []
+		if m.workshop == "pirate":
+			kits = [["parrot_hat", "hook_hand", "peg_leg"], ["hole_cannon", "plank_dock", "lifeboat"], ["bolas", "rum_barrel", "oar"], ["flag_signal", "water_pump", "wind_sail"]]
+		if m.workshop == "lab":
+			kits = [["shrink_ray", "merge_bolt", "inflate"], ["sticky", "repel", "split_capsule"], ["remote", "decoy", "ghost"], ["tilter", "coupling", "weight"]]
+		if m.workshop == "junk":
+			kits = [["trex_head", "trex_arm", "trex_leg"], ["copier", "carousel", "brake"], ["claw", "mine", "crab"], ["hook", "trex_arm", "trex_leg"]]
+		if m.workshop == "magic":
+			kits = [["moon_staff", "star_cloak", "moon_boots"], ["night_charm", "moon_well", "anchor"], ["echo_bell", "wind_knot", "side_scroll"], ["shadow_scale", "shadow_scale", "anchor"]]
+		if m.workshop == "toon":
+			kits = [["hero_band", "torn_cape", "awaken_shoes"], ["rubber_fist", "at_field", "flash_step"], ["charge_palm", "log_sub", "drift_tire"], ["alchemy_glove", "trap_card", "rebound_shoes"]]
+		if m.workshop == "museum":
+			kits = [["megaphone", "director_chair", "clapper"], ["wave_print", "scream_bridge", "starry_brush"], ["rolling_boulder", "laser_glove", "shark_fin"],
 			["finger_touch", "follow_eyes", "pointill_spray"], ["duel_holster", "rain_umbrella", "matrix_shades"], ["venus_arms", "gleaner_broom", "clapper"]]
 		var ki := 0
+		if kits.is_empty():
+			kits = [["", "", ""]]
 		for st in m.world.stones:
 			var kit: Array = kits[ki % kits.size()]
 			st.parts = {"weapon": kit[0], "aux": kit[1], "prop": kit[2]}
@@ -545,11 +559,13 @@ func _place() -> void:
 
 
 func w2s(p: Vector2) -> Vector2:
+	if mo_tilt != 0.0:
+		return view_center + shake_off + (p * view_scale).rotated(mo_tilt)
 	return view_center + shake_off + p * view_scale
 
 
 func s2w(p: Vector2) -> Vector2:
-	return (p - view_center - shake_off) / view_scale
+	return ((p - view_center - shake_off) / view_scale).rotated(-mo_tilt)
 
 
 # ── 경기 시작 ────────────────────────────────────────────
@@ -559,6 +575,8 @@ func _start_match(seed_value := -1) -> void:
 		_host_start()
 		return
 	match_started_t = time
+	_mo_reset()
+	_mo2_reset()
 	mu_frame = {}
 	mu_film = {}
 	mu_rewind = {}
@@ -715,6 +733,8 @@ func _update_play(delta: float) -> void:
 	_take_parcel_events()
 	_take_order_log()
 	_museum_tick(delta)
+	_mo_tick(delta)
+	_mo2_tick(delta)
 	if turn_hold > 0.0:
 		turn_hold -= delta
 		return
@@ -869,6 +889,7 @@ func _on_phase_changed() -> void:
 						continue
 					fx.append({"k": "text", "pos": st_a.pos + Vector2(0, -40), "t": 0.0, "life": 1.6, "text": al["text"], "c": POWER, "size": 26})
 					fx.append({"k": "ring", "pos": st_a.pos, "t": 0.0, "life": 0.8, "r": 60.0, "c": POWER})
+					_mo2_set_flash(st_a.pos)
 				set_alerts.clear()
 				snd.play("set_complete", -4.0)
 				turn_hold = 0.4 if _reduced() else 1.1
@@ -995,7 +1016,11 @@ var _banner_col := TEXT
 
 func _consume_events() -> void:
 	for e in m.world.events:
+		if _mo_on_event(e) or _mo2_on_event(e):
+			continue
 		var owner_col: Color = m.players[e["owner"]].color if e.has("owner") and e["owner"] >= 0 and e["owner"] < m.players.size() else TEXT
+		if e["t"] == "out" and str(e.get("cause", {}).get("part", "")) == "gm_tide":
+			fx.append({"k": "text", "pos": e["pos"] + Vector2(0, -30), "t": 0.0, "life": 0.9, "text": "풍덩", "c": Color.WHITE, "size": 20})
 		match e["t"]:
 			"hit":
 				_on_hit(e)
@@ -1039,6 +1064,8 @@ func _consume_events() -> void:
 				var part_id: String = e.get("part", "")
 				if not m.world.museum.is_empty():
 					_on_museum_part(e)
+				_mo_on_part(e)
+				_mo2_on_part(e)
 				if part_id == "hero_set":
 					# 라스트 컷: 0.3초 만화 컷 정지
 					hitstop = maxf(hitstop, 0.3)
@@ -1078,8 +1105,13 @@ func _consume_events() -> void:
 					snd.play("fx_parody_slowmo", -3.0)
 				var sid: int = e.get("stone", -1)
 				var info: Dictionary = PartsData.get_part(e["part"])
-				fx.append({"k": "manga", "stone": sid, "pos": e["pos"], "t": 0.0, "life": 0.7,
-					"text": info.get("sfx", ""), "c": Color(info.get("sfx_color", "#F2A23A"))})
+				var mst = m.world.get_stone(sid)
+				var strong: bool = mst != null and World.Parts.up(mst, str(e["part"]))
+				fx.append({"k": "manga", "stone": sid, "pos": e["pos"], "t": 0.0, "life": 0.9 if strong else 0.7,
+					"text": info.get("sfx", "") + ("!!" if strong else ""), "c": Color(info.get("sfx_color", "#F2A23A"))})
+				if strong and not _reduced():
+					fx.append({"k": "mo2_screenflash", "pos": e["pos"], "t": 0.0, "life": 0.08, "c": Color.WHITE})
+					fx.append({"k": "mo2_screenflash", "pos": e["pos"], "t": -0.3, "life": 0.08, "c": Color.WHITE})
 				if m.world.shot_no != slowmo_shot and not _all_cpu():
 					slowmo_shot = m.world.shot_no
 					slowmo = 0.15
@@ -1461,7 +1493,7 @@ func _draw_inner() -> void:
 	if m.phase == "place":
 		_draw_placing()
 	for s in m.world.stones:
-		if s.alive and m.phase != "place":
+		if s.alive and m.phase != "place" and not _mo_hidden("stone:%d" % s.id):
 			_draw_stone(s)
 	_draw_crown_held()
 	_perf_sec["stones"] = _perf_sec.get("stones", 0.0) + float(Time.get_ticks_usec() - _ts)
@@ -1469,6 +1501,7 @@ func _draw_inner() -> void:
 	_draw_projs()
 	_draw_fx()
 	_draw_museum_over()
+	_draw_mo2_over()
 	_draw_museum_frame()
 	_draw_aim_over()
 	_draw_remote_marks()
@@ -1476,6 +1509,7 @@ func _draw_inner() -> void:
 	_perf_sec["fx"] = _perf_sec.get("fx", 0.0) + float(Time.get_ticks_usec() - _ts)
 	_ts = Time.get_ticks_usec()
 	_draw_museum_screen(vs)
+	_draw_mo2_screen(vs)
 	if banner_t > 0.0:
 		_draw_banner(vs)
 	_draw_hud(vs)
@@ -1662,6 +1696,7 @@ func _draw_stone(s) -> void:
 	var badges: Array = []
 	if s.status.has("sealed"):
 		badges.append(["봉인", Color("9A86D8")])
+		_mo2_draw_seal(p, World.STONE_R * view_scale)
 	if s.status.has("cursed"):
 		badges.append(["저주", Color("8A68D1")])
 	if m.world.shot != null and m.world.shot.ex.get("marks", {}).has(s.id):
@@ -1983,6 +2018,12 @@ func _draw_fx() -> void:
 			continue
 		var u: float = f["t"] / f["life"]
 		var c: Color = f["c"]
+		if str(f["k"]).begins_with("mo_"):
+			_draw_mo_fx(f, minf(u, 1.0))
+			continue
+		if str(f["k"]).begins_with("mo2_"):
+			_draw_mo2_fx(f, minf(u, 1.0))
+			continue
 		match f["k"]:
 			"spark":
 				var sp0 := w2s(f["pos"] + f["vel"] * f["t"] * (1.0 - u * 0.5))
@@ -2560,6 +2601,7 @@ func _draw_order(r: Rect2) -> void:
 	for pid in rows:
 		var p: Dictionary = m.players[pid]
 		var a := 0.4 if p.out else 1.0
+		draw_set_transform(Vector2(0, _mo_row_y(pid, y) - y))
 		var row := Rect2(r.position.x + 10, y, r.size.x - 20, row_h - 2)
 		if pid == cur and not p.out:
 			_round_rect(row, Color(FG, 0.07), 8)
@@ -2570,6 +2612,7 @@ func _draw_order(r: Rect2) -> void:
 		var name_w := (font_bold if pid == cur else font).get_string_size(p.name, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
 		if m.mode == "crown":
 			_draw_crown_row(row, pid, nx + name_w + 8, cy, a, pid == cur, i)
+			draw_set_transform_matrix(Transform2D.IDENTITY)
 			y += row_h
 			i += 1
 			continue
@@ -2611,6 +2654,7 @@ func _draw_order(r: Rect2) -> void:
 				tag = "정산 직전"
 			if tag != "" and not portrait:
 				_txt(Vector2(right - 12 - left * 12, cy + 4), tag, 12, HINT_GOLD if tag == "지금" else SUB, font_semi, 70, HORIZONTAL_ALIGNMENT_RIGHT)
+		draw_set_transform_matrix(Transform2D.IDENTITY)
 		y += row_h
 		i += 1
 
@@ -4500,6 +4544,12 @@ func _part_word(part: String) -> String:
 		return "물고 던지기"
 	if part == "moon_set":
 		return "궤도 마법"
+	if part == "captain_set":
+		return "포격 명령"
+	if part == "clock_set":
+		return "정각"
+	if part == "hero_set":
+		return "라스트 컷"
 	return PartsData.part_name(part) if PartsData.CATALOG.has(part) else part
 
 
@@ -5249,7 +5299,8 @@ func _update_arena_cache() -> void:
 		arena_drawer.queue_redraw()
 		arena_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
 		arena_node.queue_redraw()
-	arena_node.position = shake_off
+	arena_node.rotation = mo_tilt
+	arena_node.position = shake_off + (view_center - view_center.rotated(mo_tilt) if mo_tilt != 0.0 else Vector2.ZERO)
 	Art.skin = m.workshop if (m != null and state != "setup" and settings.get("skins", false)) else ""
 	var pkey := theme_id + Art.skin + str(slot_colors) + str(Art.slot_symbols) + str(Art.slot_forms)
 	if pkey != _puck_key:
@@ -5510,6 +5561,11 @@ func _draw_gimmicks() -> void:
 						snd.play("puck_hit_heavy", 2.0, 0.6)
 						shake = maxf(shake, 6.0)
 					var ht: float = time - float(h["t"])
+					if ht < 0.25:
+						var hp0 := w2s(h["pos"])
+						var tail := hp0 + Vector2(80, -130) * (1.0 - ht / 0.25)
+						draw_line(tail, tail + Vector2(70, -90), Color("FFE08A", 0.7), 6.0, true)
+						draw_circle(tail, 9.0, Color("FFE08A"))
 					if ht < 0.8:
 						var hp := w2s(h["pos"])
 						draw_circle(hp, (40.0 + 140.0 * ht) * k, Color("FFB347", 0.5 * (1.0 - ht / 0.8)))
@@ -5579,15 +5635,15 @@ func _draw_gimmicks() -> void:
 					draw_circle(ctt, rtt, Color(0.85, 0.88, 0.9, 0.55))
 					var teeth := 24
 					for i in teeth:
-						var ta := float(it["ang"]) + TAU * i / teeth
+						var ta := _mo2_turn_ang(float(it["ang"])) + TAU * i / teeth
 						draw_line(ctt + Vector2.from_angle(ta) * rtt, ctt + Vector2.from_angle(ta) * (rtt + 7.0), Color("3A3F45"), 3.0, true)
 					draw_arc(ctt, rtt, 0, TAU, 64, Color("3A3F45"), 2.0, true)
 					for i in 4:
-						var sa := float(it["ang"]) + PI / 2.0 * i
+						var sa := _mo2_turn_ang(float(it["ang"])) + PI / 2.0 * i
 						draw_line(ctt + Vector2.from_angle(sa) * rtt * 0.2, ctt + Vector2.from_angle(sa) * rtt * 0.85, Color(0, 0, 0, 0.12), 2.0, true)
 			"bolt":
 				for it in g["items"]:
-					var c2 := w2s(it["pos"])
+					var c2 := w2s(it["pos"]) + _mo2_bolt_off(it["pos"])
 					var r2: float = float(it["r"]) * k
 					draw_circle(c2 + Vector2(0, r2 * 0.25), r2 * 1.05, Color(0, 0, 0, 0.35))
 					draw_circle(c2, r2, Color("9AA0A6"))
@@ -5918,6 +5974,12 @@ func _draw_lab_doors(vs: Vector2) -> void:
 		var edge: float = r.end.x - 6.0 if side < 0 else r.position.x
 		shutter.draw_rect(Rect2(edge, 0, 6, vs.y), Color("1A1D21"))
 		shutter.draw_circle(Vector2(edge + (-30.0 if side < 0 else 36.0), vs.y * 0.5), 10, Color("8A929C"))
+	var pk := clampf((shutter_t - (INTRO_CLOSED - 0.05)) / 0.65, 0.0, 1.0)
+	if pk > 0.0 and pk < 1.0:
+		for i in 6:
+			var a := TAU * i / 6.0 - PI / 2.0
+			var e := 1.0 - pow(1.0 - pk, 3.0)
+			shutter.draw_circle(vs * 0.5 + Vector2(cos(a) * 60.0 * e, sin(a) * 60.0 * e - 10.0 * pk) * 2.0, 12.0 + pk * 30.0, Color(0.95, 0.96, 0.97, 0.85 * (1.0 - pk)))
 	if m == null:
 		return
 	var info: Dictionary = PartsData.WORKSHOPS["lab"]
@@ -6017,8 +6079,11 @@ func _intro_open_sound() -> void:
 			snd.play("set_complete", -2.0, 0.55)   # 댕
 		"pirate":
 			snd.play("flick_pull", -4.0, 0.6)   # 돛이 부풀고 날아감
+			get_tree().create_timer(0.6).timeout.connect(func(): snd.play("ui_click", -8.0, 2.6))   # 갈매기
 		"museum":
 			snd.play("flick_pull", -2.0, 0.35)   # 무거운 문 끼익
+		"lab":
+			snd.play("flick_pull", -4.0, 1.9)   # 치익
 		"toon":
 			snd.play("flick_release", -2.0, 0.6)  # 책장 넘기는 소리와 쿵
 			get_tree().create_timer(0.35).timeout.connect(func(): snd.play("fx_parody_stamp", -4.0, 0.8))
@@ -6898,6 +6963,9 @@ func _take_order_log() -> void:
 		var pl: Dictionary = m.players[int(ev["pid"])]
 		match str(ev["kind"]):
 			"delay":
+				mo_ord_until = time + 0.6
+				for q in 4:
+					get_tree().create_timer(0.12 * q).timeout.connect(func(): snd.play("timer_tick", -10.0, 0.7))   # 드르륵
 				late_tag[int(ev["pid"])] = m.world.turn_no
 				_log("늦잠! %s 차례가 한 칸 뒤로 밀렸어요" % pl.name, pl.color)
 				_banner("늦잠!", pl.color, "%s 차례가 한 칸 뒤로" % pl.name)
@@ -6907,6 +6975,9 @@ func _take_order_log() -> void:
 			"chest":
 				_log("보물 상자! %s 다음 개조 후보 +1장" % pl.name, pl.color)
 			"swap":
+				mo_ord_until = time + 0.6
+				for q2 in 4:
+					get_tree().create_timer(0.12 * q2).timeout.connect(func(): snd.play("timer_tick", -10.0, 0.7))
 				_log("순서 바꾸기! %s 이번 바퀴 맨 끝으로" % _j(pl.name, "은", "는"), pl.color)
 				_banner("순서 바꾸기", pl.color, "%s 이번 바퀴 맨 끝으로" % _j(pl.name, "은", "는"))
 	m.order_log.clear()
@@ -6926,7 +6997,7 @@ func _draw_clock_gimmick(g: Dictionary) -> void:
 			var a := w2s(it["a"])
 			var b := w2s(it["b"])
 			var at: int = int(it["at"])
-			var cur := a if at == 0 else b
+			var cur := w2s(_mo_pendulum_pos(it["a"] if at == 0 else it["b"]))
 			var nxt := b if at == 0 else a
 			draw_dashed_line(a, b, Color(CLOCK_GOLD, 0.35), 2.0, 10.0)
 			# 다음 자리: 점선 원
@@ -6947,7 +7018,7 @@ func _draw_clock_gimmick(g: Dictionary) -> void:
 			draw_arc(cur, rr, 0, TAU, 28, Art.outline, 2.0, true)
 		"clockhand":
 			var it2: Dictionary = g["items"][0]
-			var ang: float = float(it2["ang"])
+			var ang: float = _mo_clockhand_ang(float(it2["ang"]))
 			var L: float = float(it2["len"])
 			var c := w2s(Vector2.ZERO)
 			var tip := w2s(Vector2.from_angle(ang) * L)
@@ -7033,6 +7104,10 @@ func _draw_clock_things() -> void:
 		var shown := icons.slice(0, 2)
 		var x0 := p2 + Vector2(u * 0.75, -u * 0.9)
 		for ic in shown:
+			if ["hand", "bomb", "bow"].has(ic["kind"]):
+				_mo_draw_cd(x0, s.id, ic, u * 0.4)
+				x0 += Vector2(u * 0.82, 0)
+				continue
 			_draw_status_icon(x0, ic["kind"], u * 0.4)
 			if int(ic.get("n", 0)) > 0:
 				_status_badge(x0 + Vector2(-u * 1.5, 0), int(ic["n"]))
@@ -7119,9 +7194,9 @@ func _draw_clock_intro(vs: Vector2) -> void:
 				shutter.draw_line(p1, p2, Color("1E2030"), 10.0 if h % 3 == 0 else 6.0, true)
 	if k <= 0.0:
 		# 바늘: 11시 58분에서 12시로
-		var t := clampf(shutter_t / INTRO_CLOSED, 0.0, 1.0)
-		var minute := -PI / 2.0 - TAU * (2.0 / 60.0) * (1.0 - t)
-		var hour := -PI / 2.0 - TAU * (2.0 / 720.0) * (1.0 - t)
+		var snap := clampf((shutter_t - (INTRO_CLOSED - 0.15)) / 0.15, 0.0, 1.0)
+		var minute := -PI / 2.0 - deg_to_rad(12.0) * (1.0 - _back(snap))
+		var hour := -PI / 2.0 - TAU * (2.0 / 720.0) * (1.0 - snap)
 		shutter.draw_line(c, c + Vector2.from_angle(hour) * R * 0.45, Color("1E2030"), 16.0, true)
 		shutter.draw_line(c, c + Vector2.from_angle(minute) * R * 0.7, Color("1E2030"), 10.0, true)
 		shutter.draw_circle(c, 14.0, Color("C9A15A"))
@@ -7139,8 +7214,12 @@ func _draw_clock_intro(vs: Vector2) -> void:
 			shutter.draw_string(font_display, box.position + Vector2(0, 70), nm, HORIZONTAL_ALIGNMENT_CENTER, bw, 36, Color("F4F1E8"))
 			_draw_intro_gimmicks(vs, box.end.y + 16.0, Color("C9A15A"), Color("1B2148"))
 	elif k < 0.5:
-		# 12시 정각: 「댕」
-		_text_outline(Vector2(c.x, c.y - 40.0), "댕!", 48, Color("F2C14E"), true)
+		# 12시 정각: 「댕」, 금빛이 한 번 번진다
+		var fl := clampf(k / 0.3, 0.0, 1.0)
+		shutter.draw_circle(c, 40.0 + fl * 160.0, Color(1.0, 0.88, 0.54, 0.6 * (1.0 - fl)))
+		for o in [Vector2(-3, 0), Vector2(3, 0), Vector2(0, -3), Vector2(0, 3)]:
+			shutter.draw_string(font_display, Vector2(c.x - 100.0, c.y - 24.0) + o, "댕!", HORIZONTAL_ALIGNMENT_CENTER, 200, 48, Color("1A1D21"))
+		shutter.draw_string(font_display, Vector2(c.x - 100.0, c.y - 24.0), "댕!", HORIZONTAL_ALIGNMENT_CENTER, 200, 48, Color("F2C14E"))
 
 
 # ── 해적 선착장 화면 ─────────────────────────────────────
@@ -7160,13 +7239,15 @@ func _draw_pirate_board() -> void:
 	var c := w2s(Vector2.ZERO)
 	var R: float = w.size * k
 	if World.Pirate.has_tide(w):
-		if int(pr.get("tide", 0)) > 0:
-			# 밀물: 가장자리 1칸이 물에 잠김
-			draw_arc(c, R - CELL * k * 0.5, 0, TAU, 96, Color(SEA_COL, 0.75), CELL * k, false)
+		if time - mo_ebb_t < 0.6:
+			draw_arc(c, R - CELL * k * 0.5, 0, TAU, 96, Color(0.43, 0.27, 0.14, 0.35 * (1.0 - (time - mo_ebb_t) / 0.6)), CELL * k, false)
+		if mo_tide > 0.01:
+			# 밀물: 가장자리 1칸이 물에 잠김 (0.8초에 걸쳐 차오름)
+			draw_arc(c, R - CELL * k * mo_tide * 0.5, 0, TAU, 96, Color(SEA_COL, 0.75), CELL * k * mo_tide, false)
 			for i in 24:
 				var a := TAU * i / 24.0 + time * 0.3
 				draw_arc(c, R - CELL * k * 0.5, a, a + 0.12, 4, Color(1, 1, 1, 0.35), 2.0, true)
-		elif World.Pirate.tide_round(m.round_no + 1):
+		if int(pr.get("tide", 0)) == 0 and World.Pirate.tide_round(m.round_no + 1):
 			# 다음 바퀴 밀물 예고: 물결무늬
 			for i in 36:
 				var a2 := TAU * i / 36.0
@@ -7198,6 +7279,8 @@ func _draw_pirate_board() -> void:
 					draw_line(cp + Vector2(hs, -hs), cp + Vector2(-hs, hs), Color("6B4523"), 3.0)
 					draw_rect(Rect2(cp - Vector2(hs, hs), Vector2.ONE * hs * 2.0), Art.outline, false, 2.0)
 	for pk in pr.get("planks", []):
+		if _mo_hidden("plank"):
+			break
 		var o: Vector2 = pk["dir"]
 		var base: Vector2 = pk["pos"]
 		var side := o.orthogonal()
@@ -7211,6 +7294,8 @@ func _draw_pirate_board() -> void:
 		draw_polyline(pts2, Art.outline, 2.0, true)
 		_text_outline(w2s(base + o * CELL * 1.0) + Vector2(0, 18), "경계 +%d칸" % (2 if float(pk.get("len", 1.6)) > 2.0 else 1), 12, Color.WHITE, true)
 	for h in pr.get("holes", []):
+		if _mo_hidden("hole:%d,%d" % [int((h["pos"] as Vector2).x), int((h["pos"] as Vector2).y)]):
+			continue
 		var hp := w2s(h["pos"])
 		var hr := World.Pirate.HOLE_R * k
 		var jag := PackedVector2Array()
@@ -7278,6 +7363,8 @@ func _draw_pirate_board() -> void:
 		if s.status.has("anchored"):
 			draw_arc(sp, u * 1.12, 0, TAU, 24, Color("6B4523"), 3.0, true)
 	for s2 in w.stones:
+		if _mo_hidden("parrot"):
+			break
 		for key in ["parrot", "parrot_next"]:
 			if s2.alive and s2.status.has(key):
 				var tgt = w.get_stone(int(s2.status[key]))
@@ -7295,7 +7382,7 @@ func _draw_wind_vane(vs: Vector2) -> void:
 	var r := Rect2(vs.x * 0.5 + 124.0, 22, 262, 66)
 	_panel(r)
 	var c := r.position + Vector2(36, 33)
-	var wd := World.Pirate.wind(m.world)
+	var wd := Vector2.from_angle(_mo_vane_angle()) if mo_wind_ang != INF else World.Pirate.wind(m.world)
 	draw_circle(c, 25, Color("F3EAD3"))
 	draw_arc(c, 25, 0, TAU, 32, Color("2A1E12"), 2.5, true)
 	for k in 4:
@@ -7397,6 +7484,7 @@ func _draw_pirate_intro(vs: Vector2) -> void:
 	var fe := fly * fly
 	var sc := 1.0 - 0.75 * fe
 	var origin := Vector2(vs.x * (1.0 - sc) * 0.5, 0) + Vector2(vs.x * 0.7, -vs.y * 0.55) * fe
+	shutter.draw_set_transform_matrix(Transform2D(deg_to_rad(30.0) * fe, vs * 0.5) * Transform2D(0.0, -vs * 0.5))
 	var bottom := vs.y * (1.0 - 0.45 * lift)
 	var bulge := vs.y * 0.18 * lift
 	var pts := PackedVector2Array()
@@ -7429,7 +7517,9 @@ func _draw_pirate_intro(vs: Vector2) -> void:
 		shutter.draw_string(font_bold, box.position + Vector2(0, 26), "오늘의 공방" + _mode_suffix(), HORIZONTAL_ALIGNMENT_CENTER, bw, 13, Color(0.89, 0.76, 0.48, a))
 		shutter.draw_string(font_display, box.position + Vector2(0, 70), nm, HORIZONTAL_ALIGNMENT_CENTER, bw, 36, Color(0.95, 0.9, 0.8, a))
 		if a > 0.99:
+			shutter.draw_set_transform_matrix(Transform2D.IDENTITY)
 			_draw_intro_gimmicks(vs, box.end.y + 16.0, SEA_COL, Color.WHITE)
+	shutter.draw_set_transform_matrix(Transform2D.IDENTITY)
 	if k > 0.0 and k < 0.2:
 		pass
 
@@ -9659,9 +9749,7 @@ func _draw_museum_over() -> void:
 		var sp := w2s(s.pos)
 		var u := World.STONE_R * k
 		if s.status.has("m_seal"):
-			for q in 6:
-				var a := TAU * q / 6.0 + 0.3
-				draw_arc(sp + Vector2.from_angle(a) * u * 1.05, u * 0.22, 0, TAU, 10, Color("8A9099"), 2.5, true)
+			_mo2_draw_seal(sp, u)
 			_text_outline(sp + Vector2(0, -u * 1.5), "봉인", 12, Color("C3C9D0"), true)
 		if s.status.has("umbrella"):
 			var top := sp + Vector2(0, -u * 1.25)
@@ -10022,3 +10110,798 @@ func _draw_museum_intro(vs: Vector2) -> void:
 			shutter.draw_string(font_bold, box.position + Vector2(0, 84), _mode_suffix().strip_edges(), HORIZONTAL_ALIGNMENT_CENTER, bw, 14, Color(0.95, 0.9, 0.8, a))
 		if a > 0.99:
 			_draw_intro_gimmicks(vs, vs.y * 0.86 - 40.0, MU_WINE, Color("F2D88A"))
+
+
+# ══ 모션 「태엽 시계탑 · 해적 선착장 모션」 ══
+## 시계탑은 「시간이 보인다」(문자판 · 바늘 · 눈금), 선착장은 「배 위의 흔들림」(기울기 · 물보라).
+var mo_tilt := 0.0            # 판 기울기 (rad): 선착장 발동 공통 흔들림
+var mo_sway_t := -9.0
+var mo_cd := {}               # 예약 카운트다운: "id:kind" → {n, t}
+var mo_ord := {}              # 차례 칸 계단 이동: pid → {from, to, t}
+var mo_ord_until := -9.0
+var mo_ord_last := {}         # pid → 지난 칸 y
+var mo_gm := {}               # 기믹 움직임: kind → {a, b, t}
+var mo_wind_ang := INF        # 풍향계 바늘 (그리는 각)
+var mo_wind_from := 0.0
+var mo_wind_t := -9.0
+var mo_tide := 0.0            # 밀물 차오름 0..1
+var mo_tide_target := 0.0
+var mo_ebb_t := -9.0
+var mo_hide := {}             # 연출이 끝날 때까지 감출 것: key → 시각
+var mo_parrot_seen := {}
+var mo_prev_pos := {}         # 지난 프레임 알 위치 (되감기 호의 출발점)
+
+
+func _mo_reset() -> void:
+	mo_tilt = 0.0
+	mo_sway_t = -9.0
+	mo_cd.clear()
+	mo_ord.clear()
+	mo_ord_last.clear()
+	mo_gm.clear()
+	mo_wind_ang = INF
+	mo_tide = 0.0
+	mo_tide_target = 0.0
+	mo_hide.clear()
+	mo_parrot_seen.clear()
+
+
+static func _back(t: float) -> float:
+	var c1 := 1.70158
+	var c3 := c1 + 1.0
+	return 1.0 + c3 * pow(t - 1.0, 3.0) + c1 * pow(t - 1.0, 2.0)
+
+
+static func _eio(t: float) -> float:
+	return 4.0 * t * t * t if t < 0.5 else 1.0 - pow(-2.0 * t + 2.0, 3.0) / 2.0
+
+
+## 부품 발동 공통: 시계탑은 반투명 문자판 + 째깍, 선착장은 판 흔들림 + 물보라
+func _mo_on_part(e: Dictionary) -> void:
+	var pid: String = str(e.get("part", ""))
+	var info: Dictionary = PartsData.get_part(pid)
+	if info.get("clock", false) or pid == "clock_set":
+		fx.append({"k": "mo_dial", "pos": e["pos"], "t": 0.0, "life": 0.5, "c": CLOCK_GOLD})
+		get_tree().create_timer(0.2).timeout.connect(func(): snd.play("timer_tick", -8.0, 1.2))
+		if pid == "clock_set":
+			fx.append({"k": "mo_ticks", "pos": Vector2.ZERO, "t": 0.0, "life": 1.0, "c": CLOCK_GOLD})
+			fx.append({"k": "mo_pop", "pos": e["pos"] + Vector2(0, -50), "t": 0.0, "life": 1.0, "text": "정각!", "c": Color("FFE08A"), "size": 40})
+			for i in 12:
+				get_tree().create_timer(0.05 * i).timeout.connect(func(): snd.play("set_complete", -16.0, 1.6))
+		if pid == "rewind_watch":
+			_mo_rewind_arc(e)
+	elif info.get("pirate", false) or pid == "captain_set":
+		if not _reduced():
+			mo_sway_t = time
+		fx.append({"k": "mo_splash", "pos": e["pos"], "t": 0.0, "life": 0.45, "c": Color("BFE9FF")})
+		snd.play("puck_slide_loop", -12.0, 1.6)   # 철썩
+		match pid:
+			"parrot_hat":
+				var sh = m.world.shooter()
+				var from: Vector2 = sh.pos if sh != null else e["pos"] + Vector2(-120, 60)
+				fx.append({"k": "mo_parrot", "a": from, "b": e["pos"], "t": 0.0, "life": 1.4, "c": Color("D2452F")})
+				mo_hide["parrot"] = time + 1.4
+			"plank_dock":
+				fx.append({"k": "mo_plank", "pos": e["pos"], "t": 0.0, "life": 0.75, "c": DECK_WOOD})
+				mo_hide["plank"] = time + 0.25
+				get_tree().create_timer(0.25).timeout.connect(func(): snd.play("puck_hit_heavy", -2.0, 0.6))   # 쿵
+			"lifeboat":
+				var tx := str(e.get("text", ""))
+				if tx.begins_with("구명보트로 복귀"):
+					var sid := -1
+					for s in m.world.stones:
+						if s.alive and s.pos.distance_to(e["pos"]) < 4.0:
+							sid = s.id
+					fx.append({"k": "mo_boat", "pos": e["pos"], "t": 0.0, "life": 1.3, "c": Color("D2452F"), "stone": sid})
+					mo_hide["stone:%d" % sid] = time + 1.3
+					snd.play("flick_pull", -8.0, 0.8)
+
+
+## 되감기 회중시계: 맞은 알이 반시계 방향 호를 그리며 제자리로 (잔상 3개)
+func _mo_rewind_arc(e: Dictionary) -> void:
+	var to: Vector2 = e["pos"]
+	var sid := -1
+	for s in m.world.stones:
+		if s.alive and s.pos.distance_to(to) < 2.0:
+			sid = s.id
+	var from: Vector2 = mo_prev_pos.get(sid, to + Vector2(140, 60))
+	if from.distance_to(to) < 4.0:
+		from = to + Vector2(140, 60)
+	fx.append({"k": "mo_rewind", "a": from, "b": to, "t": 0.0, "life": 0.5, "c": CLOCK_GOLD, "stone": sid})
+	mo_hide["stone:%d" % sid] = time + 0.5
+	snd.play("fx_mech_spring", -4.0, 0.6)
+
+
+## 다른 사건: 다시보기 잔상 · 진자 · 시곗바늘 · 포격 · 구멍 대포
+func _mo_on_event(e: Dictionary) -> bool:
+	match str(e["t"]):
+		"replay":
+			var path: Array = e["path"]
+			fx.append({"k": "mo_ghost", "path": path, "t": 0.0, "life": maxf(0.6, path.size() * 0.04), "c": m.players[int(e["owner"])].color, "owner": int(e["owner"])})
+			snd.play("puck_slide_loop", -10.0, 1.9)   # 필름
+			return true
+		"walker":
+			var kind := str(e.get("kind", ""))
+			if kind == "pendulum":
+				mo_gm["pendulum"] = {"a": e["a"], "b": e["b"], "t": time, "life": 0.6}
+				snd.play("flick_pull", -8.0, 1.3)   # 휙
+				return true
+			if kind == "clockhand":
+				mo_gm["clockhand"] = {"a": e["a"], "b": e["b"], "t": time, "life": 0.25}
+				snd.play("timer_tick", -2.0, 0.7)   # 찰칵
+				fx.append({"k": "text", "pos": (e["b"] as Vector2) * 0.6 + Vector2(0, -20), "t": 0.0, "life": 0.7, "text": "찰칵", "c": Color("FFE08A"), "size": 18})
+				return true
+		"cannonball":
+			fx.append({"k": "mo_cannon", "a": e["a"], "b": e["b"], "t": 0.0, "life": 1.1, "c": Color("1E1E24")})
+			shake = maxf(shake, 5.0)
+			snd.play("fx_mech_shot", 0.0, 0.5)
+			get_tree().create_timer(0.25).timeout.connect(func(): snd.play("flick_release", -4.0, 0.5))   # 휘익
+			return true
+		"shell":
+			fx.append({"k": "mo_shell", "pos": e["b"], "t": 0.0, "life": 1.0, "c": Color("1E1E24")})
+			mo_hide["hole:%d,%d" % [int((e["b"] as Vector2).x), int((e["b"] as Vector2).y)]] = time + 0.5
+			get_tree().create_timer(0.5).timeout.connect(func(): snd.play("puck_hit_heavy", 0.0, 0.5))   # 콰직
+			return true
+	return false
+
+
+## 매 프레임: 흔들림 · 카운트다운 · 풍향 · 밀물
+func _mo_tick(_delta: float) -> void:
+	if m == null:
+		return
+	# 흔들림 (0.35초, 2도)
+	var sk := clampf((time - mo_sway_t) / 0.35, 0.0, 1.0)
+	mo_tilt = sin(sk * PI) * deg_to_rad(2.0) if sk < 1.0 else 0.0
+	# 예약 카운트다운: 숫자가 줄면 바늘 120도, 사라지면 「댕」
+	var now := {}
+	for s in m.world.stones:
+		if not s.alive:
+			continue
+		for ic in _status_list(s):
+			if ["hand", "bomb", "bow"].has(ic["kind"]):
+				var key := "%d:%s" % [s.id, ic["kind"]]
+				now[key] = true
+				var n := int(ic.get("n", 1))
+				if not mo_cd.has(key):
+					mo_cd[key] = {"n": n, "t": -9.0, "pos": s.pos}
+				elif int(mo_cd[key]["n"]) != n:
+					mo_cd[key] = {"n": n, "t": time, "pos": s.pos}
+					snd.play("timer_tick", -6.0, 1.0)
+				mo_cd[key]["pos"] = s.pos
+	for key in mo_cd.keys():
+		if not now.has(key):
+			var p: Vector2 = mo_cd[key]["pos"]
+			fx.append({"k": "ring", "pos": p, "t": 0.0, "life": 0.5, "r": 80.0, "c": Color("FFE08A")})
+			fx.append({"k": "text", "pos": p + Vector2(0, -44), "t": 0.0, "life": 0.8, "text": "댕!", "c": Color("FFE08A"), "size": 26})
+			snd.play("set_complete", -6.0, 0.6)
+			mo_cd.erase(key)
+	# 풍향계 · 바람 줄기
+	if not m.world.pirate.is_empty():
+		var wa := World.Pirate.wind(m.world).angle()
+		if mo_wind_ang == INF:
+			mo_wind_ang = wa
+			mo_wind_from = wa
+		elif absf(angle_difference(mo_wind_ang, wa)) > 0.01 and time - mo_wind_t > 0.45:
+			mo_wind_from = mo_wind_ang
+			mo_wind_ang = wa
+			mo_wind_t = time
+			fx.append({"k": "mo_wind", "pos": Vector2.ZERO, "dir": Vector2.from_angle(wa), "t": 0.0, "life": 1.2, "c": Color("F2FBFF")})
+			snd.play("flick_pull", -6.0, 1.8)   # 휘잉
+		var tide_now := float(m.world.pirate.get("tide", 0))
+		if tide_now != mo_tide_target:
+			if tide_now < mo_tide_target:
+				mo_ebb_t = time
+			mo_tide_target = tide_now
+			snd.play("puck_slide_loop", -6.0, 0.4)   # 물 차오름
+		mo_tide = move_toward(mo_tide, mo_tide_target, _delta / 0.8)
+	for s2 in m.world.stones:
+		mo_prev_pos[s2.id] = s2.pos
+
+
+## 풍향계 바늘 각 (살짝 넘쳤다가 돌아옴, 0.4초)
+func _mo_vane_angle() -> float:
+	var k := clampf((time - mo_wind_t) / 0.4, 0.0, 1.0)
+	if k >= 1.0:
+		return mo_wind_ang
+	return mo_wind_from + angle_difference(mo_wind_from, mo_wind_ang) * _back(k)
+
+
+## 차례 칸: 순서가 바뀌면 톱니처럼 4단계로 끊어 미끄러진다 (0.5초)
+func _mo_row_y(pid: int, y: float) -> float:
+	var last: float = float(mo_ord_last.get(pid, y))
+	mo_ord_last[pid] = y
+	if time < mo_ord_until and absf(last - y) > 1.0 and not mo_ord.has(pid):
+		mo_ord[pid] = {"from": last, "t": time}
+	if mo_ord.has(pid):
+		var k := clampf((time - float(mo_ord[pid]["t"])) / 0.5, 0.0, 1.0)
+		if k >= 1.0:
+			mo_ord.erase(pid)
+			return y
+		var stepk := floorf(k * 4.0) / 4.0
+		return lerpf(float(mo_ord[pid]["from"]), y, 1.0 - pow(1.0 - stepk, 3.0))
+	return y
+
+
+## 진자 · 시곗바늘의 그리는 위치
+func _mo_pendulum_pos(cur: Vector2) -> Vector2:
+	if not mo_gm.has("pendulum"):
+		return cur
+	var a: Dictionary = mo_gm["pendulum"]
+	var k := clampf((time - float(a["t"])) / float(a["life"]), 0.0, 1.0)
+	if k >= 1.0:
+		mo_gm.erase("pendulum")
+		return cur
+	var e := _eio(k)
+	var p: Vector2 = (a["a"] as Vector2).lerp(a["b"], e)
+	# 호를 따라: 가운데에서 판 끝 반대쪽으로 살짝 솟는다
+	var dir: Vector2 = ((a["b"] as Vector2) - (a["a"] as Vector2))
+	return p + dir.orthogonal().normalized() * sin(PI * e) * dir.length() * 0.12
+
+
+func _mo_clockhand_ang(ang: float) -> float:
+	if not mo_gm.has("clockhand"):
+		return ang
+	var a: Dictionary = mo_gm["clockhand"]
+	var k := clampf((time - float(a["t"])) / float(a["life"]), 0.0, 1.0)
+	if k >= 1.0:
+		mo_gm.erase("clockhand")
+		return ang
+	var a0 := (a["a"] as Vector2).angle()
+	var a1 := (a["b"] as Vector2).angle()
+	return a0 + angle_difference(a0, a1) * _back(k)
+
+
+func _mo_hidden(key: String) -> bool:
+	return float(mo_hide.get(key, -9.0)) > time
+
+
+## 모션 연출 그리기 (_draw_fx 에서 "mo_" 로 시작하는 것)
+func _draw_mo_fx(f: Dictionary, u: float) -> void:
+	var k := view_scale
+	var c: Color = f["c"]
+	match str(f["k"]):
+		"mo_dial":
+			var p := w2s(f["pos"])
+			var a := clampf(u / 0.3, 0.0, 1.0)
+			var fade := 1.0 - clampf((u - 0.3) / 0.7, 0.0, 1.0)
+			var r := 52.0 * k * (1.0 + 0.2 * a)
+			draw_circle(p, r, Color(0.96, 0.95, 0.91, 0.18 * fade))
+			draw_arc(p, r, 0, TAU, 40, Color(c, 0.9 * fade), 2.0, true)
+			for i in 12:
+				var ang := TAU * i / 12.0
+				draw_line(p + Vector2.from_angle(ang) * r * 0.82, p + Vector2.from_angle(ang) * r * 0.95, Color(c, 0.9 * fade), 2.0, true)
+			var hand := -PI / 2.0 + (deg_to_rad(30.0) if u > 0.4 else 0.0)
+			draw_line(p, p + Vector2.from_angle(hand) * r * 0.8, Color(1.0, 0.88, 0.54, fade), 2.5, true)
+			if u > 0.4:
+				_text_outline(p + Vector2(0, -r - 10.0), "째깍", 16, Color(1.0, 0.88, 0.54, fade), true)
+		"mo_ticks":
+			var cc := w2s(Vector2.ZERO)
+			var R := (m.world.size - CELL * 0.4) * k
+			var lit := clampf(u / 0.6, 0.0, 1.0)
+			var fade2 := 1.0 - clampf((u - 0.6) / 0.4, 0.0, 1.0)
+			for i in 60:
+				var ang2 := -PI / 2.0 + TAU * i / 60.0
+				var on := float(i) / 60.0 < lit
+				var l := (10.0 if i % 5 == 0 else 5.0) * k
+				draw_line(cc + Vector2.from_angle(ang2) * R, cc + Vector2.from_angle(ang2) * (R - l), Color(1.0, 0.88, 0.54, (0.95 if on else 0.15) * fade2), (4.0 if i % 5 == 0 else 2.0), true)
+		"mo_pop":
+			var s := lerpf(0.5, 1.0, _back(clampf(u / 0.2, 0.0, 1.0)))
+			var al := 1.0 - clampf((u - 0.7) / 0.3, 0.0, 1.0)
+			_text_outline(w2s(f["pos"]), str(f["text"]), int(float(f["size"]) * s), Color(c, al), true)
+		"mo_rewind":
+			var a2: Vector2 = f["a"]
+			var b2: Vector2 = f["b"]
+			var pts := PackedVector2Array()
+			for i in 13:
+				var t := i / 12.0
+				pts.append(w2s(a2.lerp(b2, t) + (b2 - a2).orthogonal().normalized() * sin(PI * t) * 30.0))
+			for i in pts.size() - 1:
+				if i % 2 == 0:
+					draw_line(pts[i], pts[i + 1], Color(c, 0.9 * (1.0 - u * 0.5)), 2.5, true)
+			var e2 := _eio(u)
+			var s2 = m.world.get_stone(int(f.get("stone", -1)))
+			var col: Color = m.players[s2.owner].color if s2 != null else c
+			for g in 4:
+				var a3 := clampf(e2 - g * 0.12, 0.0, 1.0)
+				var gp: Vector2 = a2.lerp(b2, a3) + (b2 - a2).orthogonal().normalized() * sin(PI * a3) * 30.0
+				if g == 0:
+					Art.draw_puck_top(self, w2s(gp), World.STONE_R * k, col, s2.owner if s2 != null else 0, s2.facing if s2 != null else 0.0)
+				else:
+					draw_circle(w2s(gp), World.STONE_R * k, Color(col, 0.25))
+			_text_outline(w2s(b2) + Vector2(0, -40), "되감기", 18, Color("FFE08A"), true)
+		"mo_ghost":
+			var path: Array = f["path"]
+			if path.size() >= 2 and int(f["t"] * 10.0) % 2 == 0:
+				var idx := clampi(int(u * (path.size() - 1)), 0, path.size() - 1)
+				draw_circle(w2s(path[idx]), World.STONE_R * k, Color(c, 0.45))
+				draw_arc(w2s(path[idx]), World.STONE_R * k, 0, TAU, 24, Color(1, 1, 1, 0.5), 2.0, true)
+			if u < 0.9:
+				_text_outline(w2s(path[0]) + Vector2(0, -30), "다시보기", 15, Color("F4EBD8"), true)
+		"mo_splash":
+			var sp := w2s(f["pos"])
+			var e3 := 1.0 - pow(1.0 - u, 3.0)
+			for i in 8:
+				var ang3 := TAU * i / 8.0 - PI / 2.0
+				var dp := sp + Vector2(cos(ang3) * 30.0 * e3, sin(ang3) * 22.0 * e3 - 20.0 * sin(PI * u)) * k
+				draw_circle(dp, 3.5 * k, Color(c, 1.0 - u))
+				draw_arc(dp, 3.5 * k, 0, TAU, 8, Color(0.18, 0.44, 0.56, 1.0 - u), 1.0, true)
+		"mo_wind":
+			var d: Vector2 = f["dir"]
+			var R2: float = m.world.size
+			for i in 7:
+				var off := (i - 3) * CELL * 1.3
+				var along := lerpf(-R2 * 1.3, R2 * 1.3, clampf(u * 1.2 - i * 0.03, 0.0, 1.0))
+				var q := d * along + d.orthogonal() * off
+				if q.length() < R2 * 0.95:
+					draw_line(w2s(q - d * 30.0), w2s(q + d * 30.0), Color(c, 0.8 * (1.0 - u)), 3.0, true)
+		"mo_cannon":
+			var a4: Vector2 = f["a"]
+			var b4: Vector2 = f["b"]
+			var tt: float = f["t"]
+			# 대포: 판 밖에서 반동하며 연기
+			var back := -a4.normalized()
+			var rc := -10.0 * sin(clampf((tt - 0.0) / 0.2, 0.0, 1.0) * PI) if tt < 0.2 else 0.0
+			var cp := w2s(a4 - back * (CELL * 0.6 - rc))
+			var cd := back
+			draw_line(cp - cd * 14.0 * k, cp + cd * 22.0 * k, Color("2A2E35"), 14.0 * k, true)
+			draw_circle(cp - cd * 6.0 * k + cd.orthogonal() * 10.0 * k, 9.0 * k, Color("7A5530"))
+			for i in 3:
+				var sm := clampf((tt - 0.05 * i) / 0.7, 0.0, 1.0)
+				if sm > 0.0 and sm < 1.0:
+					draw_circle(cp + cd * (30.0 + sm * 30.0 + i * 8.0) * k + Vector2(0, -sm * 30.0 - i * 6.0), (8.0 + sm * 14.0) * k, Color(0.91, 0.93, 0.94, 0.85 * (1.0 - sm)))
+			if tt > 0.05 and tt < 0.6:
+				_text_outline(cp + Vector2(0, -36), "쾅!", 24, Color("FFE08A"), true)
+			var fl := clampf((tt - 0.2) / 0.8, 0.0, 1.0)
+			if fl > 0.0 and fl < 1.0:
+				var gp2: Vector2 = a4.lerp(b4, fl)
+				var hgt := sin(PI * fl) * 90.0
+				draw_circle(w2s(gp2) + Vector2(0, 6), (10.0 + hgt * 0.04) * k, Color(0, 0, 0, 0.3))
+				draw_circle(w2s(gp2) + Vector2(0, -hgt), (10.0 + hgt * 0.05) * k, Color("1E1E24"))
+		"mo_shell":
+			var hp := w2s(f["pos"])
+			var tt2: float = f["t"]
+			var fall := clampf(tt2 / 0.5, 0.0, 1.0)
+			if fall < 1.0:
+				draw_circle(hp, (6.0 + fall * 8.0) * k, Color(0, 0, 0, 0.35))
+				draw_circle(hp + Vector2(0, -(1.0 - fall * fall) * 260.0), 9.0 * k, Color("1E1E24"))
+			else:
+				var h := clampf((tt2 - 0.5) / 0.3, 0.0, 1.0)
+				for i in 6:
+					var ang4 := TAU * i / 6.0
+					var cpos := hp + Vector2(cos(ang4) * 50.0 * h, sin(ang4) * 34.0 * h - 30.0 * sin(PI * h)) * k
+					draw_set_transform(cpos, h * 3.5 + i, Vector2.ONE)
+					draw_rect(Rect2(-5, -2.5, 10, 5), Color("A9764A", 1.0 - clampf((tt2 - 0.8) / 0.2, 0.0, 1.0)))
+					draw_set_transform_matrix(Transform2D.IDENTITY)
+				draw_arc(hp, (20.0 + h * 30.0) * k, 0, TAU, 24, Color(0.75, 0.91, 1.0, 1.0 - h), 3.0, true)
+				if tt2 < 0.95:
+					_text_outline(hp + Vector2(40, -30), "콰직", 18, Color.WHITE, true)
+		"mo_plank":
+			var pp := w2s(f["pos"])
+			var tt3: float = f["t"]
+			var d3 := clampf(tt3 / 0.25, 0.0, 1.0)
+			if d3 < 1.0:
+				var o3: Vector2 = (f["pos"] as Vector2).normalized()
+				var top := pp + Vector2(0, -(1.0 - d3 * d3) * 200.0)
+				draw_line(top - o3.orthogonal() * 0.0, top + o3 * CELL * 1.6 * k, Color("C08E5C"), CELL * 1.4 * k, true)
+			else:
+				var dk := clampf((tt3 - 0.25) / 0.5, 0.0, 1.0)
+				for i in 4:
+					draw_circle(pp + Vector2((i - 1.5) * 22.0 + (i - 1.5) * dk * 14.0, 20.0 + dk * 8.0) * k, (6.0 + dk * 8.0) * k, Color(0.91, 0.87, 0.78, 0.8 * (1.0 - dk)))
+				if dk < 0.7:
+					_text_outline(pp + Vector2(0, -40), "쿵", 22, Color("FFE08A"), true)
+		"mo_parrot":
+			var a5: Vector2 = f["a"]
+			var b5: Vector2 = f["b"] + Vector2(0, -World.STONE_R * 1.2)
+			var tt4: float = f["t"]
+			var fk := clampf(tt4 / 0.6, 0.0, 1.0)
+			var bp: Vector2 = a5.lerp(b5, fk) + Vector2(0, -sin(PI * fk) * 70.0)
+			var bob := 0.0
+			if fk >= 1.0:
+				bob = -absf(sin((tt4 - 0.6) * PI * 2.5)) * 4.0
+			var q2 := w2s(bp) + Vector2(0, bob * k)
+			var flap := sin(tt4 * 40.0) * 0.45 if fk < 1.0 else 0.0
+			draw_circle(q2, 8.0 * k, Color("2FA35A"))
+			draw_circle(q2 + Vector2(5, -5) * k, 5.0 * k, Color("E0533D"))
+			draw_colored_polygon(PackedVector2Array([q2 + Vector2(9, -5) * k, q2 + Vector2(14, -3) * k, q2 + Vector2(9, -1) * k]), Color("F2E6C9"))
+			var wing := PackedVector2Array([q2 + Vector2(-3, -2) * k, q2 + (Vector2(-14, -12).rotated(flap)) * k, q2 + Vector2(2, -4) * k])
+			draw_colored_polygon(wing, Color("F2C14E"))
+			draw_arc(q2, 8.0 * k, 0, TAU, 12, Art.outline, 1.2, true)
+		"mo_boat":
+			var sp2 := w2s(f["pos"])
+			var tt5: float = f["t"]
+			var out: Vector2 = (f["pos"] as Vector2).normalized()
+			var start := w2s((f["pos"] as Vector2) + out * CELL * 1.6)
+			var rk := _eio(clampf((tt5 - 0.3) / 1.0, 0.0, 1.0))
+			var bpos := start.lerp(sp2, rk)
+			var sc := lerpf(0.4, 1.0, clampf(tt5 / 0.3, 0.0, 1.0))
+			var s3 = m.world.get_stone(int(f.get("stone", -1)))
+			if s3 != null:
+				Art.draw_puck_top(self, bpos, World.STONE_R * k * sc, m.players[s3.owner].color, s3.owner, s3.facing)
+			var tr := 22.0 * k * sc
+			for i in 8:
+				draw_arc(bpos, tr, TAU * i / 8.0, TAU * (i + 1) / 8.0, 6, Color("D2452F") if i % 2 == 0 else Color.WHITE, 8.0 * k * sc, true)
+			var row := sin(tt5 * 14.0) * 0.35
+			var side := (sp2 - start).orthogonal().normalized()
+			draw_line(bpos + side * tr * 1.2, bpos + side.rotated(row) * tr * 2.0, Color("C08E5C"), 4.0, true)
+			draw_line(bpos - side * tr * 1.2, bpos - side.rotated(-row) * tr * 2.0, Color("C08E5C"), 4.0, true)
+			if tt5 < 0.5:
+				_text_outline(bpos + Vector2(0, -36), "풍덩", 18, Color.WHITE, true)
+
+
+## 예약 카운트다운 시계: 남은 차례만큼 바늘, 줄면 0.4초 동안 120도 돌고 숫자가 튄다
+func _mo_draw_cd(c: Vector2, sid: int, ic: Dictionary, r: float) -> void:
+	var key := "%d:%s" % [sid, ic["kind"]]
+	var n := int(ic.get("n", 1))
+	var st: Dictionary = mo_cd.get(key, {"t": -9.0})
+	var k := clampf((time - float(st["t"])) / 0.4, 0.0, 1.0)
+	var ang := -PI / 2.0 + deg_to_rad(120.0) * (3 - n) - deg_to_rad(120.0) * (1.0 - (1.0 - pow(1.0 - k, 3.0)))
+	draw_circle(c, r * 1.15, Color("F4F1E8"))
+	draw_arc(c, r * 1.15, 0, TAU, 18, Color("C9A15A"), 2.5, true)
+	draw_line(c, c + Vector2.from_angle(ang) * r * 0.8, Color("1A1D21"), 2.0, true)
+	var pop := 1.3 if k > 0.0 and k < 0.5 else 1.0
+	_text_outline(c + Vector2(-r * 1.9, -r * 0.7), str(n), int(14 * pop), Color("FFE08A"), true)
+
+
+# ══ 모션 「기존 공방 모션」: 연구소 · 정비소 · 마법 상점 · 만화 창고 · 공통 시스템 ══
+## 발동 공통 주제: 정비소 「기계가 작동한다」 · 마법 상점 「주문이 걸린다」 · 연구소 「실험 성공」
+var mo2_belt := {}            # 컨베이어 방향 (반전 감지)
+var mo2_turn := {}            # 회전 원판 각 (그리는 각 · 시작 시각)
+var mo2_oil_t := 0.0
+var mo2_lab_shot := -1
+
+
+func _mo2_reset() -> void:
+	mo2_belt.clear()
+	mo2_turn.clear()
+
+
+func _ws_of(part: String) -> String:
+	for ws in ["lab", "junk", "magic"]:
+		if PartsData.WORKSHOPS[ws]["parts"].has(part):
+			return ws
+	if part == "mecha":
+		return "junk"
+	if part == "moon_set":
+		return "magic"
+	return ""
+
+
+func _near_stone(p: Vector2, skip := -1):
+	var best = null
+	var bd := 9999.0
+	for s in m.world.stones:
+		if s.alive and s.id != skip and s.pos.distance_to(p) < bd:
+			bd = s.pos.distance_to(p)
+			best = s
+	return best
+
+
+## 부품 발동: 공방마다 공통 연출 + 부품별 연출
+func _mo2_on_part(e: Dictionary) -> void:
+	var pid: String = str(e.get("part", ""))
+	var pos: Vector2 = e["pos"]
+	match _ws_of(pid):
+		"lab":
+			fx.append({"k": "mo2_lab", "pos": pos, "t": 0.0, "life": 1.0, "c": Color("8BE04E"), "quiet": m.world.shot_no == mo2_lab_shot})
+			mo2_lab_shot = m.world.shot_no
+		"junk":
+			fx.append({"k": "mo2_bolt", "pos": pos, "t": 0.0, "life": 0.6, "c": Color("C3C9D0")})
+			snd.play("fx_mech_spring", -10.0, 1.6)
+		"magic":
+			fx.append({"k": "mo2_circle", "pos": pos, "t": 0.0, "life": 1.0, "c": Color("C9D5FF")})
+	match pid:
+		"shrink_ray":
+			var t = _near_stone(pos)
+			var sh = m.world.shooter()
+			if t != null:
+				fx.append({"k": "mo2_ghost", "pos": t.pos, "t": 0.0, "life": 1.6, "c": m.players[t.owner].color, "r": World.STONE_R})
+				if sh != null:
+					fx.append({"k": "mo2_zig", "a": sh.pos, "b": t.pos, "t": 0.0, "life": 0.4, "c": Color("8BE04E")})
+		"inflate":
+			fx.append({"k": "mo2_puff", "pos": pos + Vector2(0, World.STONE_R), "t": 0.0, "life": 0.6, "c": Color.WHITE})
+			fx.append({"k": "text", "pos": pos + Vector2(0, -40), "t": 0.0, "life": 0.8, "text": "푸슉", "c": Color.WHITE, "size": 16})
+		"mecha":
+			fx.append({"k": "text", "pos": pos + Vector2(0, -44), "t": 0.0, "life": 0.7, "text": "콱!", "c": Color("FFE08A"), "size": 30})
+		"carousel":
+			fx.append({"k": "mo2_swing", "pos": pos, "t": 0.0, "life": 0.6, "c": Color("C3C9D0")})
+			fx.append({"k": "text", "pos": pos + Vector2(0, -44), "t": 0.0, "life": 0.7, "text": "휙!", "c": Color("FFE08A"), "size": 26})
+		"moon_set":
+			var t2 = _near_stone(pos)
+			fx.append({"k": "mo2_orbit", "pos": t2.pos if t2 != null else pos, "t": 0.0, "life": 1.0, "c": Color("C9D5FF")})
+		"anchor":
+			var sh2 = m.world.shooter()
+			fx.append({"k": "mo2_anchor", "a": m.world.shot.start if m.world.shot != null else pos, "b": pos, "t": 0.0, "life": 0.9, "c": Color("C3C9D0")})
+		"gm_sizering":
+			for i in 6:
+				fx.append({"k": "spark", "pos": pos, "vel": Vector2.from_angle(TAU * i / 6.0) * 110.0, "t": 0.0, "life": 0.35, "c": Color("8BE04E")})
+		"gm_cutline":
+			var fast := str(e.get("text", "")).begins_with("슈")
+			fx.append({"k": "mo_pop", "pos": pos + Vector2(0, -44), "t": 0.0, "life": 0.9, "text": "×1.5" if fast else "×0.7", "c": Color("E04E3A") if fast else Color("3D6FD1"), "size": 28})
+			if fast:
+				fx.append({"k": "mo2_speed", "pos": pos, "t": 0.0, "life": 0.4, "c": Color("111111")})
+		"gm_twins":
+			if e.has("from"):
+				fx.append({"k": "mo2_pillar", "pos": e["from"], "t": 0.0, "life": 0.35, "c": Color("F1EEFF")})
+				fx.append({"k": "mo2_pillar", "pos": pos, "t": -0.15, "life": 0.35, "c": Color("F1EEFF")})
+		"gm_blocks":
+			if str(e.get("text", "")).contains("와장창"):
+				fx.append({"k": "mo2_shatter", "pos": pos, "t": 0.0, "life": 0.6, "c": Color("FFFDF6")})
+		"gm_nextch":
+			fx.append({"k": "mo2_page", "pos": pos, "t": 0.0, "life": 0.7, "c": Color.WHITE})
+			snd.play("flick_pull", -4.0, 1.1)   # 책장
+
+
+## 사건: 합체 · 분열 · 범퍼 볼트 · 포탑 · 발동 실패
+func _mo2_on_event(e: Dictionary) -> bool:
+	match str(e["t"]):
+		"merge":
+			fx.append({"k": "mo2_merge", "pos": e["pos"], "t": 0.0, "life": 1.2, "c": Color("8BE04E")})
+			fx.append({"k": "mo_pop", "pos": e["pos"] + Vector2(0, -56), "t": 0.0, "life": 1.0, "text": "합체!", "c": Color("8BE04E"), "size": 26})
+		"split":
+			fx.append({"k": "mo2_crack", "pos": e["pos"], "t": 0.0, "life": 0.3, "c": Color("111111")})
+			fx.append({"k": "mo_pop", "pos": e["pos"] + Vector2(0, -50), "t": 0.0, "life": 1.0, "text": "분열!", "c": Color("2C7A1E"), "size": 24})
+		"hit":
+			if str(e.get("gimmick", "")) == "bolt":
+				for i in 8:
+					fx.append({"k": "spark", "pos": e["pos"], "vel": Vector2.from_angle(TAU * i / 8.0) * 140.0, "t": 0.0, "life": 0.35, "c": Color("FFE08A")})
+				mo_gm["bolt"] = {"pos": e["pos"], "t": time}
+		"device":
+			if str(e.get("kind", "")) == "turret":
+				fx.append({"k": "mo2_drop", "pos": e["pos"], "t": 0.0, "life": 0.6, "c": Color("C3C9D0")})
+				fx.append({"k": "text", "pos": e["pos"] + Vector2(0, -36), "t": -0.3, "life": 0.6, "text": "덜컹", "c": Color.WHITE, "size": 16})
+		"fail":
+			fx.append({"k": "mo2_puff", "pos": e["pos"] + Vector2(0, World.STONE_R), "t": 0.0, "life": 0.7, "c": Color("9AA3AD")})
+			fx.append({"k": "mo2_pill", "pos": e["pos"], "t": 0.0, "life": 1.2, "text": str(e.get("text", "")), "c": Color("3A4048")})
+			snd.play("flick_pull", -10.0, 1.8)   # 푸슉
+			return true
+	return false
+
+
+## 매 프레임: 기름방울 · 컨베이어 반전 · 회전 원판
+func _mo2_tick(delta: float) -> void:
+	if m == null:
+		return
+	mo2_oil_t += delta
+	for g in m.world.gimmicks:
+		match str(g["kind"]):
+			"oil":
+				if mo2_oil_t < 0.06:
+					continue
+				for it in g["items"]:
+					for s in m.world.stones:
+						if s.alive and s.vel.length() > 120.0 and s.pos.distance_to(it["pos"]) < float(it["r"]):
+							fx.append({"k": "spark", "pos": s.pos - s.vel.normalized() * World.STONE_R, "vel": (-s.vel.normalized()).rotated(randf_range(-0.8, 0.8)) * 90.0,
+								"t": 0.0, "life": 0.4, "c": [Color("7FD3FF"), Color("E07AC0"), Color("FFD27A")][randi() % 3]})
+			"belt":
+				var it2: Dictionary = g["items"][0]
+				var d: Vector2 = it2["dir"]
+				var key := str(g.get("id", "belt"))
+				if mo2_belt.has(key) and (mo2_belt[key] as Vector2).dot(d) < 0.0:
+					fx.append({"k": "mo_pop", "pos": it2["pos"] + Vector2(0, -50), "t": 0.0, "life": 1.0, "text": "반전!", "c": Color("FFC23D"), "size": 28})
+					snd.play("fx_mech_spring", -6.0, 0.9)
+				mo2_belt[key] = d
+			"turntable":
+				var it3: Dictionary = g["items"][0]
+				var ang := float(it3["ang"])
+				if not mo2_turn.has("to"):
+					mo2_turn = {"from": ang, "to": ang, "t": -9.0}
+				elif absf(float(mo2_turn["to"]) - ang) > 0.001:
+					mo2_turn = {"from": float(mo2_turn["to"]), "to": ang, "t": time}
+	if mo2_oil_t >= 0.06:
+		mo2_oil_t = 0.0
+
+
+## 회전 원판의 그리는 각 (45도를 0.5초에)
+func _mo2_turn_ang(ang: float) -> float:
+	if not mo2_turn.has("t"):
+		return ang
+	var k := clampf((time - float(mo2_turn["t"])) / 0.5, 0.0, 1.0)
+	return lerpf(float(mo2_turn["from"]), float(mo2_turn["to"]), _eio(k))
+
+
+## 범퍼 볼트 떨림
+func _mo2_bolt_off(p: Vector2) -> Vector2:
+	if not mo_gm.has("bolt"):
+		return Vector2.ZERO
+	var b: Dictionary = mo_gm["bolt"]
+	var t := time - float(b["t"])
+	if t > 0.3:
+		mo_gm.erase("bolt")
+		return Vector2.ZERO
+	if p.distance_to(b["pos"]) > 60.0:
+		return Vector2.ZERO
+	return Vector2(sin(t * 90.0) * 3.0, 0)
+
+
+## 봉인: 회색으로 바래고 쇠사슬 X자 · 자물쇠
+func _mo2_draw_seal(p: Vector2, u: float) -> void:
+	draw_circle(p, u * 1.02, Color(0.5, 0.5, 0.5, 0.35))
+	for sgn in [-1.0, 1.0]:
+		var a := p + Vector2(-u * 1.1, -u * 1.1 * sgn)
+		var b := p + Vector2(u * 1.1, u * 1.1 * sgn)
+		var n := 7
+		for i in n:
+			var q := a.lerp(b, (i + 0.5) / n)
+			draw_arc(q, u * 0.14, 0, TAU, 8, Color("C3C9D0"), 2.5, true)
+	var lp := p + Vector2(u * 0.9, u * 0.9)
+	draw_rect(Rect2(lp - Vector2(u * 0.3, 0), Vector2(u * 0.6, u * 0.45)), Color("E8C98A"))
+	draw_rect(Rect2(lp - Vector2(u * 0.3, 0), Vector2(u * 0.6, u * 0.45)), Art.outline, false, 1.2)
+	draw_arc(lp, u * 0.2, PI, TAU, 8, Art.outline, 1.6, true)
+
+
+## 세트 완성: 세 부품이 차례로 빛나고 하얀 섬광
+func _mo2_set_flash(pos: Vector2) -> void:
+	for i in 3:
+		fx.append({"k": "mo2_glow", "pos": pos + Vector2.from_angle(-PI / 2.0 + i * PI / 2.0) * World.STONE_R * 1.6, "t": -0.15 * i, "life": 0.2, "c": Color("FFE08A")})
+	fx.append({"k": "mo2_flash", "pos": pos, "t": -0.5, "life": 0.3, "c": Color.WHITE})
+
+
+func _draw_mo2_fx(f: Dictionary, u: float) -> void:
+	var k := view_scale
+	var c: Color = f["c"]
+	match str(f["k"]):
+		"mo2_lab":
+			var p := w2s(f["pos"])
+			var r := World.STONE_R * k * 1.3
+			if u < 0.3:
+				var y := p.y - r + 2.0 * r * (u / 0.3)
+				draw_line(Vector2(p.x - r, y), Vector2(p.x + r, y), Color(c, 0.9), 5.0)
+			for i in 3:
+				var q := clampf((u - 0.05 - i * 0.08) / 0.6, 0.0, 1.0)
+				if q > 0.0 and q < 1.0:
+					draw_arc(p + Vector2(-12 + i * 12, -q * 50.0) * k, 5.0 * k, 0, TAU, 10, Color("5BB8E0", 1.0 - q), 2.0, true)
+			if u > 0.15 and u < 0.9 and not f.get("quiet", false):
+				_text_outline(p + Vector2(0, -r - 22.0), "실험 성공!", 16, Color("2C7A1E"), true)
+		"mo2_bolt":
+			var p2 := w2s(f["pos"])
+			var rot := (1.0 - pow(1.0 - minf(1.0, u / 0.6), 3.0)) * PI / 2.0
+			var al := 1.0 - clampf((u - 0.6) / 0.4, 0.0, 1.0)
+			var hx := PackedVector2Array()
+			for i in 7:
+				hx.append(p2 + Vector2.from_angle(PI / 6.0 + TAU * i / 6.0 + rot) * 34.0 * k)
+			draw_polyline(hx, Color(c, al), 5.0, true)
+			if u < 0.6:
+				for i in 8:
+					var a := TAU * i / 8.0
+					var r1 := (10.0 + u / 0.6 * 24.0) * k
+					draw_line(p2 + Vector2.from_angle(a) * r1, p2 + Vector2.from_angle(a) * (r1 + 10.0 * k), Color("FFE08A", 1.0 - u / 0.6), 3.0, true)
+			for i in 3:
+				var q2 := clampf((u - 0.15) / 0.85, 0.0, 1.0)
+				if q2 > 0.0:
+					draw_circle(p2 + Vector2((i - 1) * 14.0, -30.0 - q2 * 20.0) * k, (5.0 + q2 * 8.0) * k, Color(0.91, 0.93, 0.94, 0.85 * (1.0 - q2)))
+			if u > 0.15 and u < 0.8:
+				_text_outline(p2 + Vector2(0, -60.0 * k), "칙!", 16, Color.WHITE, true)
+		"mo2_circle":
+			var p3 := w2s(f["pos"]) + Vector2(0, 8.0 * k)
+			var g := 1.0 - pow(1.0 - minf(1.0, u / 0.3), 3.0)
+			var al2 := 1.0 - clampf((u - 0.55) / 0.4, 0.0, 1.0)
+			var rr := 40.0 * k * g
+			draw_set_transform(p3, 0.0, Vector2(1.0, 0.45))
+			draw_arc(Vector2.ZERO, rr, 0, TAU, 32, Color(c, al2), 2.5, true)
+			draw_arc(Vector2.ZERO, rr * 0.7, 0, TAU, 28, Color("B7A3FF", al2), 2.0, true)
+			var st := PackedVector2Array()
+			for i in 6:
+				var a2 := -PI / 2.0 + i * 4.0 * PI / 5.0 + time * 1.5
+				st.append(Vector2.from_angle(a2) * rr * 0.7)
+			draw_polyline(st, Color("F1EEFF", al2), 1.8, true)
+			draw_set_transform_matrix(Transform2D.IDENTITY)
+			for i in 5:
+				var q3 := clampf((u - 0.15 - i * 0.05) / 0.8, 0.0, 1.0)
+				if q3 > 0.0 and q3 < 1.0:
+					draw_circle(p3 + Vector2(-20 + i * 10, -q3 * 60.0) * k, 2.2 * k, Color("F1EEFF", 1.0 - q3))
+		"mo2_ghost":
+			var pg := w2s(f["pos"])
+			var rr2: float = float(f["r"]) * k
+			for i in 16:
+				if i % 2 == 0:
+					draw_arc(pg, rr2, TAU * i / 16.0, TAU * (i + 1) / 16.0, 4, Color(c, 0.8 * (1.0 - u)), 2.0, true)
+		"mo2_zig":
+			var a3: Vector2 = w2s(f["a"])
+			var b3: Vector2 = w2s(f["b"])
+			var pts := PackedVector2Array()
+			var n := 8
+			var side := (b3 - a3).orthogonal().normalized()
+			for i in n + 1:
+				pts.append(a3.lerp(b3, float(i) / n) + side * (10.0 if i % 2 == 1 else -10.0) * (0.0 if i == 0 or i == n else 1.0))
+			draw_polyline(pts, Color(c, 1.0 - u), 4.0, true)
+		"mo2_puff":
+			var pp := w2s(f["pos"])
+			for i in 5:
+				var a4 := TAU * i / 5.0 - PI / 2.0
+				var e := 1.0 - pow(1.0 - u, 3.0)
+				draw_circle(pp + Vector2(cos(a4), sin(a4)) * 26.0 * e * k + Vector2(0, -10.0 * u), (5.0 + u * 8.0) * k, Color(c, 0.85 * (1.0 - u)))
+		"mo2_swing":
+			var ps := w2s(f["pos"])
+			draw_arc(ps, 56.0 * k, -PI * 0.5 + u * PI * 3.0, -PI * 0.5 + u * PI * 3.0 + 1.6, 12, Color(c, 1.0 - u), 5.0, true)
+		"mo2_orbit":
+			var po := w2s(f["pos"])
+			draw_set_transform(po, 0.0, Vector2(1.0, 0.7))
+			for i in 24:
+				if i % 2 == 0:
+					draw_arc(Vector2.ZERO, 60.0 * k, TAU * i / 24.0 + time, TAU * (i + 1) / 24.0 + time, 4, Color(c, 1.0 - u), 2.0, true)
+			draw_set_transform_matrix(Transform2D.IDENTITY)
+		"mo2_anchor":
+			var aa := w2s(f["a"])
+			var bb := w2s(f["b"])
+			var n2 := int(aa.distance_to(bb) / 9.0)
+			for i in n2:
+				draw_arc(aa.lerp(bb, (i + 0.5) / maxf(1.0, n2)), 3.0, 0, TAU, 8, Color(c, 1.0 - u), 2.0, true)
+			draw_line(aa + Vector2(0, -12), aa + Vector2(0, 12), Color("C9A15A", 1.0 - u), 3.5, true)
+			draw_arc(aa + Vector2(0, 4), 10.0, 0.2, PI - 0.2, 8, Color("C9A15A", 1.0 - u), 3.5, true)
+			draw_line(aa + Vector2(-6, -10), aa + Vector2(6, -10), Color("C9A15A", 1.0 - u), 3.0, true)
+		"mo2_speed":
+			var pv := w2s(f["pos"])
+			for i in 14:
+				var a5 := TAU * i / 14.0
+				draw_line(pv + Vector2.from_angle(a5) * 60.0 * k, pv + Vector2.from_angle(a5) * 120.0 * k, Color(c, 0.6 * (1.0 - u)), 1.5 + (i % 3), true)
+		"mo2_pillar":
+			var pl := w2s(f["pos"])
+			var hh := 140.0 * k
+			draw_rect(Rect2(pl - Vector2(16.0 * k, hh), Vector2(32.0 * k, hh)), Color(c, 0.6 * (1.0 - u)))
+		"mo2_shatter":
+			var ph := w2s(f["pos"])
+			for i in 6:
+				var a6 := TAU * i / 6.0
+				var e2 := 1.0 - pow(1.0 - u, 3.0)
+				var q4 := ph + Vector2(cos(a6) * 90.0 * e2, sin(a6) * 70.0 * e2 - 30.0 * sin(PI * u)) * k
+				draw_set_transform(q4, u * 5.0 + i, Vector2.ONE)
+				draw_rect(Rect2(-9, -7, 18, 14), Color("FFD27A", 1.0 - u))
+				draw_rect(Rect2(-9, -7, 18, 14), Color(0.07, 0.07, 0.07, 1.0 - u), false, 2.0)
+				draw_set_transform_matrix(Transform2D.IDENTITY)
+		"mo2_merge":
+			var pm := w2s(f["pos"])
+			for i in 20:
+				if i % 2 == 0:
+					draw_arc(pm, World.STONE_R * 1.4 * k + 8.0, TAU * i / 20.0 + time * 0.8, TAU * (i + 1) / 20.0 + time * 0.8, 4, Color(c, 1.0 - u), 3.0, true)
+		"mo2_crack":
+			var pc := w2s(f["pos"])
+			var z := PackedVector2Array([pc + Vector2(0, -22), pc + Vector2(-4, -8), pc + Vector2(4, 2), pc + Vector2(-3, 12), pc + Vector2(0, 22)])
+			draw_polyline(z, Color(c, 1.0 - u * 0.5), 3.0, true)
+		"mo2_drop":
+			var pd := w2s(f["pos"])
+			var dk := clampf(u / 0.5, 0.0, 1.0)
+			var top := pd + Vector2(0, -(1.0 - dk * dk) * 90.0)
+			if dk < 1.0:
+				draw_rect(Rect2(top - Vector2(22, 16) * k, Vector2(44, 32) * k), Color(c, 0.9))
+				draw_rect(Rect2(top - Vector2(22, 16) * k, Vector2(44, 32) * k), Art.outline, false, 2.0)
+		"mo2_pill":
+			var pp2 := w2s(f["pos"]) + Vector2(36, 30)
+			var tx := str(f["text"])
+			var tw := font_bold.get_string_size(tx, HORIZONTAL_ALIGNMENT_LEFT, -1, 12).x + 20.0
+			var al3 := clampf(u / 0.15, 0.0, 1.0) * (1.0 - clampf((u - 0.75) / 0.25, 0.0, 1.0))
+			_round_rect(Rect2(pp2, Vector2(tw, 24)), Color(c, al3), 12)
+			draw_string(font_bold, pp2 + Vector2(0, 17), tx, HORIZONTAL_ALIGNMENT_CENTER, tw, 12, Color(1, 1, 1, al3))
+		"mo2_glow":
+			draw_circle(w2s(f["pos"]), 10.0 * view_scale, Color(c, 1.0 - u))
+		"mo2_flash":
+			draw_circle(w2s(f["pos"]), (20.0 + u * 140.0) * k, Color(c, 0.9 * (1.0 - u)))
+
+
+## 화면 전체: 다음 화 책장 넘김 · 강화 필살기 섬광
+func _draw_mo2_screen(vs: Vector2) -> void:
+	for f in fx:
+		if f["t"] < 0.0:
+			continue
+		var u: float = clampf(f["t"] / f["life"], 0.0, 1.0)
+		match str(f["k"]):
+			"mo2_page":
+				var x := vs.x - u * vs.x * 2.0
+				var poly := PackedVector2Array([Vector2(x, 0), Vector2(x + vs.x, 0), Vector2(x + vs.x - vs.y * 0.18, vs.y), Vector2(x - vs.y * 0.18, vs.y)])
+				draw_colored_polygon(poly, Color(1, 1, 1, 0.95))
+				poly.append(poly[0])
+				draw_polyline(poly, Color("111111"), 3.0, true)
+			"mo2_screenflash":
+				draw_rect(Rect2(Vector2.ZERO, vs), Color(1, 1, 1, 0.9 * (1.0 - u)))
+
+
+## 리모컨으로 조종 중인 상대 알: 안테나 전파 고리
+func _draw_mo2_over() -> void:
+	if m == null or m.world.shot == null or not m.world.shot.ex.has("remote_of"):
+		return
+	var s = m.world.shooter()
+	if s == null or not s.alive:
+		return
+	var p := w2s(s.pos)
+	for i in 3:
+		var q := fmod(time * 1.6 + i / 3.0, 1.0)
+		draw_arc(p, (World.STONE_R + 4.0 + q * 30.0) * view_scale, 0, TAU, 28, Color("8BE04E", 1.0 - q), 2.0, true)

@@ -52,6 +52,8 @@ static func on_launch(w, s) -> void:
 		s.vel = dir * w.MAX_SPEED
 		w.emit({"t": "part", "part": "hero_set", "pos": s.pos, "owner": s.owner, "text": "라스트 컷", "big": true, "stone": s.id})
 		return
+	if s.parts["weapon"] == "hero_band" and grit(s) < 1:
+		w.emit({"t": "fail", "pos": s.pos, "owner": s.owner, "text": "투지 부족", "part": "hero_band"})
 	if s.parts["weapon"] == "hero_band" and grit(s) >= 1 and not w.shot.used.has("hero_band"):
 		w.shot.used["hero_band"] = 1
 		var g := grit(s)
@@ -117,6 +119,8 @@ static func lastcut_step(w) -> void:
 
 ## 쏜 알의 첫 충돌 직후: 각성 운동화가 투지 1칸을 써서 한 번 더 돌진.
 static func on_first_contact(w, s) -> void:
+	if s.parts["prop"] == "awaken_shoes" and grit(s) < 1 and not w.shot.ex.get("lastcut", false):
+		w.emit({"t": "fail", "pos": s.pos, "owner": s.owner, "text": "투지 부족", "part": "awaken_shoes"})
 	if s.parts["prop"] == "awaken_shoes" and grit(s) >= 1 and not w.shot.used.has("awaken_shoes") and not w.shot.ex.get("lastcut", false):
 		w.shot.used["awaken_shoes"] = 1
 		s.status["grit"] = grit(s) - 1
