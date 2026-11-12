@@ -778,6 +778,25 @@ static func draw_set_form(ci: CanvasItem, id: String, col: Color, a: float, symb
 		draw_symbol(ci, symbol, col.lightened(0.18), a, T(Vector2(sy[0], sy[1])), sy[2] * K, true)
 
 
+## 판 위 정면 표시: 자리마다 고른 형태에 맞게 (홈 · 점 · 은색 톱니 · 실 땀)
+static func draw_front_mark(ci: CanvasItem, c: Vector2, u: float, front: float, a: float, slot: int, col: Color) -> void:
+	var form := "metal"
+	if slot >= 0 and slot < 8 and skin == "":
+		form = str(slot_forms[slot])
+	var fd := Vector2.from_angle(front)
+	match form:
+		"glass", "marble":
+			ci.draw_circle(c + fd * 0.8 * u, 0.09 * u, _al(col.darkened(0.6), a))
+		"cap":
+			ci.draw_colored_polygon(PackedVector2Array([c + fd * 1.1 * u + fd.orthogonal() * 0.13 * u, c + fd * 1.1 * u - fd.orthogonal() * 0.13 * u, c + fd * 0.86 * u]), _al(Color("E9ECEF"), a))
+		"button":
+			ci.draw_line(c + fd * 0.62 * u, c + fd * 0.92 * u, _al(Color("F4EBD8"), a), 0.09 * u, true)
+		"coin":
+			ci.draw_colored_polygon(PackedVector2Array([c + fd * 0.8 * u + fd.orthogonal() * 0.12 * u, c + fd * 0.8 * u - fd.orthogonal() * 0.12 * u, c + fd * 0.66 * u]), _al(Color("8C6A2E"), a))
+		_:
+			draw_notch(ci, c, u, front, a)
+
+
 static func draw_notch(ci: CanvasItem, c: Vector2, u: float, front: float, a := 1.0) -> void:
 	var fd := Vector2.from_angle(front)
 	var fp := fd.orthogonal()

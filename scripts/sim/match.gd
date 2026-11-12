@@ -90,6 +90,8 @@ func setup(n_players: int, cpu_flags: Array, seed_value: int, timed: bool, opts 
 		players[i]["nick"] = str(pf.get("nick", ""))
 		if str(pf.get("nick", "")) != "":
 			players[i]["name"] = str(pf["nick"])
+		else:
+			players[i]["name"] = NAMES[clampi(ci, 0, 7)]
 	stones_opt = int(opts.get("stones", 0))
 	crown_goal = int(opts.get("crown_goal", CROWN_GOAL))
 	if mode == "parcel":

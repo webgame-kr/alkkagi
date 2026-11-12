@@ -306,6 +306,13 @@ func _debug_args() -> void:
 		_show_puck_picker("home")
 	if args.has("--join"):
 		_show_join("TEK7")
+	if args.has("--solo"):
+		# 혼자 연습 기본 흐름 확인용: 기본 설정 그대로 시작
+		my_profile["form"] = "coin"
+		my_profile["color"] = 1
+		my_profile["symbol"] = 4
+		_start_solo()
+		_start_from_room()
 	if args.has("--roomdemo"):
 		# 대기실 모습 확인용: 친구 자리 둘, CPU 하나
 		settings["n"] = 8
@@ -3940,7 +3947,7 @@ func _host_start() -> void:
 	net.broadcast({"t": "start", "seed": seed_value, "n": settings["n"], "cpu": cpu, "timed": settings["timed"],
 		"workshop": settings.get("workshop", "junk"), "mode": settings.get("mode", "survival"),
 		"speed": settings["speed"], "owners": owners, "map": map_id, "plan": plan,
-		"stones": settings.get("stones", 3), "crown_goal": settings.get("crown_goal", 5), "skins": settings.get("skins", true),
+		"stones": settings.get("stones", 3), "crown_goal": settings.get("crown_goal", 5), "skins": settings.get("skins", false),
 		"teams": settings.get("teams", []), "parcel_every": settings.get("parcel_every", 2), "parcel_goal": settings.get("parcel_goal", 3)})
 	_start_match(seed_value)
 
@@ -4070,7 +4077,7 @@ func _guest_msg(from: String, d: Dictionary) -> void:
 				plan["cpu"] = d["cpu"]
 			settings["stones"] = int(d.get("stones", 3))
 			settings["crown_goal"] = int(d.get("crown_goal", 5))
-			settings["skins"] = bool(d.get("skins", true))
+			settings["skins"] = bool(d.get("skins", false))
 			my_seats = []
 			var me: String = net.my_id()
 			for k in d["owners"]:
@@ -4738,7 +4745,7 @@ func _draw_puck_at(p: Vector2, sid: int, parts: Dictionary, mside: int, col: Col
 			var tile := float(PUCK_TILE)
 			var sz := tile * u / PUCK_U
 			draw_texture_rect_region(puck_vp.get_texture(), Rect2(-Vector2.ONE * sz * 0.5, Vector2.ONE * sz), Rect2(tile * symbol, 0, tile, tile), Color(1, 1, 1, alpha))
-			Art.draw_notch(self, Vector2.ZERO, u, facing, alpha)
+			Art.draw_front_mark(self, Vector2.ZERO, u, facing, alpha, symbol, col)
 		else:
 			Art.draw_puck_top(self, Vector2.ZERO, u, col, symbol, facing, alpha)
 		if Art.ws_set_of(parts) != "":
@@ -5264,7 +5271,7 @@ func _update_arena_cache() -> void:
 		arena_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
 		arena_node.queue_redraw()
 	arena_node.position = shake_off
-	Art.skin = m.workshop if (m != null and state != "setup" and settings.get("skins", true)) else ""
+	Art.skin = m.workshop if (m != null and state != "setup" and settings.get("skins", false)) else ""
 	var pkey := theme_id + Art.skin + str(slot_colors) + str(Art.slot_symbols) + str(Art.slot_forms)
 	if pkey != _puck_key:
 		_puck_key = pkey
@@ -5295,7 +5302,7 @@ func _hud_icon(center: Vector2, size: float, col: Color, symbol: int, alpha := 1
 	var tile := float(PUCK_TILE)
 	var sz := tile * u / PUCK_U
 	draw_texture_rect_region(puck_vp.get_texture(), Rect2(center + Vector2(0, -0.08 * u) - Vector2.ONE * sz * 0.5, Vector2.ONE * sz), Rect2(tile * symbol, 0, tile, tile), Color(1, 1, 1, alpha))
-	Art.draw_notch(self, center + Vector2(0, -0.08 * u), u, -PI / 2.0, alpha)
+	Art.draw_front_mark(self, center + Vector2(0, -0.08 * u), u, -PI / 2.0, alpha, symbol, col)
 
 
 # ── 아이콘 버튼 (디자인 「경기 HUD」 오른쪽 위) ─────────────
@@ -7630,7 +7637,7 @@ func _ensure_room_arrays() -> void:
 	if not settings.has("fill"):
 		settings["fill"] = false
 	if not settings.has("skins"):
-		settings["skins"] = true
+		settings["skins"] = false
 	if not settings.has("crown_goal"):
 		settings["crown_goal"] = 5
 
@@ -7856,6 +7863,7 @@ func _start_solo() -> void:
 	_reset_room(4)
 	for i in range(1, 4):
 		settings["cpu"][i] = true
+		settings["empty"][i] = false
 	_show_setup()
 
 
@@ -8625,8 +8633,8 @@ func _room_settings_ui(rv: VBoxContainer, editable: bool, people: int) -> void:
 	opts.add_child(_opt_cell("빈 자리", "CPU로 채우기" if bool(_room_cfg("fill", false)) else "비워 두기", editable, func():
 		settings["fill"] = not settings.get("fill", false)
 		_room_settings_changed()))
-	opts.add_child(_opt_cell("공방 스킨", "켜기" if bool(_room_cfg("skins", true)) else "끄기", editable, func():
-		settings["skins"] = not settings.get("skins", true)
+	opts.add_child(_opt_cell("공방 스킨", "켜기" if bool(_room_cfg("skins", false)) else "끄기", editable, func():
+		settings["skins"] = not settings.get("skins", false)
 		_room_settings_changed()))
 	rv.add_child(opts)
 	if cur_mode == "parcel" and not editable:
