@@ -260,7 +260,29 @@ static func draw_puck_shadow(ci: CanvasItem, c: Vector2, u: float, a := 1.0, rot
 	ci.draw_colored_polygon(pts, Color(shadow, shadow.a * a))
 
 
+## 자리(0~7)마다 고른 알: 실제 각인 기호 · 형태 · 색 (디자인 「알 디자인 시안」, 기획 「방 만들기·알 고르기」).
+## 게임은 판 위·HUD 에서 symbol 자리에 자리 번호를 넘기고, 여기서 실제 모습으로 바꾼다.
+static var slot_symbols: Array = [0, 1, 2, 3, 4, 5, 6, 7]
+static var slot_forms: Array = ["metal", "metal", "metal", "metal", "metal", "metal", "metal", "metal"]
+const FORM_NAMES := {"metal": "금속 퍽", "glass": "유리 바둑알", "cap": "병뚜껑", "button": "단추", "hockey": "하키 퍽", "marble": "유리 구슬", "coin": "동전"}
+
+
 static func draw_puck_top(ci: CanvasItem, c: Vector2, u: float, col: Color, symbol: int, front: float, a := 1.0, rot := 0.0, notch := true) -> void:
+	var sym := symbol
+	var form := "metal"
+	if symbol >= 0 and symbol < 8:
+		sym = int(slot_symbols[symbol])
+		form = str(slot_forms[symbol])
+	if skin != "":
+		form = "metal"   # 공방 스킨을 켠 방: 모두 공방 재질 (금속 퍽 + 스킨)
+	draw_puck_form(ci, c, u, col, sym, form, front, a, rot, notch)
+
+
+## 형태를 직접 골라 그린다 (알 고르기 화면 · 대기실 자리 카드)
+static func draw_puck_form(ci: CanvasItem, c: Vector2, u: float, col: Color, symbol: int, form: String, front: float, a := 1.0, rot := 0.0, notch := true) -> void:
+	if form != "metal" and form != "":
+		_draw_form(ci, c, u, col, symbol, form, front, a, rot, notch)
+		return
 	var oc := _al(outline, a)
 	var ow := 0.12 * u
 	var down := Vector2(0, 1).rotated(-rot)
@@ -1091,3 +1113,104 @@ static func _skin_overlay(ci: CanvasItem, c: Vector2, u: float, col: Color, a: f
 				cn.append(c + Vector2.from_angle(ang2) * u * (1.1 + 0.05 * float(i % 2)))
 			ci.draw_polyline(cn, _al(Color("E2C27A"), a), 0.16 * u, true)
 			ci.draw_polyline(cn, Color(0.42, 0.3, 0.12, 0.6 * a), 0.03 * u, true)
+
+
+
+# ── 알 형태 7종 (금속 퍽 외 6종) ─────────────────────────
+static func _sym_col(col: Color) -> Color:
+	var lum := col.r * 0.3 + col.g * 0.59 + col.b * 0.11
+	return Color("1B1E22") if lum > 0.62 else Color.WHITE
+
+
+static func _draw_form(ci: CanvasItem, c: Vector2, u: float, col: Color, symbol: int, form: String, front: float, a: float, rot: float, notch: bool) -> void:
+	var oc := _al(outline, a)
+	var down := Vector2(0, 1).rotated(-rot)
+	var fd := Vector2.from_angle(front)
+	var k := 0.42 * u / 11.0
+	var w := 0.13 * u
+	match form:
+		"glass":
+			# 유리 바둑알: 둥근 광택, 기호는 음각처럼 은은하게, 정면은 작은 점
+			ci.draw_circle(c + down * 0.1 * u, u, Color(0, 0, 0, 0.25 * a))
+			ci.draw_circle(c, u, _al(col.darkened(0.35), a))
+			var hi := col.lerp(Color.WHITE, 0.55)
+			for i in range(1, 7):
+				var t := float(i) / 7.0
+				ci.draw_circle(c.lerp(c + Vector2(-0.3 * u, -0.35 * u).rotated(-rot), t), u * (1.0 - t * 0.8), _al(col.lerp(hi, t * 0.9), a))
+			ci.draw_arc(c, u, 0, TAU, 40, _al(col.darkened(0.55), a), 0.04 * u, true)
+			ci.draw_colored_polygon(_ellipse_rot(c + Vector2(-0.35 * u, -0.42 * u).rotated(-rot), 0.32 * u, 0.18 * u, -0.5 - rot), Color(1, 1, 1, 0.6 * a))
+			if notch:
+				ci.draw_circle(c + fd * 0.8 * u, 0.08 * u, _al(col.darkened(0.6), a))
+			draw_symbol(ci, symbol, col.darkened(0.55), a * 0.9, c, k, false, w * 0.9, -rot)
+		"cap":
+			# 병뚜껑: 톱니 테두리, 한 칸만 은색이 정면
+			var pts := PackedVector2Array()
+			var teeth := 24
+			for i in teeth * 2:
+				var ang := TAU * i / (teeth * 2) - rot
+				pts.append(c + Vector2.from_angle(ang) * u * (1.08 if i % 2 == 0 else 0.96))
+			var sh := PackedVector2Array()
+			for q in pts:
+				sh.append(q + down * 0.14 * u)
+			ci.draw_colored_polygon(sh, _al(col.darkened(0.5), a))
+			ci.draw_colored_polygon(pts, _al(col.darkened(0.12), a))
+			pts.append(pts[0])
+			ci.draw_polyline(pts, oc, 0.06 * u, true)
+			ci.draw_circle(c, 0.8 * u, _al(col, a))
+			ci.draw_arc(c, 0.8 * u, 0, TAU, 32, Color(0, 0, 0, 0.25 * a), 0.05 * u, true)
+			if notch:
+				ci.draw_colored_polygon(PackedVector2Array([c + fd * 1.1 * u + fd.orthogonal() * 0.13 * u, c + fd * 1.1 * u - fd.orthogonal() * 0.13 * u, c + fd * 0.86 * u]), _al(Color("E9ECEF"), a))
+			draw_symbol(ci, symbol, _sym_col(col), a, c, k, false, w, -rot)
+		"button":
+			# 단추: 테두리 고리, 구멍 네 개, 실 땀이 정면
+			ci.draw_circle(c + down * 0.12 * u, u, _al(col.darkened(0.45), a))
+			ci.draw_circle(c, u, _al(col, a))
+			ci.draw_arc(c, u, 0, TAU, 40, oc, 0.08 * u, true)
+			ci.draw_arc(c, 0.82 * u, 0, TAU, 36, _al(col.darkened(0.22), a), 0.12 * u, true)
+			for i in 4:
+				var hp := c + Vector2.from_angle(PI / 4.0 + PI / 2.0 * i - rot) * 0.5 * u
+				ci.draw_circle(hp, 0.09 * u, _al(col.darkened(0.55), a))
+			if notch:
+				ci.draw_line(c + fd * 0.62 * u, c + fd * 0.92 * u, _al(Color("F4EBD8"), a), 0.09 * u, true)
+			draw_symbol(ci, symbol, _sym_col(col), a, c, k * 0.75, false, w * 0.8, -rot)
+		"hockey":
+			# 하키 퍽: 검은 고무에 주인 색 띠
+			ci.draw_circle(c + down * 0.14 * u, u, _al(Color("0E0F11"), a))
+			ci.draw_circle(c, u, _al(Color("1E2024"), a))
+			ci.draw_arc(c, 0.76 * u, 0, TAU, 40, _al(col, a), 0.26 * u, true)
+			ci.draw_arc(c, u, 0, TAU, 40, oc, 0.07 * u, true)
+			if notch:
+				draw_notch(ci, c, u, front, a)
+			draw_symbol(ci, symbol, col.lightened(0.15), a, c, k * 0.8, false, w, -rot)
+		"marble":
+			# 유리 구슬: 맑은 구에 주인 색 띠 무늬
+			ci.draw_circle(c + down * 0.1 * u, u, Color(0, 0, 0, 0.22 * a))
+			ci.draw_circle(c, u, _al(col.lerp(Color.WHITE, 0.72), a))
+			for j in 2:
+				var band := PackedVector2Array()
+				for i in 17:
+					var t := float(i) / 16.0
+					var x := -0.9 + 1.8 * t
+					band.append(c + Vector2(x * u, (sin(t * PI * 2.0 + j * 1.5) * 0.18 + (j - 0.5) * 0.45) * u).rotated(-rot))
+				ci.draw_polyline(band, _al(col, a), 0.2 * u, true)
+			ci.draw_arc(c, u, 0, TAU, 40, _al(col.darkened(0.3), a), 0.05 * u, true)
+			ci.draw_colored_polygon(_ellipse_rot(c + Vector2(-0.38 * u, -0.45 * u).rotated(-rot), 0.28 * u, 0.15 * u, -0.5 - rot), Color(1, 1, 1, 0.8 * a))
+			if notch:
+				ci.draw_circle(c + fd * 0.82 * u, 0.08 * u, _al(col.darkened(0.5), a))
+			draw_symbol(ci, symbol, Color(1, 1, 1, 0.95), a, c, k * 0.85, false, w * 0.9, -rot)
+		"coin":
+			# 동전: 금 테두리 눈금, 주인 색은 가운데 원
+			ci.draw_circle(c + down * 0.12 * u, u, _al(Color("8C6A2E"), a))
+			ci.draw_circle(c, u, _al(Color("E8C98A"), a))
+			ci.draw_arc(c, u, 0, TAU, 40, oc, 0.06 * u, true)
+			for i in 36:
+				var ang2 := TAU * i / 36.0
+				ci.draw_line(c + Vector2.from_angle(ang2) * 0.98 * u, c + Vector2.from_angle(ang2) * 0.88 * u, _al(Color("8C6A2E"), a), 0.03 * u, true)
+			ci.draw_circle(c, 0.8 * u, _al(Color("C9A15A"), a))
+			ci.draw_circle(c, 0.62 * u, _al(col, a))
+			ci.draw_arc(c, 0.62 * u, 0, TAU, 32, _al(Color("8C6A2E"), a), 0.05 * u, true)
+			if notch:
+				ci.draw_colored_polygon(PackedVector2Array([c + fd * 0.8 * u + fd.orthogonal() * 0.12 * u, c + fd * 0.8 * u - fd.orthogonal() * 0.12 * u, c + fd * 0.66 * u]), _al(Color("8C6A2E"), a))
+			draw_symbol(ci, symbol, _sym_col(col), a, c, k * 0.72, false, w * 0.85, -rot)
+		_:
+			draw_puck_form(ci, c, u, col, symbol, "metal", front, a, rot, notch)

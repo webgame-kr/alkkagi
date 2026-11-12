@@ -203,6 +203,7 @@ func _ready() -> void:
 	arena_node.draw.connect(func():
 		arena_node.draw_texture_rect(arena_vp.get_texture(), Rect2(-Vector2.ONE * 8.0, get_viewport_rect().size + Vector2.ONE * 16.0), false))
 	add_child(arena_node)
+	slot_colors = Match.COLORS.duplicate()
 	puck_vp = SubViewport.new()
 	puck_vp.transparent_bg = true
 	puck_vp.disable_3d = true
@@ -212,7 +213,7 @@ func _ready() -> void:
 	puck_drawer = Node2D.new()
 	puck_drawer.draw.connect(func():
 		for i in 8:
-			Art.draw_puck_top(puck_drawer, Vector2(PUCK_TILE * (i + 0.5), PUCK_TILE * 0.5), PUCK_U, Match.COLORS[i], i, 0.0, 1.0, 0.0, false))
+			Art.draw_puck_top(puck_drawer, Vector2(PUCK_TILE * (i + 0.5), PUCK_TILE * 0.5), PUCK_U, slot_colors[i], i, 0.0, 1.0, 0.0, false))
 	puck_vp.add_child(puck_drawer)
 	arena_vp = SubViewport.new()
 	arena_vp.transparent_bg = false
@@ -223,11 +224,23 @@ func _ready() -> void:
 	arena_drawer.draw.connect(_draw_arena_cache)
 	arena_vp.add_child(arena_drawer)
 	_layout()
-	_show_setup()
-	_debug_args()
+	_load_profile()
+	_ensure_room_arrays()
+	var args0 := OS.get_cmdline_user_args()
 	var room: String = net.room_param() if net.available else ""
 	if room != "":
+		if str(my_profile["nick"]) == "":
+			my_profile["nick"] = "친구"
 		_join_room(room)
+	elif args0.is_empty():
+		_show_home()
+	else:
+		_reset_room(4)
+		for i in range(1, 4):
+			settings["cpu"][i] = true
+			settings["empty"][i] = false
+		_show_setup()
+	_debug_args()
 
 
 func _make_theme() -> Theme:
@@ -287,6 +300,30 @@ func _debug_args() -> void:
 	var mi := args.find("--map")
 	if mi >= 0 and args.size() > mi + 1:
 		_apply_map(args[mi + 1], false)
+	if args.has("--home"):
+		_show_home()
+	if args.has("--picker"):
+		_show_puck_picker("home")
+	if args.has("--join"):
+		_show_join("TEK7")
+	if args.has("--roomdemo"):
+		# 대기실 모습 확인용: 친구 자리 둘, CPU 하나
+		settings["n"] = 8
+		for k0 in 8:
+			settings["empty"][k0] = k0 >= 5
+			settings["cpu"][k0] = k0 == 2
+			settings["friend"][k0] = false
+		settings["prof"][1] = {"nick": "민지", "form": "cap", "color": 0, "symbol": 0, "kind": "local"}
+		settings["prof"][3] = {"nick": "도윤", "form": "coin", "color": 3, "symbol": 3, "kind": "local"}
+		settings["prof"][4] = {"nick": "하린", "form": "marble", "color": 4, "symbol": 4, "kind": "local"}
+		my_profile["form"] = "glass"
+		my_profile["color"] = 1
+		my_profile["symbol"] = 1
+		my_profile["nick"] = "나"
+		_show_setup()
+		if args.has("--roomstart"):
+			settings["skins"] = false
+			_start_from_room()
 	var i := args.find("--auto")
 	if i < 0:
 		return
@@ -492,21 +529,33 @@ func _start_match(seed_value := -1) -> void:
 		return
 	match_started_t = time
 	mode_alerts.clear()
+	late_tag.clear()
 	crown_fly = {}
 	parcel_fly = {}
 	if seed_value < 0:
 		seed_value = randi()
+	var use_plan := not plan.is_empty()
+	var n_play: int = int(plan["n"]) if use_plan else int(settings["n"])
+	var cpu_flags: Array = plan["cpu"] if use_plan else settings["cpu"]
 	if online == "":
 		my_seats = []
-		for i in settings["n"]:
-			if not settings["cpu"][i]:
+		for i in n_play:
+			if not cpu_flags[i]:
 				my_seats.append(i)
+	if not use_plan:
+		cpu_levels = []
 	m = Match.new()
 	var ws: String = settings.get("workshop", "junk")
 	if ws == "random":
 		ws = ["junk", "magic", "toon", "lab", "clock", "pirate"][seed_value % 6]
-	m.setup(settings["n"], settings["cpu"], seed_value, settings["timed"], {"workshop": ws, "mode": settings.get("mode", "survival"), "placement": true,
-		"teams": settings.get("teams", []), "parcel_every": settings.get("parcel_every", 2), "parcel_goal": settings.get("parcel_goal", 3)})
+	var md0: String = settings.get("mode", "survival")
+	m.setup(n_play, cpu_flags, seed_value, settings["timed"], {"workshop": ws, "mode": md0, "placement": true,
+		"teams": plan.get("teams", settings.get("teams", [])), "parcel_every": settings.get("parcel_every", 2), "parcel_goal": settings.get("parcel_goal", 3),
+		"profiles": plan.get("profiles", []), "stones": int(settings.get("stones", 3)) if (use_plan and (md0 == "survival" or md0 == "derby")) else 0,
+		"crown_goal": int(settings.get("crown_goal", 5))})
+	if use_plan:
+		m.aim_limit = float(plan.get("aim", 0.0))
+	_apply_slot_styles_from_match()
 	state = "play"
 	_refresh_theme()
 	turn_hold = 0.0
@@ -727,6 +776,8 @@ func _update_cpu(delta: float, pid: int) -> void:
 			break
 		bot = Bot.new()
 		bot.begin(m, pid, randi())
+		if pid < cpu_levels.size():
+			bot.aim_error = [1.9, 1.0, 0.45][clampi(int(cpu_levels[pid]), 0, 2)]
 		bot_started = Time.get_ticks_msec()
 		return
 	# 프레임당 약 6ms 만큼만 생각한다 (화면이 멈추지 않게).
@@ -1321,7 +1372,7 @@ func _draw_inner() -> void:
 		# 로비 왼쪽 열 바탕: 어떤 맵에서도 글자가 읽히게 HUD 패널 색을 깐다
 		if state == "setup" and is_instance_valid(lobby_col):
 			for lc in [lobby_col, lobby_col2]:
-				if is_instance_valid(lc):
+				if is_instance_valid(lc) and not (lc is PanelContainer):
 					var lr: Rect2 = lc.get_global_rect().grow(22)
 					lr.size.y = minf(lr.size.y, vs.y - lr.position.y + 40.0)
 					_round_rect(lr, PANEL_BG, 14, PANEL_LINE)
@@ -2345,7 +2396,7 @@ func _draw_turn_card(r: Rect2) -> void:
 	var y := r.position.y + 96
 	_txt(Vector2(r.position.x + 18, y), "%d바퀴째" % m.round_no, 13, LABEL, font_semi)
 	if m.mode == "crown":
-		_txt(Vector2(r.end.x - 18, y), "%d점 선취" % Match.CROWN_GOAL, 13, SUB, font, 120, HORIZONTAL_ALIGNMENT_RIGHT)
+		_txt(Vector2(r.end.x - 18, y), "%d점 선취" % m.crown_goal, 13, SUB, font, 120, HORIZONTAL_ALIGNMENT_RIGHT)
 	elif m.mode == "parcel":
 		_txt(Vector2(r.end.x - 18, y), "%d점 선취" % m.parcel_goal, 13, SUB, font, 120, HORIZONTAL_ALIGNMENT_RIGHT)
 	elif m.max_rounds > 0:
@@ -2361,7 +2412,7 @@ func _draw_turn_card(r: Rect2) -> void:
 		lit = maxi(int(m.team_scores[0]), int(m.team_scores[1]))
 	if m.mode == "crown":
 		# 왕관 쟁탈전: 선두의 점수
-		n = Match.CROWN_GOAL
+		n = m.crown_goal
 		lit = 0
 		for sc0 in m.scores:
 			lit = maxi(lit, int(sc0))
@@ -2426,7 +2477,7 @@ func _draw_order(r: Rect2) -> void:
 		r.position.y += team_h
 	_txt(r.position + Vector2(18, 27), "차례 순서" + (" · 이번 구간" if m.mode == "parcel" else ""), 13, SUB, font_semi)
 	if m.mode == "crown":
-		_txt(Vector2(r.end.x - 18, r.position.y + 27), "%d점 선취" % Match.CROWN_GOAL, 13, SUB, font, 100, HORIZONTAL_ALIGNMENT_RIGHT)
+		_txt(Vector2(r.end.x - 18, r.position.y + 27), "%d점 선취" % m.crown_goal, 13, SUB, font, 100, HORIZONTAL_ALIGNMENT_RIGHT)
 	var y := r.position.y + 36
 	var i := 0
 	for pid in rows:
@@ -2473,7 +2524,7 @@ func _draw_order(r: Rect2) -> void:
 				tag = "지금"
 			elif i == 1 and m.phase != "draft":
 				tag = "다음"
-			if late_tag.get(pid, -1) >= m.world.turn_no - 1 and pid != cur:
+			if late_tag.has(pid) and int(late_tag[pid]) >= m.world.turn_no - 1 and pid != cur:
 				var lt := "늦잠 ↓1"
 				var lw := font_bold.get_string_size(lt, HORIZONTAL_ALIGNMENT_LEFT, -1, 11).x + 16.0
 				var lr := Rect2(right - 12 - left * 12 - lw - 46.0, cy - 10, lw, 20)
@@ -2782,9 +2833,10 @@ func _centered_panel(root: Control, min_w: float, bg := Color(SOLID, 0.9)) -> VB
 
 
 func _show_setup() -> void:
-	if online == "guest":
-		_show_guest_lobby()
-		return
+	_show_room()
+
+
+func _show_setup_old() -> void:
 	state = "setup"
 	m = null
 	menu_btn.visible = false
@@ -3475,6 +3527,7 @@ func _show_side_choice(pid: int) -> void:
 
 func _show_result() -> void:
 	state = "result"
+	_record_result()
 	snd.slide(0.0)
 	if m.winners.is_empty():
 		snd.play("draw")
@@ -3521,7 +3574,7 @@ func _show_result() -> void:
 	var score_line: Array = []
 	for pp in m.players:
 		score_line.append("%s %d" % [pp.name, m.scores[pp.id]])
-	var reason := {"score": "점수 " + " · ".join(score_line), "last": "마지막 생존", "limit": "최대 %d바퀴 도달 · 남은 퍽이 가장 많은 사람이 승리" % m.max_rounds, "draw": "한 발에 모두 떨어졌습니다", "crown": "왕관 %d점 선취" % Match.CROWN_GOAL, "parcel": "택배 %d점 선취 · %d : %d" % [m.parcel_goal, m.team_scores[0], m.team_scores[1]]}
+	var reason := {"score": "점수 " + " · ".join(score_line), "last": "마지막 생존", "limit": "최대 %d바퀴 도달 · 남은 퍽이 가장 많은 사람이 승리" % m.max_rounds, "draw": "한 발에 모두 떨어졌습니다", "crown": "왕관 %d점 선취" % m.crown_goal, "parcel": "택배 %d점 선취 · %d : %d" % [m.parcel_goal, m.team_scores[0], m.team_scores[1]]}
 	box.add_child(_label(reason.get(m.end_reason, ""), 15, SUB))
 	# 순위: 남은 퍽 많은 순, 그다음 늦게 탈락한 순
 	var rank: Array = []
@@ -3726,25 +3779,31 @@ func _start_hosting() -> void:
 		return
 	online = "host"
 	friend_peer.clear()
+	room_peer.clear()
 	net.host()
-	# 사람 자리 말고 하나는 친구 자리로 준비해 둔다
-	var has_friend := false
-	for i in settings["n"]:
-		has_friend = has_friend or settings["friend"][i]
-	if not has_friend:
-		for i in range(1, settings["n"]):
-			if settings["cpu"][i]:
-				settings["cpu"][i] = false
-				settings["friend"][i] = true
-				break
 	_show_setup()
 
 
 func _host_msg(from: String, d: Dictionary) -> void:
 	match str(d.get("t", "")):
-		"_joined", "hello":
+		"_joined":
+			pass
+		"hello":
 			if _seat_of_peer(from) < 0:
 				_host_assign(from)
+			var seat0 := _seat_of_peer(from)
+			if seat0 >= 0:
+				_host_set_prof(seat0, d.get("prof", {}), from)
+		"prof":
+			var seat1 := _seat_of_peer(from)
+			if seat1 >= 0 and state == "setup":
+				_host_set_prof(seat1, d.get("prof", {}), from)
+		"ready":
+			var seat2r := _seat_of_peer(from)
+			if seat2r >= 0 and state == "setup":
+				settings["ready"][seat2r] = bool(d.get("on", false))
+				_host_broadcast_lobby()
+				_show_setup()
 		"req":
 			var a: Dictionary = d.get("a", {})
 			var seat := _seat_of_peer(from)
@@ -3767,6 +3826,33 @@ func _host_msg(from: String, d: Dictionary) -> void:
 				_show_setup()
 
 
+## 친구가 고른 알: 색이 겹치면 남은 색 중 가까운 색으로 바꾸고 알려 준다.
+func _host_set_prof(seat: int, pf, peer: String) -> void:
+	if not (pf is Dictionary):
+		return
+	var p2: Dictionary = (pf as Dictionary).duplicate()
+	var used := {}
+	for i in settings["n"]:
+		if i != seat and not settings["empty"][i] and settings["prof"][i] is Dictionary and not (settings["prof"][i] as Dictionary).is_empty():
+			used[int(settings["prof"][i].get("color", -1))] = true
+	var want := int(p2.get("color", 0))
+	var got := _nearest_free_color(want, used)
+	if got != want:
+		net.send_to(peer, {"t": "note", "text": "색이 겹쳐서 %s으로 바꿨어요" % Match.NAMES[got]})
+	p2["color"] = got
+	p2["kind"] = "friend"
+	# 같은 닉네임은 뒤에 숫자
+	var nick := str(p2.get("nick", "친구"))
+	for i in settings["n"]:
+		if i != seat and settings["prof"][i] is Dictionary and str(settings["prof"][i].get("nick", "")) == nick:
+			p2["nick"] = nick + str(seat + 1)
+	settings["prof"][seat] = p2
+	settings["ready"][seat] = false
+	_host_broadcast_lobby()
+	if state == "setup":
+		_show_setup()
+
+
 func _seat_of_peer(peer: String) -> int:
 	for seat in friend_peer:
 		if friend_peer[seat] == peer:
@@ -3776,13 +3862,23 @@ func _seat_of_peer(peer: String) -> int:
 
 func _host_assign(peer: String) -> void:
 	if state != "setup":
-		net.send_to(peer, {"t": "full", "why": "이미 경기 중이에요"})
+		if not pending_join.has(peer):
+			pending_join.append(peer)
+		net.send_to(peer, {"t": "note", "text": "지금 경기 중이에요, 끝나면 들어갈 수 있어요"})
 		return
+	_ensure_room_arrays()
 	var seat := -1
 	for i in settings["n"]:
 		if settings["friend"][i] and not friend_peer.has(i):
 			seat = i
 			break
+	if seat < 0:
+		for i in range(1, settings["n"]):
+			if settings["empty"][i]:
+				settings["empty"][i] = false
+				settings["friend"][i] = true
+				seat = i
+				break
 	if seat < 0:
 		for i in range(1, settings["n"]):
 			if settings["cpu"][i]:
@@ -3791,7 +3887,7 @@ func _host_assign(peer: String) -> void:
 				seat = i
 				break
 	if seat < 0:
-		net.send_to(peer, {"t": "full", "why": "빈 자리가 없어요"})
+		net.send_to(peer, {"t": "full", "why": "방이 꽉 찼어요 (%d/%d)" % [settings["n"], settings["n"]]})
 		return
 	friend_peer[seat] = peer
 	snd.play("part_equip", -4.0)
@@ -3808,7 +3904,11 @@ func _lobby_state() -> Dictionary:
 			kinds.append("cpu")
 		else:
 			kinds.append("host")
-	return {"t": "lobby", "n": settings["n"], "kinds": kinds, "timed": settings["timed"], "speed": settings["speed"],
+	_refresh_seat_profiles()
+	var cfg := {}
+	for k in ["mode", "workshop", "aim", "stones", "fill", "skins", "crown_goal", "parcel_every", "parcel_goal"]:
+		cfg[k] = settings.get(k)
+	return {"t": "lobby", "n": settings["n"], "kinds": kinds, "timed": settings["timed"], "speed": settings["speed"], "seats": _room_seats(), "cfg": cfg,
 		"workshop": settings.get("workshop", "junk"), "mode": settings.get("mode", "survival"), "map": map_id,
 		"teams": settings.get("teams", []), "parcel_every": settings.get("parcel_every", 2), "parcel_goal": settings.get("parcel_goal", 3)}
 
@@ -3823,30 +3923,41 @@ func _host_broadcast_lobby() -> void:
 
 
 func _host_start() -> void:
-	# 아직 안 들어온 친구 자리는 CPU가 맡는다
-	for i in settings["n"]:
-		if settings["friend"][i] and not friend_peer.has(i):
-			settings["friend"][i] = false
-			settings["cpu"][i] = true
-	var cpu: Array = []
+	if plan.is_empty():
+		_compose_plan()
+	var cpu: Array = plan["cpu"].duplicate()
 	var owners := {}
 	my_seats = []
-	for i in settings["n"]:
-		cpu.append(settings["cpu"][i])
+	for i in int(plan["n"]):
 		if friend_peer.has(i):
 			owners[str(i)] = friend_peer[i]
-		elif not settings["cpu"][i]:
+		elif bool(plan["friend"][i]):
+			cpu[i] = true   # 아직 안 들어온 친구 자리는 CPU가 맡는다
+		elif not cpu[i]:
 			my_seats.append(i)
+	plan["cpu"] = cpu
 	var seed_value := randi()
 	net.broadcast({"t": "start", "seed": seed_value, "n": settings["n"], "cpu": cpu, "timed": settings["timed"],
 		"workshop": settings.get("workshop", "junk"), "mode": settings.get("mode", "survival"),
-		"speed": settings["speed"], "owners": owners, "map": map_id,
+		"speed": settings["speed"], "owners": owners, "map": map_id, "plan": plan,
+		"stones": settings.get("stones", 3), "crown_goal": settings.get("crown_goal", 5), "skins": settings.get("skins", true),
 		"teams": settings.get("teams", []), "parcel_every": settings.get("parcel_every", 2), "parcel_goal": settings.get("parcel_goal", 3)})
 	_start_match(seed_value)
 
 
 func _back_to_lobby() -> void:
+	plan = {}
+	if not room_peer.is_empty() or online == "host":
+		friend_peer = room_peer.duplicate()
+	_ensure_room_arrays()
+	for i in 8:
+		settings["ready"][i] = false
 	if online == "host":
+		var waiting := pending_join.duplicate()
+		pending_join.clear()
+		state = "setup"
+		for pj in waiting:
+			_host_assign(pj)
 		net.broadcast({"t": "tosetup"})
 		for i in settings["n"]:
 			if friend_peer.has(i):
@@ -3923,10 +4034,13 @@ func _guest_msg(from: String, d: Dictionary) -> void:
 	match str(d.get("t", "")):
 		"_open":
 			host_peer = from
-			net.send_to(from, {"t": "hello"})
+			net.send_to(from, {"t": "hello", "prof": my_profile})
+		"note":
+			_banner(str(d.get("text", "")))
 		"lobby":
 			host_peer = from
 			guest_lobby = d
+			my_seat = int(d.get("seat", 0))
 			if str(d.get("map", map_id)) != map_id:
 				_apply_map(str(d.get("map", map_id)), false)
 			settings["n"] = int(d["n"])
@@ -3951,6 +4065,12 @@ func _guest_msg(from: String, d: Dictionary) -> void:
 				_apply_map(str(d.get("map", map_id)), false)
 			for i in 8:
 				settings["cpu"][i] = i < d["cpu"].size() and bool(d["cpu"][i])
+			plan = d.get("plan", {})
+			if not plan.is_empty():
+				plan["cpu"] = d["cpu"]
+			settings["stones"] = int(d.get("stones", 3))
+			settings["crown_goal"] = int(d.get("crown_goal", 5))
+			settings["skins"] = bool(d.get("skins", true))
 			my_seats = []
 			var me: String = net.my_id()
 			for k in d["owners"]:
@@ -3975,6 +4095,10 @@ func _guest_msg(from: String, d: Dictionary) -> void:
 
 
 func _show_guest_lobby() -> void:
+	_show_room()
+
+
+func _show_guest_lobby_old() -> void:
 	state = "setup"
 	m = null
 	menu_btn.visible = false
@@ -4609,7 +4733,7 @@ func _draw_puck_at(p: Vector2, sid: int, parts: Dictionary, mside: int, col: Col
 					k3 += 1
 			draw_set_transform_matrix(base)
 	if not Art.is_set_form(parts):
-		if not Art.mono and symbol >= 0 and symbol < 8 and puck_vp != null and col == Match.COLORS[symbol]:
+		if not Art.mono and symbol >= 0 and symbol < 8 and puck_vp != null and col == slot_colors[symbol]:
 			# 미리 구워 둔 퍽 몸통 + 정면 홈만 따로
 			var tile := float(PUCK_TILE)
 			var sz := tile * u / PUCK_U
@@ -5140,9 +5264,10 @@ func _update_arena_cache() -> void:
 		arena_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
 		arena_node.queue_redraw()
 	arena_node.position = shake_off
-	Art.skin = m.workshop if (m != null and state != "setup") else ""
-	if theme_id + Art.skin != _puck_key:
-		_puck_key = theme_id + Art.skin
+	Art.skin = m.workshop if (m != null and state != "setup" and settings.get("skins", true)) else ""
+	var pkey := theme_id + Art.skin + str(slot_colors) + str(Art.slot_symbols) + str(Art.slot_forms)
+	if pkey != _puck_key:
+		_puck_key = pkey
 		puck_drawer.queue_redraw()
 		puck_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
 
@@ -5162,7 +5287,7 @@ func _draw_arena_cache() -> void:
 
 ## HUD 퍽 아이콘: 구워 둔 퍽 그림을 작게 붙인다.
 func _hud_icon(center: Vector2, size: float, col: Color, symbol: int, alpha := 1.0) -> void:
-	if puck_vp == null or symbol < 0 or symbol >= 8 or col != Match.COLORS[symbol]:
+	if puck_vp == null or symbol < 0 or symbol >= 8 or col != slot_colors[symbol]:
 		Art.draw_icon(self, center, size, col, symbol, alpha)
 		return
 	var u := size * 0.5 * 0.86
@@ -6229,7 +6354,7 @@ func _draw_crown_forecast(vs: Vector2) -> void:
 	var sub := ""
 	if m.phase == "draft":
 		title = "%d바퀴 개조" % m.round_no
-		sub = "개조가 끝나면 차례가 시작돼요 · %d점 선취" % Match.CROWN_GOAL
+		sub = "개조가 끝나면 차례가 시작돼요 · %d점 선취" % m.crown_goal
 	elif h == null:
 		sub = ("바닥 왕관 · %s 직접 닿고 살아남으면 +1" % _j(m.players[cur].name, "이", "가")) if c["state"] == "floor" and cur >= 0 else "왕관이 가운데로 돌아가요 · 점수 없음"
 	elif h.owner == cur:
@@ -6256,8 +6381,8 @@ func _draw_crown_row(row: Rect2, pid: int, x: float, cy: float, a: float, is_cur
 	var score: int = m.scores[pid]
 	_txt(Vector2(right, cy + 6), "%d" % score, 16, Color(TEXT, a), font_bold, 30, HORIZONTAL_ALIGNMENT_RIGHT)
 	var bw := 11.0
-	var x0 := right - 22.0 - Match.CROWN_GOAL * (bw + 3.0)
-	for k in Match.CROWN_GOAL:
+	var x0 := right - 22.0 - m.crown_goal * (bw + 3.0)
+	for k in m.crown_goal:
 		var br := Rect2(x0 + k * (bw + 3.0), cy - bw * 0.5, bw, bw)
 		draw_rect(br, Color(p.color, a) if k < score else Color(FG, 0.12 * a))
 		draw_rect(br, Color(0.1, 0.1, 0.12, 0.7 * a), false, 1.2)
@@ -6421,7 +6546,7 @@ func _team_panel(narrow: bool) -> Control:
 		bv.add_theme_constant_override("separation", 6)
 		bv.add_child(_label("%s 팀" % Match.TEAM_NAMES[t], 14, tc.lightened(0.15), 1))
 		for i in settings["n"]:
-			if int(settings["teams"][i]) == t:
+			if int(settings["teams"][i]) == t and not settings.get("empty", [false, false, false, false, false, false, false, false])[i]:
 				bv.add_child(_team_member_row(i))
 		box.add_child(bv)
 		cols.add_child(box)
@@ -7424,3 +7549,1200 @@ func _draw_turn_end_chip(vs: Vector2) -> void:
 	_round_rect(r, Color(SOLID, 0.95), 15, CLOCK_GOLD)
 	draw_arc(r.position + Vector2(15, 15), 6, 0, TAU, 12, CLOCK_GOLD, 2.0, true)
 	draw_string(font_bold, r.position + Vector2(26, 20), t, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, TEXT)
+
+
+# ══ 방 만들기 · 알 고르기 (기획 「방 만들기·알 고르기」, 디자인 「방 · 시작 화면 / 코드로 들어가기 / 대기실 / 알 고르기」) ══
+## 대기실이 중심: 방을 만들어도, 코드로 들어와도, 판이 끝나도 모두 대기실로. 알 고르기는 어디서든 오간다.
+## 자리 모델: settings.n = 자리 수(최대 인원), 자리마다 cpu / friend / empty / 그 밖(이 기기의 사람).
+## settings.prof[i] = {nick, form, color, symbol, level}, settings.ready[i] = 준비 완료.
+const PROFILE_PATH := "user://profile.cfg"
+const CODE_CHARS := "ABCDEFGHJKMNPQRSTUVWXYZ23456789"   # 헷갈리는 0 O 1 I L 은 쓰지 않는다
+const SYMBOL_NAMES := ["원", "세모", "네모", "마름모", "육각", "십자", "두 줄", "갈매기"]
+const FORM_ORDER := ["metal", "glass", "cap", "button", "hockey", "marble", "coin"]
+const FORM_LOCK := {"button": ["games", 5, "아무 모드 5판"], "hockey": ["parcel", 3, "택배 쟁탈전 3승"], "marble": ["crown", 3, "왕관 쟁탈전 3승"], "coin": ["derby", 3, "개조 더비 3승"]}
+const CPU_LEVELS := ["쉬움", "보통", "어려움"]
+var my_profile := {"nick": "", "form": "metal", "color": 0, "symbol": 0}
+var my_stats := {"games": 0, "wins": {}}
+var slot_colors: Array = []
+var room_peer := {}           # 대기실 자리 → 친구 연결 (경기 중 friend_peer 는 경기 자리 기준)
+var match_seats: Array = []   # 경기 자리(pid) → 대기실 자리
+var cpu_levels: Array = []    # 경기 자리 → CPU 난이도 0~2
+var pending_join: Array = []  # 경기 중에 들어온 친구: 판이 끝나면 대기실로
+var my_seat := 0              # 손님: 대기실에서 내 자리
+var room_note := ""
+
+
+func _load_profile() -> void:
+	var cf := ConfigFile.new()
+	if cf.load(PROFILE_PATH) == OK:
+		my_profile["nick"] = str(cf.get_value("me", "nick", ""))
+		my_profile["form"] = str(cf.get_value("me", "form", "metal"))
+		my_profile["color"] = int(cf.get_value("me", "color", 0))
+		my_profile["symbol"] = int(cf.get_value("me", "symbol", 0))
+		var st = cf.get_value("me", "stats", {})
+		if st is Dictionary:
+			my_stats = st
+	if not my_stats.has("wins"):
+		my_stats["wins"] = {}
+
+
+func _save_profile() -> void:
+	var cf := ConfigFile.new()
+	for k in ["nick", "form", "color", "symbol"]:
+		cf.set_value("me", k, my_profile[k])
+	cf.set_value("me", "stats", my_stats)
+	cf.save(PROFILE_PATH)
+
+
+func _form_unlocked(form: String) -> bool:
+	if not FORM_LOCK.has(form):
+		return true
+	var need: Array = FORM_LOCK[form]
+	if need[0] == "games":
+		return int(my_stats.get("games", 0)) >= int(need[1])
+	return int(my_stats["wins"].get(need[0], 0)) >= int(need[1])
+
+
+## 판이 끝났을 때: 내 판 수 · 모드별 승리 (형태 잠금 풀기)
+func _record_result() -> void:
+	if m == null or my_seats.is_empty():
+		return
+	my_stats["games"] = int(my_stats.get("games", 0)) + 1
+	for pid in my_seats:
+		if m.winners.has(pid):
+			my_stats["wins"][m.mode] = int(my_stats["wins"].get(m.mode, 0)) + 1
+			break
+	_save_profile()
+
+
+func _ensure_room_arrays() -> void:
+	for key in ["empty", "ready"]:
+		if not settings.has(key):
+			settings[key] = [false, false, false, false, false, false, false, false]
+	if not settings.has("prof"):
+		settings["prof"] = [{}, {}, {}, {}, {}, {}, {}, {}]
+	for k in {"aim": "auto", "stones": 3, "fill": false, "skins": true, "crown_goal": 5}:
+		pass
+	if not settings.has("aim"):
+		settings["aim"] = "auto"
+	if not settings.has("stones"):
+		settings["stones"] = 3
+	if not settings.has("fill"):
+		settings["fill"] = false
+	if not settings.has("skins"):
+		settings["skins"] = true
+	if not settings.has("crown_goal"):
+		settings["crown_goal"] = 5
+
+
+func _seat_kind(i: int) -> String:
+	if settings["empty"][i]:
+		return "empty"
+	if settings["friend"][i]:
+		return "friend" if friend_peer.has(i) else "wait"
+	if settings["cpu"][i]:
+		return "cpu"
+	return "me" if i == 0 or online == "" else "me"
+
+
+## 자리마다 보여 줄 알: 이 기기 사람은 내 알, CPU 는 남는 색으로 자동.
+func _refresh_seat_profiles() -> void:
+	_ensure_room_arrays()
+	if online == "guest":
+		return
+	var used := {}
+	for i in settings["n"]:
+		var k := _seat_kind(i)
+		if k == "me" and i == 0:
+			var p0: Dictionary = my_profile.duplicate()
+			settings["prof"][i] = p0
+		elif k == "me":
+			var ph: Dictionary = settings["prof"][i] if settings["prof"][i] is Dictionary else {}
+			if ph.is_empty() or str(ph.get("kind", "")) != "local":
+				settings["prof"][i] = {"nick": "사람 %d" % (i + 1), "form": "metal", "color": -1, "symbol": i % 8, "kind": "local"}
+		elif k == "cpu":
+			var pc: Dictionary = settings["prof"][i] if settings["prof"][i] is Dictionary else {}
+			if str(pc.get("kind", "")) != "cpu":
+				settings["prof"][i] = {"nick": "CPU", "form": "metal", "color": -1, "symbol": i % 8, "kind": "cpu", "level": 1}
+	# 색 겹침: 먼저 고른 사람(앞 자리)이 우선, 겹치거나 비어 있으면 남은 색
+	for i in settings["n"]:
+		if settings["empty"][i] or not (settings["prof"][i] is Dictionary) or (settings["prof"][i] as Dictionary).is_empty():
+			continue
+		var c := int(settings["prof"][i].get("color", -1))
+		if c < 0 or used.has(c):
+			c = _nearest_free_color(c, used)
+		settings["prof"][i]["color"] = c
+		used[c] = true
+	_apply_slot_styles_from_room()
+
+
+func _nearest_free_color(want: int, used: Dictionary) -> int:
+	if want >= 0 and not used.has(want):
+		return want
+	for d in 8:
+		for c in [want + d, want - d]:
+			var cc: int = posmod(c, 8) if want >= 0 else d
+			if not used.has(cc):
+				return cc
+	return 0
+
+
+## 대기실 자리 모습 → 그림 표(Art.slot_*). 자리 번호가 곧 그림 칸 번호.
+func _apply_slot_styles_from_room() -> void:
+	for i in 8:
+		var pf = settings["prof"][i] if i < settings["n"] else {}
+		var ok: bool = pf is Dictionary and not (pf as Dictionary).is_empty()
+		slot_colors[i] = Match.COLORS[int(pf.get("color", i))] if ok else Match.COLORS[i]
+		Art.slot_symbols[i] = int(pf.get("symbol", i)) if ok else i
+		Art.slot_forms[i] = str(pf.get("form", "metal")) if ok else "metal"
+
+
+## 경기 자리 모습 → 그림 표 (팀전 색 포함)
+func _apply_slot_styles_from_match() -> void:
+	if OS.get_cmdline_user_args().has("--dbgslot"):
+		print("SLOT ", m.players.map(func(p): return [p.get("form", "-"), p.get("symbol", -1), p.name]))
+	for i in 8:
+		if m != null and i < m.n:
+			slot_colors[i] = m.players[i].color
+			Art.slot_symbols[i] = int(m.players[i].get("symbol", i))
+			Art.slot_forms[i] = str(m.players[i].get("form", "metal"))
+		else:
+			slot_colors[i] = Match.COLORS[i]
+			Art.slot_symbols[i] = i
+			Art.slot_forms[i] = "metal"
+
+
+## 알 하나 그림 컨트롤
+func _puck_view(prof: Dictionary, size: float, team_col := Color(0, 0, 0, 0)) -> Control:
+	var c := Control.new()
+	c.custom_minimum_size = Vector2(size, size)
+	c.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	c.draw.connect(func():
+		var u := size * 0.42
+		var col: Color = team_col if team_col.a > 0.0 else Match.COLORS[clampi(int(prof.get("color", 0)), 0, 7)]
+		Art.draw_puck_shadow(c, c.size * 0.5, u)
+		Art.draw_puck_form(c, c.size * 0.5 + Vector2(0, -0.06 * u), u, col, int(prof.get("symbol", 0)), str(prof.get("form", "metal")), -PI / 2.0))
+	return c
+
+
+# ── 시작 화면 ────────────────────────────────────────────
+func _show_home() -> void:
+	state = "home"
+	m = null
+	menu_btn.visible = false
+	parts_btn.visible = false
+	sound_btn.visible = false
+	var root := _new_overlay(false)
+	var vs := get_viewport_rect().size
+	var narrow := vs.x < 900
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", 14)
+	col.position = Vector2(80.0 if not narrow else 24.0, maxf(40.0, vs.y * 0.12))
+	col.custom_minimum_size = Vector2(minf(440.0, vs.x - 48.0), 0)
+	root.add_child(col)
+	var title := _nw(_label("개조 알까기", 64 if not narrow else 44, TEXT, 3))
+	col.add_child(title)
+	col.add_child(_label("알을 튕겨 판 밖으로, 부품으로 개조해서.", 17, SUB))
+	var gap := Control.new()
+	gap.custom_minimum_size = Vector2(0, 14)
+	col.add_child(gap)
+	var make := _primary(_button("방 만들기", func(): _create_room()))
+	make.custom_minimum_size = Vector2(0, 64)
+	make.add_theme_font_size_override("font_size", 22)
+	col.add_child(make)
+	var join := _button("방 코드로 들어가기", func(): _show_join(""))
+	join.custom_minimum_size = Vector2(0, 58)
+	join.add_theme_font_size_override("font_size", 19)
+	col.add_child(join)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 12)
+	var solo := _button("혼자 연습 (CPU)", func(): _start_solo())
+	solo.custom_minimum_size = Vector2(0, 52)
+	solo.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(solo)
+	var deco := _button("알 꾸미기", func(): _show_puck_picker("home"))
+	deco.custom_minimum_size = Vector2(0, 52)
+	deco.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(deco)
+	col.add_child(row)
+	col.add_child(_label("친구가 보낸 링크로 들어오면 이 화면 없이 바로 대기실로 가요.", 13, SUB))
+	# 오른쪽: 여러 형태의 알을 흩어 놓은 판
+	if not narrow:
+		var art := Control.new()
+		art.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		art.position = Vector2(vs.x * 0.52, vs.y * 0.18)
+		art.size = Vector2(vs.x * 0.42, vs.y * 0.6)
+		art.draw.connect(func():
+			var c0 := art.size * 0.5
+			var rx := art.size.x * 0.48
+			var ry := art.size.y * 0.46
+			var pts := PackedVector2Array()
+			for i in 48:
+				pts.append(c0 + Vector2(cos(TAU * i / 48.0) * rx, sin(TAU * i / 48.0) * ry))
+			art.draw_colored_polygon(pts, Color("2E6F5E"))
+			pts.append(pts[0])
+			art.draw_polyline(pts, Color("C9A15A"), 10.0, true)
+			var spots := [[Vector2(-0.5, -0.25), "metal", 0, 0, 0.1], [Vector2(-0.02, -0.45), "glass", 1, 1, 0.085], [Vector2(0.5, -0.1), "cap", 2, 2, 0.08],
+				[Vector2(-0.15, 0.32), "coin", 3, 3, 0.075], [Vector2(0.38, 0.42), "metal", 4, 4, 0.085]]
+			for sp in spots:
+				var p: Vector2 = c0 + Vector2(sp[0].x * rx, sp[0].y * ry)
+				var u: float = art.size.y * float(sp[4])
+				Art.draw_puck_shadow(art, p, u)
+				Art.draw_puck_form(art, p, u, Match.COLORS[int(sp[2])], int(sp[3]), str(sp[1]), -PI / 2.0))
+		root.add_child(art)
+	var icons := HBoxContainer.new()
+	icons.add_theme_constant_override("separation", 8)
+	icons.position = Vector2(vs.x - 24.0 - 96.0, 24.0)
+	icons.add_child(_icon_button("gear", func(): _show_settings(false), "설정"))
+	icons.add_child(_icon_button("sound" if snd.enabled else "mute", func():
+		_toggle_sound()
+		_show_home(), "소리"))
+	root.add_child(icons)
+	if str(my_profile.get("nick", "")) == "":
+		_ask_nick()
+
+
+## 처음 실행: 닉네임을 한 번 묻고, 기본 알(금속 퍽, 무작위 색·기호)을 정해 둔다.
+func _ask_nick() -> void:
+	var root := Control.new()
+	root.set_anchors_preset(Control.PRESET_FULL_RECT)
+	root.mouse_filter = Control.MOUSE_FILTER_STOP
+	var dim := ColorRect.new()
+	dim.color = Color(0, 0, 0, 0.55)
+	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	root.add_child(dim)
+	overlay.add_child(root)
+	var cc := CenterContainer.new()
+	cc.set_anchors_preset(Control.PRESET_FULL_RECT)
+	root.add_child(cc)
+	var pc := PanelContainer.new()
+	pc.add_theme_stylebox_override("panel", _panel_style(Color(SOLID, 0.96)))
+	cc.add_child(pc)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 12)
+	v.custom_minimum_size = Vector2(minf(420.0, get_viewport_rect().size.x - 40.0), 0)
+	pc.add_child(v)
+	v.add_child(_label("닉네임을 정해 주세요", 22, TEXT, 2))
+	v.add_child(_label("방에서 친구들에게 보이는 이름이에요. 나중에 알 꾸미기에서 바꿀 수 있어요.", 13, SUB))
+	var le := LineEdit.new()
+	le.max_length = 10
+	le.placeholder_text = "알까기왕"
+	le.custom_minimum_size = Vector2(0, 48)
+	le.add_theme_font_size_override("font_size", 18)
+	v.add_child(le)
+	var ok := _primary(_button("좋아요", func():
+		var t := le.text.strip_edges()
+		my_profile["nick"] = t if t != "" else "알까기왕"
+		my_profile["color"] = randi() % 8
+		my_profile["symbol"] = randi() % 8
+		_save_profile()
+		root.queue_free()))
+	ok.custom_minimum_size = Vector2(0, 50)
+	v.add_child(ok)
+	le.grab_focus()
+
+
+func _create_room() -> void:
+	_reset_room(4)
+	if net.available:
+		_start_hosting()
+	else:
+		_show_setup()
+
+
+func _start_solo() -> void:
+	if online != "":
+		_leave_online()
+	_reset_room(4)
+	for i in range(1, 4):
+		settings["cpu"][i] = true
+	_show_setup()
+
+
+## 새 방: 내 자리 하나, 나머지는 빈 자리
+func _reset_room(n: int) -> void:
+	_ensure_room_arrays()
+	settings["n"] = n
+	for i in 8:
+		settings["cpu"][i] = false
+		settings["friend"][i] = false
+		settings["empty"][i] = i > 0
+		settings["ready"][i] = false
+		settings["prof"][i] = {}
+	settings["timed"] = false
+
+
+# ── 코드로 들어가기 ──────────────────────────────────────
+func _show_join(prefill: String) -> void:
+	state = "join"
+	var root := _new_overlay(true)
+	var box := _centered_panel(root, minf(640.0, get_viewport_rect().size.x - 32.0))
+	box.add_theme_constant_override("separation", 16)
+	var t := _label("방 코드로 들어가기", 26, TEXT, 2)
+	t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	box.add_child(t)
+	box.add_child(_label("방장이 알려준 6자리 코드를 입력하세요. 숫자 0과 영문 O처럼 헷갈리는 글자는 쓰지 않아요.", 14, SUB))
+	var code := LineEdit.new()
+	code.max_length = 6
+	code.text = prefill.to_upper()
+	code.placeholder_text = "TEK7RA"
+	code.alignment = HORIZONTAL_ALIGNMENT_CENTER
+	code.custom_minimum_size = Vector2(0, 76)
+	code.add_theme_font_override("font", font_display)
+	code.add_theme_font_size_override("font_size", 40)
+	code.text_changed.connect(func(tx: String):
+		var clean := ""
+		for ch in tx.to_upper():
+			if CODE_CHARS.contains(ch):
+				clean += ch
+		if clean != tx:
+			code.text = clean
+			code.caret_column = clean.length())
+	box.add_child(code)
+	box.add_child(_label("닉네임", 13, LABEL, 1))
+	var nick := LineEdit.new()
+	nick.max_length = 10
+	nick.text = str(my_profile["nick"])
+	nick.custom_minimum_size = Vector2(0, 48)
+	nick.add_theme_font_size_override("font_size", 16)
+	box.add_child(nick)
+	var me := HBoxContainer.new()
+	me.add_theme_constant_override("separation", 14)
+	me.add_child(_puck_view(my_profile, 56))
+	var mv := VBoxContainer.new()
+	mv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	mv.add_child(_label("내 알 · %s · %s %s" % [Art.FORM_NAMES.get(my_profile["form"], "금속 퍽"), Match.NAMES[int(my_profile["color"])], SYMBOL_NAMES[int(my_profile["symbol"])]], 14, TEXT, 2))
+	mv.add_child(_label("방에 같은 색이 있으면 들어간 뒤 다른 색을 골라요", 12, SUB))
+	me.add_child(mv)
+	me.add_child(_button("바꾸기", func():
+		my_profile["nick"] = nick.text.strip_edges() if nick.text.strip_edges() != "" else my_profile["nick"]
+		_show_puck_picker("join:" + code.text)))
+	box.add_child(me)
+	var go := _primary(_button("들어가기", func():
+		if code.text.length() != 6:
+			_banner("코드 6자리를 모두 넣어 주세요")
+			return
+		var nt := nick.text.strip_edges()
+		if nt != "":
+			my_profile["nick"] = nt
+			_save_profile()
+		_join_room(code.text.to_lower())))
+	go.custom_minimum_size = Vector2(0, 58)
+	go.add_theme_font_size_override("font_size", 20)
+	box.add_child(go)
+	box.add_child(_button("뒤로", func(): _show_home()))
+	code.grab_focus()
+
+
+# ── 알 고르기 ────────────────────────────────────────────
+## from: "home" (기본 알로 저장) · "room" (이 방에서만, 「기본으로도 저장」 선택) · "join:<코드>"
+var picker_prof := {}
+var picker_from := ""
+var picker_save := true
+var picker_skin := ""
+
+
+func _show_puck_picker(from: String) -> void:
+	picker_from = from
+	picker_prof = my_profile.duplicate()
+	if from == "room" and online == "guest" and guest_lobby.has("seats"):
+		var mine: Dictionary = guest_lobby["seats"][my_seat].get("prof", {})
+		if not mine.is_empty():
+			picker_prof = mine.duplicate()
+	picker_save = from != "room"
+	_build_picker()
+
+
+func _taken_colors() -> Dictionary:
+	# 이 방에서 다른 사람이 쓰는 색 → 이름
+	var out := {}
+	if picker_from != "room":
+		return out
+	if online == "guest" and guest_lobby.has("seats"):
+		var seats: Array = guest_lobby["seats"]
+		for i in seats.size():
+			if i == my_seat or str(seats[i].get("kind", "")) == "empty":
+				continue
+			var pf: Dictionary = seats[i].get("prof", {})
+			if not pf.is_empty():
+				out[int(pf.get("color", -1))] = str(pf.get("nick", ""))
+		return out
+	for i in range(1, settings["n"]):
+		if settings["empty"][i]:
+			continue
+		var pf2 = settings["prof"][i]
+		if pf2 is Dictionary and not pf2.is_empty():
+			out[int(pf2.get("color", -1))] = str(pf2.get("nick", ""))
+	return out
+
+
+func _build_picker() -> void:
+	var root := _new_overlay(true)
+	var vs := get_viewport_rect().size
+	var narrow := vs.x < 900
+	var wrap: BoxContainer = HBoxContainer.new() if not narrow else VBoxContainer.new()
+	wrap.add_theme_constant_override("separation", 20)
+	var sc := ScrollContainer.new()
+	sc.set_anchors_preset(Control.PRESET_FULL_RECT)
+	sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	root.add_child(sc)
+	var holder := MarginContainer.new()
+	holder.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	for side in ["left", "right", "top", "bottom"]:
+		holder.add_theme_constant_override("margin_" + side, 24 if not narrow else 12)
+	sc.add_child(holder)
+	holder.add_child(wrap)
+	# 왼쪽: 크게 미리보기 + 실제 판 크기
+	var lp := PanelContainer.new()
+	lp.add_theme_stylebox_override("panel", _panel_style(Color(SOLID, 0.95)))
+	lp.custom_minimum_size = Vector2(380 if not narrow else 0, 0)
+	wrap.add_child(lp)
+	var lv := VBoxContainer.new()
+	lv.add_theme_constant_override("separation", 12)
+	lp.add_child(lv)
+	lv.add_child(_label("내 알", 24, TEXT, 2))
+	var big := Control.new()
+	big.custom_minimum_size = Vector2(320, 300 if not narrow else 220)
+	big.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	big.draw.connect(func():
+		var c0 := big.size * 0.5
+		var R := minf(big.size.x, big.size.y) * 0.48
+		big.draw_circle(c0, R + 8, Color("C9A15A"))
+		big.draw_circle(c0, R, Color("2E6F5E"))
+		var col: Color = Match.COLORS[int(picker_prof["color"])]
+		var skin_before: String = Art.skin
+		Art.skin = picker_skin
+		var u := R * 0.5
+		Art.draw_puck_shadow(big, c0, u)
+		if picker_skin != "":
+			Art.draw_puck_form(big, c0, u, col, int(picker_prof["symbol"]), "metal", -PI / 2.0)
+		else:
+			Art.draw_puck_form(big, c0, u, col, int(picker_prof["symbol"]), str(picker_prof["form"]), -PI / 2.0)
+		# 실제 크기 (판 위에서 보이는 크기)
+		var su := 15.0
+		var sp := c0 + Vector2(-R * 0.62, R * 0.62)
+		Art.draw_puck_shadow(big, sp, su)
+		Art.draw_puck_form(big, sp, su, col, int(picker_prof["symbol"]), "metal" if picker_skin != "" else str(picker_prof["form"]), -PI / 2.0)
+		big.draw_string(font, sp + Vector2(24, 6), "실제 크기", HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color.WHITE)
+		Art.skin = skin_before)
+	lv.add_child(big)
+	var desc := PanelContainer.new()
+	desc.add_theme_stylebox_override("panel", _sb(Color(FG, 0.05), Color(FG, 0.12), 10))
+	var dv := VBoxContainer.new()
+	desc.add_child(dv)
+	dv.add_child(_label("%s · %s · %s" % [Art.FORM_NAMES.get(picker_prof["form"], ""), Match.NAMES[int(picker_prof["color"])], SYMBOL_NAMES[int(picker_prof["symbol"])]], 16, TEXT, 2))
+	dv.add_child(_label("판 위에서는 이 모습에 부품이 붙고, 공방 스킨을 켠 방에서는 공방 재질로 바뀌어요.", 12, SUB))
+	lv.add_child(desc)
+	var skr := HBoxContainer.new()
+	skr.alignment = BoxContainer.ALIGNMENT_CENTER
+	skr.add_theme_constant_override("separation", 6)
+	skr.add_child(_nw(_label("미리보기 공방", 13, SUB)))
+	skr.add_child(_seg([["", "기본"], ["clock", "시계탑"], ["pirate", "선착장"], ["magic", "마법"]], picker_skin, func(k):
+		picker_skin = k
+		_build_picker()))
+	lv.add_child(skr)
+	# 오른쪽: 형태 → 색 → 기호
+	var rp := PanelContainer.new()
+	rp.add_theme_stylebox_override("panel", _panel_style(Color(SOLID, 0.95)))
+	rp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	wrap.add_child(rp)
+	var rv := VBoxContainer.new()
+	rv.add_theme_constant_override("separation", 12)
+	rp.add_child(rv)
+	rv.add_child(_label("형태", 18, TEXT, 2))
+	var fg := GridContainer.new()
+	fg.columns = 7 if not narrow else 4
+	fg.add_theme_constant_override("h_separation", 8)
+	fg.add_theme_constant_override("v_separation", 8)
+	for form in FORM_ORDER:
+		var f: String = form
+		var unlocked := _form_unlocked(f)
+		var b := _button("", func():
+			if not _form_unlocked(f):
+				_banner("잠긴 형태", ACCENT, FORM_LOCK[f][2] + "하면 열려요")
+				return
+			picker_prof["form"] = f
+			_build_picker())
+		b.custom_minimum_size = Vector2(84, 104)
+		var on: bool = picker_prof["form"] == f
+		b.add_theme_stylebox_override("normal", _sb(Color(BRASS, 0.18) if on else Color(FG, 0.05), BRASS if on else Color(FG, 0.12), 10))
+		var bv := VBoxContainer.new()
+		bv.set_anchors_preset(Control.PRESET_FULL_RECT)
+		bv.alignment = BoxContainer.ALIGNMENT_CENTER
+		bv.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var pv := _puck_view({"form": f, "color": picker_prof["color"], "symbol": picker_prof["symbol"]}, 48)
+		pv.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+		pv.modulate.a = 1.0 if unlocked else 0.45
+		bv.add_child(pv)
+		var nl := _label(Art.FORM_NAMES[f], 12, TEXT, 1)
+		nl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		bv.add_child(nl)
+		if not unlocked:
+			var ll := _label("🔒 " + str(FORM_LOCK[f][2]), 10, SUB)
+			ll.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			bv.add_child(ll)
+		b.add_child(bv)
+		fg.add_child(b)
+	rv.add_child(fg)
+	var ch := HBoxContainer.new()
+	var cl := _nw(_label("색", 18, TEXT, 2))
+	cl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	ch.add_child(cl)
+	if picker_from == "room":
+		ch.add_child(_nw(_label("흐린 색은 이 방에서 이미 쓰는 색이에요", 12, SUB)))
+	rv.add_child(ch)
+	var taken := _taken_colors()
+	var cg := HBoxContainer.new()
+	cg.add_theme_constant_override("separation", 10)
+	for ci in 8:
+		var cidx: int = ci
+		var cv := VBoxContainer.new()
+		cv.add_theme_constant_override("separation", 2)
+		var b2 := _button("✓" if int(picker_prof["color"]) == ci else "", func():
+			if taken.has(cidx):
+				_banner("%s 님이 쓰는 색이에요" % taken[cidx])
+				return
+			picker_prof["color"] = cidx
+			_build_picker())
+		b2.custom_minimum_size = Vector2(48, 48)
+		var cc: Color = Match.COLORS[ci]
+		var sbx := _sb(Color(cc, 0.35 if taken.has(ci) else 1.0), INK if int(picker_prof["color"]) == ci else Color(0, 0, 0, 0.2), 24)
+		sbx.set_border_width_all(4 if int(picker_prof["color"]) == ci else 1)
+		b2.add_theme_stylebox_override("normal", sbx)
+		b2.add_theme_stylebox_override("hover", sbx)
+		b2.add_theme_color_override("font_color", Color.WHITE)
+		cv.add_child(b2)
+		var nm := _label(str(taken.get(ci, Match.NAMES[ci])), 11, SUB)
+		nm.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		nm.custom_minimum_size = Vector2(48, 0)
+		nm.clip_text = true
+		cv.add_child(nm)
+		cg.add_child(cv)
+	rv.add_child(cg)
+	var sh := HBoxContainer.new()
+	var sl := _nw(_label("각인 기호", 18, TEXT, 2))
+	sl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	sh.add_child(sl)
+	sh.add_child(_nw(_label("색이 비슷해도 기호로 구별돼요 · 기호는 겹쳐도 괜찮아요", 12, SUB)))
+	rv.add_child(sh)
+	var sg := HBoxContainer.new()
+	sg.add_theme_constant_override("separation", 8)
+	for si in 8:
+		var sidx: int = si
+		var b3 := _button("", func():
+			picker_prof["symbol"] = sidx
+			_build_picker())
+		b3.custom_minimum_size = Vector2(46, 46)
+		var on3: bool = int(picker_prof["symbol"]) == si
+		b3.add_theme_stylebox_override("normal", _sb(Color(BRASS, 0.18) if on3 else Color(FG, 0.05), BRASS if on3 else Color(FG, 0.12), 10))
+		var sv := Control.new()
+		sv.set_anchors_preset(Control.PRESET_FULL_RECT)
+		sv.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		sv.draw.connect(func(): Art.draw_symbol(sv, sidx, TEXT, 1.0, sv.size * 0.5, 1.2, false))
+		b3.add_child(sv)
+		sg.add_child(b3)
+	rv.add_child(sg)
+	if picker_from == "room":
+		var keep := CheckBox.new()
+		keep.text = "기본 알로도 저장"
+		keep.button_pressed = picker_save
+		keep.toggled.connect(func(on: bool): picker_save = on)
+		rv.add_child(keep)
+	var spacer := Control.new()
+	spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	rv.add_child(spacer)
+	var br := HBoxContainer.new()
+	br.add_theme_constant_override("separation", 12)
+	br.add_child(_button("뒤로", func(): _picker_back()))
+	br.add_child(_button("무작위", func():
+		var free_forms := FORM_ORDER.filter(func(x): return _form_unlocked(x))
+		picker_prof["form"] = free_forms[randi() % free_forms.size()]
+		var cs: Array = range(8).filter(func(x): return not taken.has(x))
+		picker_prof["color"] = cs[randi() % cs.size()] if not cs.is_empty() else 0
+		picker_prof["symbol"] = randi() % 8
+		_build_picker()))
+	var ok := _primary(_button("이 알로 하기", func(): _picker_done()))
+	ok.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	ok.custom_minimum_size = Vector2(0, 54)
+	ok.add_theme_font_size_override("font_size", 19)
+	br.add_child(ok)
+	rv.add_child(br)
+
+
+func _picker_back() -> void:
+	if picker_from == "home":
+		_show_home()
+	elif picker_from.begins_with("join:"):
+		_show_join(picker_from.substr(5))
+	else:
+		_show_setup()
+
+
+func _picker_done() -> void:
+	var nick: String = my_profile["nick"]
+	if picker_from != "room" or picker_save:
+		for k in ["form", "color", "symbol"]:
+			my_profile[k] = picker_prof[k]
+		_save_profile()
+	if picker_from == "room":
+		var pf := picker_prof.duplicate()
+		pf["nick"] = nick
+		if online == "guest":
+			net.send_to(host_peer, {"t": "prof", "prof": pf})
+		else:
+			for k in ["form", "color", "symbol"]:
+				my_profile[k] = pf[k]
+			_refresh_seat_profiles()
+			_host_broadcast_lobby()
+	_picker_back()
+
+
+# ── 대기실 ───────────────────────────────────────────────
+func _room_settings_changed() -> void:
+	# 방장이 설정을 바꾸면 모두의 준비가 풀린다
+	for i in 8:
+		settings["ready"][i] = false
+	if online == "host":
+		_host_broadcast_lobby()
+	_show_setup()
+
+
+## 대기실에 보여 줄 자리 목록 [{kind, prof, ready, host}]
+func _room_seats() -> Array:
+	if online == "guest":
+		return guest_lobby.get("seats", [])
+	var out: Array = []
+	for i in settings["n"]:
+		out.append({"kind": _seat_kind(i), "prof": settings["prof"][i] if settings["prof"][i] is Dictionary else {}, "ready": settings["ready"][i] or _seat_kind(i) == "cpu", "host": i == 0 and online != ""})
+	return out
+
+
+func _room_cfg(key: String, def = null):
+	if online == "guest":
+		return guest_lobby.get("cfg", {}).get(key, def)
+	return settings.get(key, def)
+
+
+func _show_room() -> void:
+	state = "setup"
+	m = null
+	menu_btn.visible = false
+	parts_btn.visible = false
+	sound_btn.visible = false
+	_ensure_room_arrays()
+	_refresh_seat_profiles()
+	var host_side := online != "guest"
+	if online == "guest" and guest_lobby.has("seats"):
+		for i in 8:
+			var seats0: Array = guest_lobby["seats"]
+			if i < seats0.size():
+				var pf0: Dictionary = seats0[i].get("prof", {})
+				slot_colors[i] = Match.COLORS[int(pf0.get("color", i))]
+				Art.slot_symbols[i] = int(pf0.get("symbol", i))
+				Art.slot_forms[i] = str(pf0.get("form", "metal"))
+	var root := _lobby_root()
+	var vs := get_viewport_rect().size
+	var narrow := vs.x < 900
+	var left_w := (vs.x - 48.0 - 24.0) * 0.6 if not narrow else vs.x - 24.0
+	var right_w := (vs.x - 48.0 - 24.0) * 0.4 if not narrow else vs.x - 24.0
+	# 왼쪽 판: 방 코드 · 자리 · 아래 버튼
+	var lp := PanelContainer.new()
+	lp.add_theme_stylebox_override("panel", _panel_style(Color(SOLID, 0.92)))
+	lp.custom_minimum_size = Vector2(left_w, 0)
+	lp.position = Vector2(24.0 if not narrow else 12.0, 24.0)
+	root.add_child(lp)
+	lobby_col = lp
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", 14)
+	lp.add_child(col)
+	var head := HBoxContainer.new()
+	head.add_theme_constant_override("separation", 8)
+	var hv := VBoxContainer.new()
+	hv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	if online != "":
+		hv.add_child(_label("방 코드", 13, SUB, 1))
+		var code_txt: String = net.code().to_upper() if net.code() != "" else "······"
+		hv.add_child(_nw(_label(code_txt, 46, TEXT, 3)))
+	else:
+		hv.add_child(_nw(_label("혼자 연습", 34, TEXT, 3)))
+		hv.add_child(_label("이 기기에서만 두는 방이에요. 빈 자리는 CPU나 같은 기기 사람으로 채워요.", 12, SUB))
+	head.add_child(hv)
+	if online != "":
+		var link := _button("링크 복사", func():
+			net.copy(net.invite_url(net.code()))
+			_banner("링크를 복사했어요"))
+		link.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		head.add_child(link)
+		var show := _button("코드 보여주기", func(): _show_code_big())
+		show.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		head.add_child(show)
+	head.add_child(_icon_button("book", func(): _show_catalog(true), "부품 도감"))
+	head.add_child(_icon_button("gear", func(): _show_settings(true), "설정 (맵 · 게임 속도 · 소리)"))
+	col.add_child(head)
+	var seats := _room_seats()
+	var filled := 0
+	for st in seats:
+		if str(st.get("kind", "")) != "empty":
+			filled += 1
+	var info := HBoxContainer.new()
+	var il := _nw(_label("참가자 %d / %d" % [filled, seats.size()], 14, TEXT, 2))
+	il.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	info.add_child(il)
+	info.add_child(_nw(_label("방장이 모드와 공방을 정하고, 모두 준비하면 시작해요" if online != "" else "모드와 공방을 정하고 시작하세요", 12, SUB)))
+	col.add_child(info)
+	if room_note != "":
+		col.add_child(_label(room_note, 13, HINT_GOLD, 1))
+	var mode_now: String = _room_cfg("mode", "survival")
+	if mode_now == "parcel" and host_side:
+		col.add_child(_team_panel(narrow))
+	else:
+		var grid := GridContainer.new()
+		grid.columns = 4 if not narrow else 2
+		grid.add_theme_constant_override("h_separation", 10)
+		grid.add_theme_constant_override("v_separation", 10)
+		for i in seats.size():
+			grid.add_child(_seat_card(i, seats[i], host_side))
+		col.add_child(grid)
+	var fill := Control.new()
+	fill.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	col.add_child(fill)
+	var bot := HBoxContainer.new()
+	bot.add_theme_constant_override("separation", 10)
+	bot.add_child(_button("내 알 바꾸기", func(): _show_puck_picker("room")))
+	if online == "guest":
+		var mine_ready := false
+		if seats.size() > my_seat:
+			mine_ready = bool(seats[my_seat].get("ready", false))
+		var rb := _button("준비 취소" if mine_ready else "준비 완료", func():
+			net.send_to(host_peer, {"t": "ready", "on": not mine_ready}))
+		rb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		rb.custom_minimum_size = Vector2(0, 52)
+		if not mine_ready:
+			_primary(rb)
+		bot.add_child(rb)
+	if online != "":
+		bot.add_child(_button("나가기", func():
+			_leave_online()
+			_show_home()))
+	else:
+		bot.add_child(_button("처음으로", func(): _show_home()))
+	col.add_child(bot)
+	# 오른쪽 판: 방 설정 + 시작하기
+	var rp := PanelContainer.new()
+	rp.add_theme_stylebox_override("panel", _panel_style(Color(SOLID, 0.92)))
+	rp.custom_minimum_size = Vector2(right_w, 0)
+	rp.position = Vector2(lp.position.x + left_w + 24.0, 24.0) if not narrow else Vector2(12.0, 24.0 + 640.0)
+	root.add_child(rp)
+	lobby_col2 = rp
+	var rv := VBoxContainer.new()
+	rv.add_theme_constant_override("separation", 12)
+	rp.add_child(rv)
+	var rh := HBoxContainer.new()
+	var rt := _nw(_label("방 설정", 20, TEXT, 2))
+	rt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	rh.add_child(rt)
+	if online != "":
+		rh.add_child(_nw(_label("👑 방장만 바꿀 수 있어요", 12, HINT_GOLD)))
+	rv.add_child(rh)
+	_room_settings_ui(rv, host_side, filled)
+	var sp2 := Control.new()
+	sp2.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	rv.add_child(sp2)
+	if host_side:
+		var why := _start_blocker(seats)
+		var sb_ := _primary(_button("시작하기" if why == "" else "시작하기", func():
+			var w2 := _start_blocker(_room_seats())
+			if w2 != "":
+				_banner(w2)
+				return
+			_start_from_room()))
+		sb_.custom_minimum_size = Vector2(0, 60)
+		sb_.add_theme_font_size_override("font_size", 21)
+		if why != "":
+			sb_.modulate.a = 0.55
+		rv.add_child(sb_)
+		if why != "":
+			var wl := _label(why, 12, SUB)
+			wl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			rv.add_child(wl)
+	else:
+		var wl2 := _label("방장이 시작하길 기다리고 있어요", 13, SUB)
+		wl2.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		rv.add_child(wl2)
+
+
+## 시작할 수 없는 이유 (없으면 "")
+func _start_blocker(seats: Array) -> String:
+	var people := 0
+	var waiting: Array = []
+	for st in seats:
+		var k := str(st.get("kind", ""))
+		if k == "empty":
+			if settings.get("fill", false):
+				people += 1
+			continue
+		if k == "wait":
+			waiting.append("친구 자리")
+			continue
+		people += 1
+		if k == "friend" and not bool(st.get("ready", false)):
+			waiting.append(str(st.get("prof", {}).get("nick", "친구")))
+	if people < 2:
+		return "두 명 이상이어야 시작할 수 있어요 · 빈 자리에 CPU를 넣어 보세요"
+	if settings.get("mode", "survival") == "parcel" and not [4, 6, 8].has(people):
+		return "택배 쟁탈전은 4·6·8명일 때 가능해요"
+	if not waiting.is_empty():
+		return "%s 님이 아직 준비 중이에요" % ", ".join(waiting)
+	return ""
+
+
+## 자리 카드: 알 · 닉네임 · 방장/CPU 표시 · 준비 상태. 빈 자리는 「+ CPU」.
+func _seat_card(i: int, st: Dictionary, editable: bool) -> Control:
+	var kind := str(st.get("kind", "empty"))
+	var pf: Dictionary = st.get("prof", {})
+	var mine := (online != "guest" and i == 0) or (online == "guest" and i == my_seat)
+	var b := _button("", func(): _seat_menu(i, kind))
+	b.custom_minimum_size = Vector2(150, 108)
+	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var border := BRASS if mine else Color(FG, 0.14)
+	if kind == "empty":
+		var es := _sb(Color(0, 0, 0, 0), Color(FG, 0.25), 12)
+		es.set_border_width_all(2)
+		b.add_theme_stylebox_override("normal", es)
+		var ev := VBoxContainer.new()
+		ev.set_anchors_preset(Control.PRESET_FULL_RECT)
+		ev.alignment = BoxContainer.ALIGNMENT_CENTER
+		ev.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var el := _label("빈 자리", 13, SUB)
+		el.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		ev.add_child(el)
+		if editable:
+			var pl := _label("+ CPU" + ("  ·  + 사람" if online == "" else ""), 13, TEXT, 2)
+			pl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			ev.add_child(pl)
+		b.add_child(ev)
+		return b
+	var sb := _sb(Color(FG, 0.06), border, 12)
+	sb.set_border_width_all(3 if mine else 1)
+	b.add_theme_stylebox_override("normal", sb)
+	var h := HBoxContainer.new()
+	h.set_anchors_preset(Control.PRESET_FULL_RECT)
+	h.offset_left = 10
+	h.offset_right = -8
+	h.add_theme_constant_override("separation", 8)
+	h.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	if not pf.is_empty():
+		var pv := _puck_view(pf, 54)
+		pv.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		h.add_child(pv)
+	var v := VBoxContainer.new()
+	v.alignment = BoxContainer.ALIGNMENT_CENTER
+	v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	v.add_theme_constant_override("separation", 2)
+	var nm := "나" if mine else str(pf.get("nick", "친구"))
+	if kind == "wait":
+		nm = "친구 자리"
+	var nl := _nw(_label(nm, 16, TEXT, 2))
+	nl.clip_text = true
+	v.add_child(nl)
+	var role := "참가자"
+	if bool(st.get("host", false)):
+		role = "👑 방장"
+	elif kind == "cpu":
+		role = "CPU · " + CPU_LEVELS[clampi(int(pf.get("level", 1)), 0, 2)]
+	elif kind == "wait":
+		role = "접속 기다리는 중"
+	elif kind == "me" and online == "" and i > 0:
+		role = "같은 기기"
+	v.add_child(_nw(_label(role, 11, SUB)))
+	if online != "" and kind != "wait":
+		var rdy: bool = bool(st.get("ready", false)) or bool(st.get("host", false))
+		var pill := _label(("준비 완료" if not bool(st.get("host", false)) else "방장") if rdy else "고르는 중", 11, Color.WHITE if rdy else SUB, 2)
+		var pp := PanelContainer.new()
+		var ps := _sb(Color("2E7D57") if rdy else Color(FG, 0.1), Color(0, 0, 0, 0), 999)
+		ps.content_margin_left = 8
+		ps.content_margin_right = 8
+		ps.content_margin_top = 1
+		ps.content_margin_bottom = 1
+		pp.add_theme_stylebox_override("panel", ps)
+		pp.add_child(pill)
+		pp.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+		pp.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		v.add_child(pp)
+	h.add_child(v)
+	b.add_child(h)
+	return b
+
+
+## 자리 카드를 눌렀을 때 (방장): 빈 자리는 CPU/사람 넣기, CPU 는 난이도·빼기, 친구는 내보내기
+func _seat_menu(i: int, kind: String) -> void:
+	if online == "guest":
+		if i == my_seat:
+			_show_puck_picker("room")
+		return
+	if i == 0:
+		_show_puck_picker("room")
+		return
+	var root := Control.new()
+	root.set_anchors_preset(Control.PRESET_FULL_RECT)
+	root.mouse_filter = Control.MOUSE_FILTER_STOP
+	var dim := ColorRect.new()
+	dim.color = Color(0, 0, 0, 0.45)
+	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	dim.gui_input.connect(func(e):
+		if e is InputEventMouseButton and e.pressed:
+			root.queue_free())
+	root.add_child(dim)
+	overlay.add_child(root)
+	var cc := CenterContainer.new()
+	cc.set_anchors_preset(Control.PRESET_FULL_RECT)
+	cc.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.add_child(cc)
+	var pc := PanelContainer.new()
+	pc.add_theme_stylebox_override("panel", _panel_style(Color(SOLID, 0.97)))
+	cc.add_child(pc)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 8)
+	v.custom_minimum_size = Vector2(260, 0)
+	pc.add_child(v)
+	v.add_child(_label("%d번 자리" % (i + 1), 18, TEXT, 2))
+	var act := func(f: Callable):
+		root.queue_free()
+		f.call()
+		_room_settings_changed()
+	match kind:
+		"empty":
+			v.add_child(_button("+ CPU 넣기", func(): act.call(func():
+				settings["empty"][i] = false
+				settings["cpu"][i] = true)))
+			if online == "":
+				v.add_child(_button("+ 같은 기기 사람", func(): act.call(func():
+					settings["empty"][i] = false
+					settings["cpu"][i] = false)))
+			else:
+				v.add_child(_button("친구 자리로 비워 두기", func(): act.call(func():
+					settings["empty"][i] = false
+					settings["friend"][i] = true)))
+		"cpu":
+			for lv in 3:
+				var lvl: int = lv
+				v.add_child(_button("난이도: " + CPU_LEVELS[lv], func(): act.call(func():
+					settings["prof"][i]["level"] = lvl)))
+			v.add_child(_button("자리 비우기", func(): act.call(func():
+				settings["cpu"][i] = false
+				settings["empty"][i] = true)))
+		"friend", "wait":
+			v.add_child(_button("내보내기", func(): act.call(func():
+				if room_peer.has(i) or friend_peer.has(i):
+					net.send_to(friend_peer.get(i, ""), {"t": "full", "why": "방장이 내보냈어요"})
+					friend_peer.erase(i)
+				settings["friend"][i] = false
+				settings["empty"][i] = true)))
+		_:
+			v.add_child(_button("자리 비우기", func(): act.call(func():
+				settings["empty"][i] = true)))
+	v.add_child(_button("닫기", func(): root.queue_free()))
+
+
+## 방 설정 (방장만 바꾼다). 손님은 같은 화면을 읽기 전용으로.
+func _room_settings_ui(rv: VBoxContainer, editable: bool, people: int) -> void:
+	var cur_mode: String = _room_cfg("mode", "survival")
+	rv.add_child(_label("모드", 13, LABEL, 1))
+	var mg := GridContainer.new()
+	mg.columns = 2
+	mg.add_theme_constant_override("h_separation", 8)
+	mg.add_theme_constant_override("v_separation", 8)
+	for md in [["survival", "최후 생존전"], ["derby", "개조 더비"], ["parcel", "택배 쟁탈전"], ["crown", "왕관 쟁탈전"]]:
+		var key: String = md[0]
+		var b := _button(md[1], func():
+			if not editable:
+				return
+			settings["mode"] = key
+			if key == "parcel":
+				_fix_parcel_count()
+			_room_settings_changed())
+		b.custom_minimum_size = Vector2(0, 40)
+		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		var on := cur_mode == key
+		var dim_parcel := key == "parcel" and not [4, 6, 8].has(people) and not on
+		b.add_theme_stylebox_override("normal", _sb(BRASS if on else Color(FG, 0.05), Color(FG, 0.12), 8))
+		for c in ["font_color", "font_hover_color", "font_pressed_color"]:
+			b.add_theme_color_override(c, INK if on else (Color(TEXT, 0.45) if dim_parcel else TEXT))
+		if dim_parcel:
+			b.tooltip_text = "4·6·8명일 때 가능"
+		mg.add_child(b)
+	rv.add_child(mg)
+	var mdesc := {"survival": "마지막까지 살아남기 · 2~8인", "derby": "정해진 바퀴 동안 많이 떨어뜨리기 · 2~8인",
+		"parcel": "택배를 우리 진영으로 · 팀전 4·6·8인", "crown": "왕관을 뺏고 버티기 · %d점 선취 · 2~8인" % int(_room_cfg("crown_goal", 5))}
+	rv.add_child(_label(mdesc.get(cur_mode, ""), 12, SUB))
+	rv.add_child(_label("공방", 13, LABEL, 1))
+	var wg := GridContainer.new()
+	wg.columns = 4
+	wg.add_theme_constant_override("h_separation", 6)
+	wg.add_theme_constant_override("v_separation", 6)
+	var cur_ws: String = _room_cfg("workshop", "random")
+	for ws in [["random", "무작위"], ["junk", "정비소"], ["magic", "마법"], ["toon", "만화"], ["lab", "연구소"], ["clock", "시계탑"], ["pirate", "선착장"]]:
+		var wk: String = ws[0]
+		var b2 := _button(ws[1], func():
+			if editable:
+				settings["workshop"] = wk
+				_room_settings_changed())
+		b2.custom_minimum_size = Vector2(0, 36)
+		b2.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		var on2 := cur_ws == wk
+		b2.add_theme_stylebox_override("normal", _sb(BRASS if on2 else Color(FG, 0.05), Color(FG, 0.12), 8))
+		for c in ["font_color", "font_hover_color", "font_pressed_color"]:
+			b2.add_theme_color_override(c, INK if on2 else TEXT)
+		wg.add_child(b2)
+	rv.add_child(wg)
+	# 작은 설정 칸: 눌러서 다음 값으로
+	var opts := GridContainer.new()
+	opts.columns = 2
+	opts.add_theme_constant_override("h_separation", 8)
+	opts.add_theme_constant_override("v_separation", 8)
+	var n_now := int(guest_lobby.get("n", settings["n"])) if online == "guest" else int(settings["n"])
+	opts.add_child(_opt_cell("최대 인원", "%d명" % n_now, editable, func():
+		var nn := n_now + 1
+		if nn > 8:
+			nn = 2
+		_set_room_size(nn)))
+	var aim: String = str(_room_cfg("aim", "auto"))
+	var aim_txt: String = {"auto": "인원 따라 (5인 이상 12초)", "none": "제한 없음", "8": "8초", "12": "12초"}.get(aim, aim)
+	opts.add_child(_opt_cell("조준 시간", aim_txt, editable, func():
+		var order := ["auto", "none", "8", "12"]
+		settings["aim"] = order[(order.find(aim) + 1) % order.size()]
+		_room_settings_changed()))
+	if cur_mode == "survival" or cur_mode == "derby":
+		var stn := int(_room_cfg("stones", 3))
+		opts.add_child(_opt_cell("알 개수", "%d개씩" % stn, editable, func():
+			settings["stones"] = 2 if stn == 3 else 3
+			_room_settings_changed()))
+	if cur_mode == "crown":
+		var cg := int(_room_cfg("crown_goal", 5))
+		opts.add_child(_opt_cell("목표 점수", "%d점" % cg, editable, func():
+			settings["crown_goal"] = {3: 5, 5: 7, 7: 3}.get(cg, 5)
+			_room_settings_changed()))
+	opts.add_child(_opt_cell("빈 자리", "CPU로 채우기" if bool(_room_cfg("fill", false)) else "비워 두기", editable, func():
+		settings["fill"] = not settings.get("fill", false)
+		_room_settings_changed()))
+	opts.add_child(_opt_cell("공방 스킨", "켜기" if bool(_room_cfg("skins", true)) else "끄기", editable, func():
+		settings["skins"] = not settings.get("skins", true)
+		_room_settings_changed()))
+	rv.add_child(opts)
+	if cur_mode == "parcel" and not editable:
+		rv.add_child(_label("팀 나누기는 방장이 정해요", 12, SUB))
+
+
+func _opt_cell(title: String, value: String, editable: bool, cb: Callable) -> Control:
+	var b := _button("", func():
+		if editable:
+			cb.call())
+	b.custom_minimum_size = Vector2(0, 58)
+	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	b.add_theme_stylebox_override("normal", _sb(Color(FG, 0.05), Color(FG, 0.14), 10))
+	var v := VBoxContainer.new()
+	v.set_anchors_preset(Control.PRESET_FULL_RECT)
+	v.offset_left = 12
+	v.offset_top = 6
+	v.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	v.add_child(_label(title, 11, SUB))
+	var vl := _nw(_label(value, 15, TEXT, 2))
+	vl.clip_text = true
+	v.add_child(vl)
+	b.add_child(v)
+	return b
+
+
+func _set_room_size(nn: int) -> void:
+	var old: int = settings["n"]
+	settings["n"] = nn
+	for i in range(old, nn):
+		settings["empty"][i] = true
+		settings["cpu"][i] = false
+		settings["friend"][i] = false
+	for seat in friend_peer.keys():
+		if seat >= nn:
+			net.send_to(friend_peer[seat], {"t": "full"})
+			friend_peer.erase(seat)
+	_room_settings_changed()
+
+
+## 코드 보여주기: 큰 글씨 전체 화면 (옆 사람에게 보여주기용)
+func _show_code_big() -> void:
+	var root := Control.new()
+	root.set_anchors_preset(Control.PRESET_FULL_RECT)
+	root.mouse_filter = Control.MOUSE_FILTER_STOP
+	var bg := ColorRect.new()
+	bg.color = Color(SOLID, 0.97)
+	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
+	root.add_child(bg)
+	var l := Label.new()
+	l.text = net.code().to_upper()
+	l.add_theme_font_override("font", font_display)
+	l.add_theme_font_size_override("font_size", int(minf(get_viewport_rect().size.x * 0.16, 220.0)))
+	l.add_theme_color_override("font_color", TEXT)
+	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	l.set_anchors_preset(Control.PRESET_FULL_RECT)
+	root.add_child(l)
+	var hint := _label("눌러서 닫기", 16, SUB)
+	hint.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
+	hint.position.y -= 60
+	root.add_child(hint)
+	bg.gui_input.connect(func(e):
+		if e is InputEventMouseButton and e.pressed:
+			root.queue_free())
+	overlay.add_child(root)
+
+
+func _start_from_room() -> void:
+	_compose_plan()
+	_start_match()
+
+
+## 대기실 → 경기: 빈 자리는 빼고(또는 CPU로 채우고) 앞에서부터 경기 자리를 매긴다.
+func _compose_plan() -> void:
+	_refresh_seat_profiles()
+	match_seats.clear()
+	var cpu: Array = []
+	var friend: Array = []
+	var profs: Array = []
+	var teams: Array = []
+	cpu_levels.clear()
+	for i in settings["n"]:
+		var k := _seat_kind(i)
+		if k == "empty" and not settings.get("fill", false):
+			continue
+		if k == "wait":
+			k = "cpu"
+		match_seats.append(i)
+		var pf: Dictionary = (settings["prof"][i] as Dictionary).duplicate() if settings["prof"][i] is Dictionary else {}
+		if k == "empty":
+			k = "cpu"
+			pf = {"nick": "CPU", "form": "metal", "color": -1, "symbol": i % 8, "kind": "cpu", "level": 1}
+		cpu.append(k == "cpu")
+		friend.append(k == "friend")
+		profs.append(pf)
+		teams.append(int(settings["teams"][i]))
+		cpu_levels.append(int(pf.get("level", 1)))
+	# 채운 CPU 색 정리 (겹치지 않게)
+	var used := {}
+	for pf2 in profs:
+		var c := int(pf2.get("color", -1))
+		if c < 0 or used.has(c):
+			c = _nearest_free_color(c, used)
+		pf2["color"] = c
+		used[c] = true
+	var nplay := match_seats.size()
+	room_peer = friend_peer.duplicate()
+	var fp := {}
+	for pid in nplay:
+		if room_peer.has(match_seats[pid]):
+			fp[pid] = room_peer[match_seats[pid]]
+	friend_peer = fp
+	plan = {"n": nplay, "cpu": cpu, "friend": friend, "profiles": profs, "teams": teams, "levels": cpu_levels.duplicate()}
+	var aim: String = str(settings.get("aim", "auto"))
+	plan["aim"] = 0.0 if aim == "none" else (8.0 if aim == "8" else (12.0 if aim == "12" else (12.0 if nplay >= 5 else 0.0)))
+
+
+var plan := {}   # 이번 판 자리 구성 (대기실이 만들고, 손님은 방장이 보낸 것을 쓴다)

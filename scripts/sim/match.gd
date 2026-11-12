@@ -40,7 +40,10 @@ var homes := {}               # 개조 더비: 알 id → 시작 자리 (떨어�
 const DERBY_ROUNDS_SMALL := 8 # 2~4인
 const DERBY_ROUNDS_BIG := 6   # 5~8인
 ## 왕관 쟁탈전: 알 2개, 개조는 1·2·3바퀴, 5점 선취, 탈락 없음, 떨어진 알은 다음 내 차례에 돌아온다.
-const CROWN_GOAL := World.Crown.GOAL
+const CROWN_GOAL := World.Crown.GOAL   # 기본값. 방 설정의 목표 점수는 crown_goal
+var crown_goal := CROWN_GOAL
+var stones_opt := 0                    # 방 설정 「알 개수」 (0 = 모드 기본값)
+const FORMS := ["metal", "glass", "cap", "button", "hockey", "marble", "coin"]
 var crown_stats: Array = []   # pid → {gain, defend, steal}
 var crown_events: Array = []  # 화면이 읽고 비우는 점수 알림 {kind: gain|defend, pid}
 ## 택배 쟁탈전: 두 팀(0 왼쪽 빨강 진영 · 1 오른쪽 파랑 진영), 알 2개, 개조 1·2·3바퀴.
@@ -73,6 +76,22 @@ func setup(n_players: int, cpu_flags: Array, seed_value: int, timed: bool, opts 
 		players.append({"id": i, "name": NAMES[i], "color": COLORS[i],
 			"cpu": bool(cpu_flags[i]) if i < cpu_flags.size() else false, "out": false, "out_round": 0,
 			"reserved": "", "focus": -1, "relic": "", "relic_turn": false, "team": -1})
+	# 방 · 알 고르기: 자리마다 고른 알(닉네임 · 형태 · 색 · 기호)
+	var profiles: Array = opts.get("profiles", [])
+	for i in mini(n, profiles.size()):
+		var pf = profiles[i]
+		if not (pf is Dictionary):
+			continue
+		var ci := int(pf.get("color", i))
+		players[i]["color"] = COLORS[clampi(ci, 0, 7)]
+		players[i]["color_idx"] = ci
+		players[i]["symbol"] = clampi(int(pf.get("symbol", i)), 0, 7)
+		players[i]["form"] = str(pf.get("form", "metal"))
+		players[i]["nick"] = str(pf.get("nick", ""))
+		if str(pf.get("nick", "")) != "":
+			players[i]["name"] = str(pf["nick"])
+	stones_opt = int(opts.get("stones", 0))
+	crown_goal = int(opts.get("crown_goal", CROWN_GOAL))
 	if mode == "parcel":
 		_setup_teams(opts)
 	world = World.new()
@@ -133,6 +152,8 @@ const SIDE_GAP := 1.25        # 원형 앞줄 두 퍽의 좌우 간격 (칸, 중
 func stones_per_player() -> int:
 	if mode == "crown" or mode == "parcel":
 		return 2
+	if stones_opt > 0:
+		return stones_opt   # 방 설정 「알 개수」 (생존전 · 더비)
 	return 4 if n == 2 else 3
 
 
@@ -140,8 +161,9 @@ func _place_stones() -> void:
 	if world.shape == "square":
 		for p in 2:
 			var y := (world.size - CELL * 4.0) * (1.0 if p == 0 else -1.0)
-			for k in 4:
-				world.add_stone(p, Vector2((k - 1.5) * CELL * 2.5, y), -PI / 2.0 if p == 0 else PI / 2.0)
+			var cnt := stones_per_player()
+			for k in cnt:
+				world.add_stone(p, Vector2((k - (cnt - 1) * 0.5) * CELL * 2.5, y), -PI / 2.0 if p == 0 else PI / 2.0)
 		return
 	for p in n:
 		var ang := seat_angle(p)
@@ -508,7 +530,7 @@ func _crown_score(start_holder: int, taker: int) -> bool:
 	if got < 0:
 		return false
 	scores[got] += 1
-	if scores[got] >= CROWN_GOAL:
+	if scores[got] >= crown_goal:
 		_finish([got], "crown")
 		return true
 	return false
@@ -862,7 +884,8 @@ func _setup_teams(opts: Dictionary) -> void:
 	for t in 2:
 		var mates := team_members(t)
 		for k in mates.size():
-			players[mates[k]]["name"] = "%s %d" % [TEAM_NAMES[t], k + 1]
+			if str(players[mates[k]].get("nick", "")) == "":
+				players[mates[k]]["name"] = "%s %d" % [TEAM_NAMES[t], k + 1]
 			players[mates[k]]["color"] = TEAM_COLORS[t]
 	start_team = rng.randi_range(0, 1)
 

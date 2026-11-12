@@ -178,7 +178,7 @@ func _crown_value(m, w) -> float:
 	elif before_h != null and before_h.owner == pid:
 		v -= 260.0
 	if before_h != null and before_h.owner != pid and (after_h == null or after_h.owner != before_h.owner):
-		v += 150.0 + (220.0 if int(m.scores[before_h.owner]) >= Crown.GOAL - 1 else 0.0)
+		v += 150.0 + (220.0 if int(m.scores[before_h.owner]) >= int(m.crown_goal) - 1 else 0.0)
 	return v
 
 
