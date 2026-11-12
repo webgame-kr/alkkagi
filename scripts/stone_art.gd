@@ -20,10 +20,16 @@ const TICK := Color("F2F4F1")
 const C0 := Vector2(60, 62)     # 도면의 퍽 중심
 const ArtData = preload("res://scripts/art_data.gd")
 const ArtUp = preload("res://scripts/art_up_data.gd")
+const ArtWs = preload("res://scripts/art_ws_data.gd")
+## 세트 변신 겉모습 (퍽 위·아래 두 겹): 세트 id → 도형 이름
+const WS_SETS := {"clock": "set_clock", "captain": "set_captain"}
+const WS_SET_PARTS := {"clock": ["hour_hammer", "late_key", "minute_spring"], "captain": ["parrot_hat", "hook_hand", "peg_leg"]}
 
 ## 만화 연출 중인 알: 모든 색을 먹선 흑백으로 그린다.
 static var mono := false
 static var _poly_ok := {}
+## 공방 스킨 (디자인 「알 디자인 시안 · 공방 스킨 6종」): 그날 공방 재질로 알 겉모습만 바뀐다. "" 이면 기본 금속 퍽.
+static var skin := ""
 ## 판 위에서는 퍽 몸통을 화면 공간에서 따로 그린다 (draw_puck_top). 이때 draw() 는 부품만 그린다.
 static var skip_body := false
 ## draw() 가 몸통까지 그릴 때 로컬 공간이 화면에 대해 돌아간 각도 (도감·카드 그림은 정면이 위: -PI/2).
@@ -48,6 +54,16 @@ static func draw(ci: CanvasItem, parts: Dictionary, magnet_side: int, col: Color
 	if w == "hero_band" and x == "torn_cape" and p == "awaken_shoes":
 		draw_set_form(ci, "set_hero", col, a, symbol)
 		return
+	var ws_set := ws_set_of(parts)
+	if ws_set != "":
+		# 시계공 · 선장: 겉모습 뒤쪽 → 주인 색 퍽 → 겉모습 앞쪽
+		var key: String = WS_SETS[ws_set]
+		draw_data(ci, key, a, false, col, ArtWs.SHAPES[key], "ws:" + key)
+		if not skip_body:
+			draw_puck_shadow(ci, Vector2.ZERO, R, a, view_rot)
+			draw_puck_top(ci, Vector2.ZERO, R, col, symbol, 0.0, a, view_rot)
+			draw_front(ci, parts, col, a)
+		return
 	var mirror := (x == "magnet" or x == "shield") and magnet_side < 0
 	# 만화 강화 부품의 충격 모양 판은 다른 부품보다 뒤에
 	for slot in ["prop", "weapon", "aux"]:
@@ -66,6 +82,26 @@ static func draw(ci: CanvasItem, parts: Dictionary, magnet_side: int, col: Color
 	if not skip_body:
 		draw_puck_shadow(ci, Vector2.ZERO, R, a, view_rot)
 		draw_puck_top(ci, Vector2.ZERO, R, col, symbol, 0.0, a, view_rot)
+
+
+static func ws_set_of(parts: Dictionary) -> String:
+	for sid in WS_SET_PARTS:
+		var ok := true
+		var arr: Array = WS_SET_PARTS[sid]
+		if parts.get("weapon", "") != arr[0] or parts.get("aux", "") != arr[1] or parts.get("prop", "") != arr[2]:
+			ok = false
+		if ok:
+			return sid
+	return ""
+
+
+## 세트 변신 겉모습 가운데 퍽 위에 오는 겹 (외알 안경, 코트 깃 …). 판 위에서는 화면이 퍽을 그린 뒤 부른다.
+static func draw_front(ci: CanvasItem, parts: Dictionary, col: Color, a := 1.0) -> void:
+	var ws_set := ws_set_of(parts)
+	if ws_set == "":
+		return
+	var key: String = WS_SETS[ws_set] + "_front"
+	draw_data(ci, key, a, false, col, ArtWs.SHAPES[key], "ws:" + key)
 
 
 static func is_set_form(parts: Dictionary) -> bool:
@@ -246,6 +282,7 @@ static func draw_puck_top(ci: CanvasItem, c: Vector2, u: float, col: Color, symb
 	# 경사면: 왼쪽 위 흰 호, 오른쪽 아래 검은 호
 	ci.draw_arc(c, 0.78 * u, PI - rot, 1.5 * PI - rot, 12, Color(1, 1, 1, 0.35 * a), 0.08 * u, true)
 	ci.draw_arc(c, 0.78 * u, 0.0 - rot, 0.5 * PI - rot, 12, Color(0, 0, 0, 0.18 * a), 0.08 * u, true)
+	_skin_overlay(ci, c, u, col, a, rot, front)
 	# 정면 홈
 	if notch:
 		draw_notch(ci, c, u, front, a)
@@ -302,6 +339,9 @@ static func draw_slot_icon(ci: CanvasItem, center: Vector2, size: float, slot: S
 static func _weapon(ci: CanvasItem, w: String, a: float) -> void:
 	if ArtData.SHAPES.has(w):
 		draw_data(ci, w, a, false)
+		return
+	if ArtWs.SHAPES.has(w):
+		draw_data(ci, w, a, false, Color.WHITE, ArtWs.SHAPES[w], "ws:" + w)
 		return
 	if _lab(ci, w, a, false) or _clock(ci, w, a, false) or _pirate(ci, w, a, false):
 		return
@@ -391,6 +431,9 @@ static func _aux(ci: CanvasItem, x: String, a: float, m: bool) -> void:
 	if ArtData.SHAPES.has(x):
 		draw_data(ci, x, a, m)
 		return
+	if ArtWs.SHAPES.has(x):
+		draw_data(ci, x, a, m, Color.WHITE, ArtWs.SHAPES[x], "ws:" + x)
+		return
 	if _lab(ci, x, a, m) or _clock(ci, x, a, m) or _pirate(ci, x, a, m):
 		return
 	match x:
@@ -473,6 +516,9 @@ static func _aux(ci: CanvasItem, x: String, a: float, m: bool) -> void:
 static func _prop(ci: CanvasItem, p: String, a: float) -> void:
 	if ArtData.SHAPES.has(p):
 		draw_data(ci, p, a, false)
+		return
+	if ArtWs.SHAPES.has(p):
+		draw_data(ci, p, a, false, Color.WHITE, ArtWs.SHAPES[p], "ws:" + p)
 		return
 	if _lab(ci, p, a, false) or _clock(ci, p, a, false) or _pirate(ci, p, a, false):
 		return
@@ -647,6 +693,9 @@ static func _shape_color(tok: String, col: Color) -> Color:
 
 ## 강화 외형: 충격 판(첫 도형, 퍽 중심의 큰 별 모양)은 _up_plate 가 먼저 그린다.
 static func _up(ci: CanvasItem, id: String, a: float, mirror: bool, on: bool) -> bool:
+	if on and ArtWs.UP.has(id):
+		draw_data(ci, id, a, mirror, Color.WHITE, ArtWs.UP[id], "wsup:" + id)
+		return true
 	if not on or not ArtUp.SHAPES.has(id):
 		return false
 	draw_data(ci, id, a, mirror, Color.WHITE, ArtUp.SHAPES[id], "up:" + id, 1 if _has_plate(id) else 0)
@@ -988,3 +1037,57 @@ static func _pirate(ci: CanvasItem, id: String, a: float, m: bool) -> bool:
 		_:
 			return false
 	return true
+
+
+
+## 공방 스킨: 주인 색 면적 · 기호 · 정면 표시는 그대로 두고 재질만 얹는다.
+static func _skin_overlay(ci: CanvasItem, c: Vector2, u: float, col: Color, a: float, rot: float, front: float) -> void:
+	match skin:
+		"junk":
+			# 육각 너트 각인과 리벳 네 개
+			var hx := PackedVector2Array()
+			for i in 7:
+				hx.append(c + Vector2.from_angle(TAU * i / 6.0 + PI / 6.0 - rot) * 0.66 * u)
+			ci.draw_polyline(hx, Color(0, 0, 0, 0.32 * a), 0.07 * u, true)
+			for i in 4:
+				var rp := c + Vector2.from_angle(PI / 4.0 + PI / 2.0 * i - rot) * 0.8 * u
+				ci.draw_circle(rp, 0.07 * u, _al(Color("C3C9D0"), a))
+				ci.draw_arc(rp, 0.07 * u, 0, TAU, 8, Color(0, 0, 0, 0.5 * a), 0.025 * u, true)
+		"magic":
+			# 달빛이 도는 마법석, 둘레에 별 룬
+			ci.draw_circle(c, 0.55 * u, Color(1, 1, 1, 0.12 * a))
+			for i in 10:
+				var sp := c + Vector2.from_angle(TAU * i / 10.0 - rot) * 1.12 * u
+				ci.draw_circle(sp, 0.045 * u, Color(0.92, 0.9, 1.0, 0.8 * a))
+		"toon":
+			# 굵은 먹선과 망점 그림자
+			ci.draw_arc(c, u, 0, TAU, 40, _al(Color("111111"), a), 0.2 * u, true)
+			for yy in range(1, 5):
+				for xx in range(1, 5):
+					var dp := c + Vector2(0.18 * u * xx, 0.18 * u * yy).rotated(-rot)
+					if dp.distance_to(c) < 0.85 * u:
+						ci.draw_circle(dp, 0.04 * u, Color(0, 0, 0, 0.25 * a))
+			ci.draw_line(c + Vector2(-0.62 * u, -0.25 * u).rotated(-rot), c + Vector2(-0.3 * u, -0.62 * u).rotated(-rot), Color(1, 1, 1, 0.85 * a), 0.1 * u, true)
+		"lab":
+			# 배양 접시 속 형광 물감과 기포
+			ci.draw_arc(c, 1.06 * u, 0, TAU, 40, Color(0.9, 0.97, 0.97, 0.9 * a), 0.14 * u, true)
+			ci.draw_arc(c, 1.13 * u, 0, TAU, 40, Color(0.4, 0.5, 0.5, 0.6 * a), 0.03 * u, true)
+			for bp in [Vector2(0.45, 0.35), Vector2(0.55, -0.1), Vector2(-0.5, 0.45)]:
+				ci.draw_arc(c + (bp as Vector2).rotated(-rot) * u, 0.07 * u, 0, TAU, 10, Color(1, 1, 1, 0.8 * a), 0.025 * u, true)
+		"clock":
+			# 황동 테 문자판, 꼭지가 정면
+			ci.draw_arc(c, 0.97 * u, 0, TAU, 40, _al(Color("C9A15A"), a), 0.12 * u, true)
+			for i in 12:
+				var ang := TAU * i / 12.0
+				ci.draw_line(c + Vector2.from_angle(ang) * 0.72 * u, c + Vector2.from_angle(ang) * 0.82 * u, Color(1, 1, 1, 0.55 * a), 0.04 * u, true)
+			var fd := Vector2.from_angle(front)
+			ci.draw_circle(c + fd * 1.08 * u, 0.12 * u, _al(Color("C9A15A"), a))
+			ci.draw_arc(c + fd * 1.08 * u, 0.12 * u, 0, TAU, 10, _al(outline, a), 0.04 * u, true)
+		"pirate":
+			# 울퉁불퉁한 금화와 밀랍 인장
+			var cn := PackedVector2Array()
+			for i in 13:
+				var ang2 := TAU * i / 12.0
+				cn.append(c + Vector2.from_angle(ang2) * u * (1.1 + 0.05 * float(i % 2)))
+			ci.draw_polyline(cn, _al(Color("E2C27A"), a), 0.16 * u, true)
+			ci.draw_polyline(cn, Color(0.42, 0.3, 0.12, 0.6 * a), 0.03 * u, true)

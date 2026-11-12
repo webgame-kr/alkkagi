@@ -510,6 +510,15 @@ static func set_label(stone_parts: Dictionary, set_id := "") -> String:
 # ── 부품 업그레이드 (확장 기획 「부품 업그레이드」) ─────────────
 ## 강화(★)는 부품마다 한 단계. 공용 4종과 공방 전용 단품만 (세트 부품·연구소 부품 제외).
 const UPGRADES := {
+	# 신규 공방 강화 (디자인 「신규 공방 강화 외형 28종」)
+	"time_spring": "폭발 범위 1.5배", "reserve_bow": "예약 화살이 두 발로 갈라져 부채꼴로", "rewind_watch": "맞힌 알에 부딪힌 알까지 함께 되감기",
+	"slow_arrow": "세 차례 동안 날기", "order_swap": "맞바꾼 뒤 그 상대를 한 칸 더 뒤로", "hourglass": "충격 미루기 두 번까지",
+	"metronome": "좌우를 동시에 툭", "alarm_clock": "끌어모으는 범위 3칸", "wind_mouse": "쥐가 두 마리", "shock_spring": "저장 한도 1.5배",
+	"slow_spring": "발사 속도 85%로", "replay_spring": "잔상이 두 번 달림", "time_capsule": "복귀하며 주변 1칸 알을 밀어냄", "tick_step": "네 구간으로",
+	"hole_cannon": "포탄 두 발, 구멍 둘", "spyglass": "더 긴 경로, 힘 +15%", "bolas": "상대 알 셋을 묶음", "smoke_powder": "연막이 두 바퀴",
+	"flag_signal": "바람에 2칸씩", "rum_barrel": "통 두 개", "water_pump": "양쪽 두 줄기", "plank_dock": "판 경계 2칸 연장",
+	"treasure_chest": "상자 주변 2칸까지 보상", "jump_board": "두 번 튀어 넘어감", "wind_sail": "휘는 정도 1.5배", "lifeboat": "복귀해도 차례를 쉬지 않음",
+	"oar": "노를 두 번 저음", "helm": "한 바퀴 돌며 범위 1.5칸",
 	"pea": "정면 두 발 연사", "shotgun": "부채꼴 다섯 발", "claw": "붙잡은 뒤 조준 방향으로 던지기",
 	"nose": "정면 충돌 두 번까지 세게", "magnet": "범위 4.5칸, 가까운 두 알", "bumper": "측면 충돌 두 번까지",
 	"flipper": "양옆으로 한 번씩", "rocket": "가속 1.5배", "retro": "후퇴 1.5배", "chute": "두 번 급제동",

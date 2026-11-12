@@ -1028,6 +1028,9 @@ func _after_shot_rules(ex: Dictionary, shooter_id: int) -> void:
 		delay_turn(int(ex["delay"]))
 	if ex.has("swap_order"):
 		swap_turn(int(ex["swap_order"]))
+		var sw = world.get_stone(shooter_id)
+		if sw != null and World.Parts.up(sw, "order_swap"):
+			delay_turn(int(ex["swap_order"]))
 	var s = world.get_stone(shooter_id)
 	var cur := current_player()
 	if s != null and s.alive and bonus_active.is_empty() and not ex.get("auto_bow", false) 			and PartsData.set_complete(s.parts, "clock") and int(bonus_used.get(cur, 0)) != round_no:

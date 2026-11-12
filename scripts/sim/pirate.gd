@@ -9,6 +9,7 @@ extends RefCounted
 
 const D = preload("res://scripts/sim/parts_data.gd")
 const C = preload("res://scripts/sim/clock.gd")   # push · speed_for
+const P = preload("res://scripts/sim/parts.gd")
 const CELL := 44.0
 const R := 22.0
 const FRONT_DOT := 0.75
@@ -66,7 +67,7 @@ static func in_plank(w, p: Vector2) -> bool:
 		var off: Vector2 = p - (pk["pos"] as Vector2)
 		var dir: Vector2 = pk["dir"]
 		var along := off.dot(dir)
-		if along >= -CELL * 0.5 and along <= CELL * 1.6 and absf(off.cross(dir)) <= CELL * 0.85:
+		if along >= -CELL * 0.5 and along <= CELL * float(pk.get("len", 1.6)) and absf(off.cross(dir)) <= CELL * 0.85:
 			return true
 	return false
 
@@ -88,24 +89,28 @@ static func on_launch(w, s) -> void:
 	var dir: Vector2 = sh.dir
 	match s.parts["weapon"]:
 		"spyglass":
-			s.vel *= 1.1
+			s.vel *= 1.15 if P.up(s, "spyglass") else 1.1
 		"hole_cannon":
 			# 포탄: 정면 3칸 앞 (그 앞에 알이 있으면 그 자리)에 떨어져 구멍을 낸다 (1바퀴)
 			var spot: Vector2 = s.pos + dir * 3.0 * CELL
 			var t0 = _first_on_ray(w, s.pos, dir, 3.0 * CELL, s.id)
 			if t0 != null:
 				spot = t0.pos
-			if w.is_inside(spot):
-				w.pirate["holes"].append({"pos": spot, "until": w.round_no + 1, "owner": s.owner})
-				w.emit({"t": "shell", "a": s.pos + dir * (R + 8.0), "b": spot, "owner": s.owner})
-				_ev(w, spot, s.owner, "hole_cannon", "구멍!", true)
+			var spots: Array = [spot]
+			if P.up(s, "hole_cannon"):
+				spots = [s.pos + dir.rotated(-0.3) * 3.0 * CELL, s.pos + dir.rotated(0.3) * 3.0 * CELL]
+			for sp2 in spots:
+				if w.is_inside(sp2):
+					w.pirate["holes"].append({"pos": sp2, "until": w.round_no + 1, "owner": s.owner})
+					w.emit({"t": "shell", "a": s.pos + dir * (R + 8.0), "b": sp2, "owner": s.owner})
+					_ev(w, sp2, s.owner, "hole_cannon", "구멍!", true)
 		"smoke_powder":
 			for o in w.stones:
 				if not o.alive or o.id == s.id:
 					continue
 				var off: Vector2 = o.pos - s.pos
 				if off.length() < 3.0 * CELL and off.normalized().dot(dir) > 0.5:
-					o.status["smoke"] = w.round_no + 1
+					o.status["smoke"] = w.round_no + (2 if P.up(s, "smoke_powder") else 1)
 			w.emit({"t": "cone", "pos": s.pos, "dir": dir, "radius": 3.0 * CELL, "owner": s.owner, "smoke": true})
 			_ev(w, s.pos + dir * CELL, s.owner, "smoke_powder", "연막")
 		"parrot_hat":
@@ -131,7 +136,7 @@ static func before_move(w, dt: float) -> void:
 		var s = w.shooter()
 		if s != null and s.alive and s.vel != Vector2.ZERO:
 			if _has(s, "prop", "wind_sail"):
-				s.vel += wind(w) * WIND_ACC * dt
+				s.vel += wind(w) * WIND_ACC * dt * (1.5 if P.up(s, "wind_sail") else 1.0)
 			if sh.ex.has("home_to"):
 				var t = w.get_stone(int(sh.ex["home_to"]))
 				if t != null and t.alive:
@@ -209,7 +214,7 @@ static func after_move(w, dt: float) -> void:
 					if not rp.has("used"):
 						rp["used"] = {}
 					rp["used"][s.id] = true
-					pr["air"][s.id] = AIR_TIME
+					pr["air"][s.id] = float(rp.get("air", AIR_TIME))
 					w.emit({"t": "jump", "pos": s.pos, "owner": s.owner, "stone": s.id})
 	# 쇠사슬: 길이 1.5칸을 넘지 않는다
 	for rope in pr["ropes"]:
@@ -238,7 +243,7 @@ static func after_move(w, dt: float) -> void:
 		if s0 != null and s0.alive and _has(s0, "aux", "plank_dock") and not sh.used.has("plank_dock") and w.edge_distance(s0.pos) < R * 0.6 and s0.vel.dot(w.outward(s0.pos)) > 0.0:
 			sh.used["plank_dock"] = 1
 			var o: Vector2 = w.outward(s0.pos)
-			pr["planks"].append({"pos": o * (w.size - shrink(w)), "dir": o, "until": w.round_no + 1, "owner": s0.owner})
+			pr["planks"].append({"pos": o * (w.size - shrink(w)), "dir": o, "until": w.round_no + 1, "owner": s0.owner, "len": 2.6 if P.up(s0, "plank_dock") else 1.6})
 			_ev(w, s0.pos, s0.owner, "plank_dock", "널빤지!", true)
 
 
@@ -268,20 +273,22 @@ static func on_contact(w, s, t, n: Vector2) -> void:
 	# 쇠사슬 볼라스: 처음 닿은 상대 알 두 개
 	if _has(s, "weapon", "bolas") and t.owner != s.owner:
 		var got: Array = sh.ex.get("bolas", [])
-		if not got.has(t.id) and got.size() < 2:
+		var cap := 3 if P.up(s, "bolas") else 2
+		if not got.has(t.id) and got.size() < cap:
 			got.append(t.id)
 			sh.ex["bolas"] = got
-			if got.size() == 2:
-				w.pirate["ropes"].append({"a": got[0], "b": got[1], "len": 1.5 * CELL + 2.0 * R, "until": w.round_no + 1, "owner": s.owner})
+			if got.size() >= 2:
+				w.pirate["ropes"].append({"a": got[got.size() - 2], "b": got[got.size() - 1], "len": 1.5 * CELL + 2.0 * R, "until": w.round_no + 1, "owner": s.owner})
 				_ev(w, t.pos, s.owner, "bolas", "사슬로 묶음!", true)
 	if _has(s, "weapon", "flag_signal") and not sh.used.has("flag_signal"):
 		sh.used["flag_signal"] = 1
 		t.status["flag"] = w.round_no + 2
+		t.status["flag_k"] = 2.0 if P.up(s, "flag_signal") else 1.0
 		_ev(w, t.pos, s.owner, "flag_signal", "깃발")
 	if not sh.used.has("pi_first"):
 		sh.used["pi_first"] = 1
 		if _has(s, "prop", "oar"):
-			s.vel += wind(w) * C.speed_for(1.5)
+			s.vel += wind(w) * C.speed_for(2.4 if P.up(s, "oar") else 1.5)
 			_ev(w, s.pos, s.owner, "oar", "노 젓기")
 	if not front and not sh.used.has("pi_side"):
 		sh.used["pi_side"] = 1
@@ -293,10 +300,12 @@ static func on_contact(w, s, t, n: Vector2) -> void:
 			w.emit({"t": "swing", "pos": t.pos, "owner": s.owner, "stone": s.id})
 			_ev(w, t.pos, s.owner, "hook_hand", "갈고리 휘돌기!", true)
 		if _has(s, "aux", "rum_barrel"):
-			w.pirate["barrels"].append({"pos": s.pos - n.orthogonal() * (R + BARREL_R) * signf(n.orthogonal().dot(sh.dir) + 0.001), "dir": n, "owner": s.owner, "hit": {s.id: true}})
+			w.pirate["barrels"].append({"pos": s.pos, "dir": n, "owner": s.owner, "hit": {s.id: true}})
+			if P.up(s, "rum_barrel"):
+				w.pirate["barrels"].append({"pos": s.pos, "dir": n.rotated(0.5), "owner": s.owner, "hit": {s.id: true}})
 			_ev(w, s.pos, s.owner, "rum_barrel", "술통 굴러감!")
 		if _has(s, "aux", "jump_board"):
-			w.pirate["ramps"].append({"pos": s.pos, "dir": sh.dir, "until": w.round_no + 1, "owner": s.owner})
+			w.pirate["ramps"].append({"pos": s.pos, "dir": sh.dir, "until": w.round_no + 1, "owner": s.owner, "air": AIR_TIME * (1.8 if P.up(s, "jump_board") else 1.0)})
 			_ev(w, s.pos, s.owner, "jump_board", "점프 판자")
 
 
@@ -318,27 +327,30 @@ static func on_stop(w, s) -> void:
 		s.status["anchored"] = true
 		_ev(w, s.pos, s.owner, "peg_leg", "쿵! 박힘")
 	if _has(s, "aux", "water_pump"):
-		var side: Vector2 = Vector2.from_angle(s.facing).orthogonal() * float(s.magnet_side)
-		for o in w.stones:
-			if not o.alive or o.id == s.id:
-				continue
-			var off: Vector2 = o.pos - s.pos
-			var along := off.dot(side)
-			if along > 0.0 and along < 3.0 * CELL and absf(off.cross(side)) < CELL * 0.8:
-				C.push(w, o, side, 0.6, s.owner, "water_pump")
-		w.emit({"t": "cone", "pos": s.pos, "dir": side, "radius": 3.0 * CELL, "owner": s.owner, "water": true})
+		var sides: Array = [Vector2.from_angle(s.facing).orthogonal() * float(s.magnet_side)]
+		if P.up(s, "water_pump"):
+			sides.append(-sides[0])
+		for side in sides:
+			for o in w.stones:
+				if not o.alive or o.id == s.id:
+					continue
+				var off: Vector2 = o.pos - s.pos
+				var along: float = off.dot(side)
+				if along > 0.0 and along < 3.0 * CELL and absf(off.cross(side)) < CELL * 0.8:
+					C.push(w, o, side, 0.6, s.owner, "water_pump")
+			w.emit({"t": "cone", "pos": s.pos, "dir": side, "radius": 3.0 * CELL, "owner": s.owner, "water": true})
 		_ev(w, s.pos, s.owner, "water_pump", "물대포")
 	if _has(s, "aux", "treasure_chest") and not w.shot.used.has("treasure_chest"):
 		w.shot.used["treasure_chest"] = 1
-		w.pirate["chests"].append({"pos": s.pos + Vector2.from_angle(s.facing + PI) * (R * 2.0), "round": w.round_no, "owner": s.owner})
+		w.pirate["chests"].append({"pos": s.pos + Vector2.from_angle(s.facing + PI) * (R * 2.0), "round": w.round_no, "owner": s.owner, "r": 2.0 if P.up(s, "treasure_chest") else 1.0})
 		_ev(w, s.pos, s.owner, "treasure_chest", "보물 상자")
 	if _has(s, "prop", "helm"):
 		for o in w.stones:
 			if not o.alive or o.id == s.id:
 				continue
 			var off2: Vector2 = o.pos - s.pos
-			if off2.length() < R * 2.0 + CELL:
-				C.push(w, o, off2.orthogonal().normalized() + off2.normalized() * 0.3, 0.8, s.owner, "helm")
+			if off2.length() < R * 2.0 + CELL * (1.5 if P.up(s, "helm") else 1.0):
+				C.push(w, o, off2.orthogonal().normalized() + off2.normalized() * 0.3, 1.1 if P.up(s, "helm") else 0.8, s.owner, "helm")
 		w.emit({"t": "swing", "pos": s.pos, "owner": s.owner, "stone": s.id})
 		_ev(w, s.pos, s.owner, "helm", "타륜 회전")
 
@@ -384,7 +396,7 @@ static func round_start(w, round_no: int) -> bool:
 	var wd := wind_of(w, round_no)
 	for s in w.stones:
 		if s.alive and int(s.status.get("flag", -1)) >= round_no:
-			C.push(w, s, wd, 1.0, -1, "flag_signal")
+			C.push(w, s, wd, float(s.status.get("flag_k", 1.0)), -1, "flag_signal")
 			moved = true
 	return moved
 
@@ -399,7 +411,7 @@ static func round_end(w, round_no: int) -> Dictionary:
 	for ch in pr["chests"]:
 		if int(ch["round"]) < round_no:
 			for s in w.stones:
-				if s.alive and s.pos.distance_to(ch["pos"]) < R + CELL:
+				if s.alive and s.pos.distance_to(ch["pos"]) < R + CELL * float(ch.get("r", 1.0)):
 					extra[s.owner] = int(extra.get(s.owner, 0)) + 1
 			w.emit({"t": "part", "part": "treasure_chest", "pos": ch["pos"], "owner": int(ch["owner"]), "text": "보물 상자 열림"})
 		else:
@@ -437,8 +449,11 @@ static func turn_start(w, pid: int) -> bool:
 			s.pos = spot
 			s.vel = Vector2.ZERO
 			w.emit({"t": "respawn", "pos": spot, "owner": s.owner, "stone": s.id})
-			_ev(w, spot, s.owner, "lifeboat", "구명보트로 복귀 · 이번 차례 쉼", true)
-			w.pirate["skip"] = pid
+			if P.up(s, "lifeboat"):
+				_ev(w, spot, s.owner, "lifeboat", "구명보트로 복귀!", true)
+			else:
+				_ev(w, spot, s.owner, "lifeboat", "구명보트로 복귀 · 이번 차례 쉼", true)
+				w.pirate["skip"] = pid
 	return moved
 
 

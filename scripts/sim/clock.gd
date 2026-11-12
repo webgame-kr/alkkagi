@@ -77,7 +77,7 @@ static func on_launch(w, s) -> void:
 		return
 	if _has(s, "weapon", "slow_arrow"):
 		var st := state(w)
-		st["walkers"].append({"kind": "arrow", "pos": s.pos + dir * (R + 12.0), "dir": dir, "left": 2, "owner": s.owner})
+		st["walkers"].append({"kind": "arrow", "pos": s.pos + dir * (R + 12.0), "dir": dir, "left": 3 if P.up(s, "slow_arrow") else 2, "owner": s.owner})
 		_ev(w, s.pos + dir * (R + 12.0), s.owner, "slow_arrow", "느린 화살")
 	if _has(s, "weapon", "rewind_watch"):
 		var starts := {}
@@ -95,20 +95,20 @@ static func on_launch(w, s) -> void:
 		s.status["minute"] = minf(base_v * 0.5, 700.0)
 	# 충격 태엽: 맞을 때 모아 둔 힘을 더한다
 	if _has(s, "aux", "shock_spring"):
-		var sb := minf(float(s.status.get("shock", 0.0)), 600.0)
+		var sb := minf(float(s.status.get("shock", 0.0)), 900.0 if P.up(s, "shock_spring") else 600.0)
 		if sb > 20.0:
 			s.vel += dir * sb
 			_ev(w, s.pos, s.owner, "shock_spring", "충격 반납")
 		s.status.erase("shock")
 	# 느림보 태엽: 발사 속도 70%, 감속 절반
 	if _has(s, "prop", "slow_spring"):
-		s.vel *= 0.7
+		s.vel *= 0.85 if P.up(s, "slow_spring") else 0.7
 		sh.ex["slowpoke"] = s.id
 	# 똑딱 걸음: 세 구간으로 끊어 간다
 	if _has(s, "prop", "tick_step"):
 		var v: float = s.vel.length()
 		s.vel = dir * v * 0.5
-		sh.ex["tick"] = {"left": 2, "pause": 0.0, "v": v * 0.42}
+		sh.ex["tick"] = {"left": 3 if P.up(s, "tick_step") else 2, "pause": 0.0, "v": v * (0.36 if P.up(s, "tick_step") else 0.42)}
 
 
 ## 마찰 배율 (느림보 태엽)
@@ -154,10 +154,11 @@ static func on_contact(w, s, t, n: Vector2) -> void:
 			t.status["hand_mark"] = {"dir": sh.dir, "turn": w.turn_no, "by": sh.owner}
 			_ev(w, t.pos, s.owner, "hour_hammer", "시곗바늘 표식")
 		if _has(s, "weapon", "time_spring"):
-			t.status["bomb"] = {"round": w.round_no, "by": sh.owner}
+			t.status["bomb"] = {"round": w.round_no, "by": sh.owner, "up": P.up(s, "time_spring")}
 			_ev(w, t.pos, s.owner, "time_spring", "째깍… 다음 바퀴")
 		if _has(s, "weapon", "rewind_watch"):
 			sh.ex["rewind"] = t.id
+			sh.ex["rewind_up"] = P.up(s, "rewind_watch")
 		if _has(s, "weapon", "order_swap") and t.owner != s.owner:
 			sh.ex["swap_order"] = t.owner
 			_ev(w, t.pos, s.owner, "order_swap", "순서 바꾸기")
@@ -170,6 +171,8 @@ static func on_contact(w, s, t, n: Vector2) -> void:
 			var st := state(w)
 			var md: Vector2 = n.orthogonal() if n.orthogonal().dot(sh.dir) >= 0.0 else -n.orthogonal()
 			st["walkers"].append({"kind": "mouse", "pos": s.pos - n * (R + 4.0), "dir": md, "left": 2, "owner": s.owner})
+			if P.up(s, "wind_mouse"):
+				st["walkers"].append({"kind": "mouse", "pos": s.pos - md * (R + 4.0), "dir": -md, "left": 2, "owner": s.owner})
 			_ev(w, s.pos, s.owner, "wind_mouse", "찍찍!")
 
 
@@ -177,15 +180,22 @@ static func on_contact(w, s, t, n: Vector2) -> void:
 static func post_collision(w, a, b, imp: float) -> void:
 	if w.shot == null:
 		return
+	if w.shot.ex.get("rewind_up", false) and not w.shot.ex.has("rewind2"):
+		var rid := int(w.shot.ex.get("rewind", -1))
+		if a.id == rid and b.id != w.shot.stone_id:
+			w.shot.ex["rewind2"] = b.id
+		elif b.id == rid and a.id != w.shot.stone_id:
+			w.shot.ex["rewind2"] = a.id
 	for x in [a, b]:
 		if x.id == w.shot.stone_id or x.owner == w.shot.owner:
 			continue
-		if _has(x, "aux", "hourglass") and not x.status.has("hourglass") and not x.status.has("hg_spent"):
-			x.status["hourglass"] = x.vel
+		if _has(x, "aux", "hourglass") and not x.status.has("hg_spent") and int(x.status.get("hg_n", 0)) < (2 if P.up(x, "hourglass") else 1):
+			x.status["hourglass"] = (x.status.get("hourglass", Vector2.ZERO) as Vector2) + x.vel
+			x.status["hg_n"] = int(x.status.get("hg_n", 0)) + 1
 			x.vel = Vector2.ZERO
 			_ev(w, x.pos, x.owner, "hourglass", "충격 보류")
 		if _has(x, "aux", "shock_spring"):
-			x.status["shock"] = minf(600.0, float(x.status.get("shock", 0.0)) + imp / w.mass_of(x) * 0.45)
+			x.status["shock"] = minf(900.0 if P.up(x, "shock_spring") else 600.0, float(x.status.get("shock", 0.0)) + imp / w.mass_of(x) * 0.45)
 
 
 ## 쏜 알이 멈췄을 때
@@ -194,7 +204,7 @@ static func on_stop(w, s) -> void:
 		s.status["metro"] = 1
 	if _has(s, "aux", "alarm_clock") and not w.shot.used.has("alarm_clock"):
 		w.shot.used["alarm_clock"] = 1
-		state(w)["alarms"].append({"pos": s.pos, "owner": s.owner, "round": w.round_no})
+		state(w)["alarms"].append({"pos": s.pos, "owner": s.owner, "round": w.round_no, "r": 3.0 if P.up(s, "alarm_clock") else 2.0})
 		_ev(w, s.pos, s.owner, "alarm_clock", "자명종 설치")
 	if _has(s, "prop", "time_capsule") and not s.status.has("capsule") and not s.status.has("capsule_used"):
 		s.status["capsule"] = s.pos
@@ -206,6 +216,12 @@ static func end_shot(w) -> void:
 	var sh = w.shot
 	if sh == null:
 		return
+	if sh.ex.has("rewind2"):
+		var t2 = w.get_stone(int(sh.ex["rewind2"]))
+		var back2 = sh.ex.get("starts", {}).get(int(sh.ex["rewind2"]))
+		if t2 != null and t2.alive and back2 != null:
+			t2.pos = back2
+			t2.vel = Vector2.ZERO
 	if sh.ex.has("rewind"):
 		var t = w.get_stone(int(sh.ex["rewind"]))
 		var back = sh.ex.get("starts", {}).get(int(sh.ex["rewind"]))
@@ -218,7 +234,7 @@ static func end_shot(w) -> void:
 		var path: Array = [sh.start]
 		path.append_array(sh.path)
 		path.append(s.pos)
-		state(w)["replays"].append({"owner": s.owner, "path": path, "turn": w.turn_no})
+		state(w)["replays"].append({"owner": s.owner, "path": path, "turn": w.turn_no, "left": 2 if P.up(s, "replay_spring") else 1})
 
 
 # ── 차례 이벤트 ──────────────────────────────────────────
@@ -245,7 +261,7 @@ static func round_start(w, round_no: int) -> bool:
 			if not s.alive:
 				continue
 			var d: float = s.pos.distance_to(ap)
-			if d < 2.0 * CELL and d > R * 1.5:
+			if d < float(al.get("r", 2.0)) * CELL and d > R * 1.5:
 				push(w, s, ap - s.pos, (d - R * 2.0) / CELL * 0.8, int(al["owner"]), "alarm_clock")
 				moved = true
 		_ev(w, ap, int(al["owner"]), "alarm_clock", "따르릉!", true)
@@ -266,11 +282,16 @@ static func turn_start(w, pid: int) -> bool:
 			var b: Dictionary = s.status["bow"]
 			s.status.erase("bow")
 			s.vel = (b["dir"] as Vector2) * P.launch_speed(float(b["power"]))
+			if P.up(s, "reserve_bow"):
+				for ang in [-0.22, 0.22]:
+					var bd: Vector2 = (b["dir"] as Vector2).rotated(ang)
+					w.spawn_bullet(s.owner, s.pos + bd * (R + 7.0), bd, 260.0, "weapon", s.id)
 			w.emit({"t": "part", "part": "reserve_bow", "pos": s.pos, "owner": s.owner, "text": "예약 발사!", "big": true})
 			moved = true
 		if s.alive and s.status.has("hourglass"):
 			s.vel += s.status["hourglass"]
 			s.status.erase("hourglass")
+			s.status.erase("hg_n")
 			s.status["hg_spent"] = true
 			_ev(w, s.pos, s.owner, "hourglass", "모래 다 떨어짐")
 			moved = moved or s.vel != Vector2.ZERO
@@ -288,6 +309,11 @@ static func turn_start(w, pid: int) -> bool:
 				s.status.erase("capsule")
 				w.emit({"t": "respawn", "pos": cp, "owner": s.owner, "stone": s.id})
 				_ev(w, cp, s.owner, "time_capsule", "캡슐에서 복귀!", true)
+				if P.up(s, "time_capsule"):
+					for o in w.stones:
+						if o.alive and o.id != s.id and o.pos.distance_to(cp) < R * 2.0 + CELL:
+							push(w, o, o.pos - cp, 1.0, s.owner, "time_capsule")
+							moved = true
 	return moved
 
 
@@ -308,7 +334,7 @@ static func turn_end(w, pid: int) -> bool:
 			var bm: Dictionary = s.status["bomb"]
 			s.status.erase("bomb")
 			var out: Vector2 = s.pos.normalized() if s.pos.length() > 1.0 else Vector2.RIGHT
-			push(w, s, out, 1.5, int(bm["by"]), "time_spring")
+			push(w, s, out, 2.25 if bm.get("up", false) else 1.5, int(bm["by"]), "time_spring")
 			_ev(w, s.pos, int(bm["by"]), "time_spring", "펑! 시한 태엽", true)
 			moved = true
 	for s in w.stones:
@@ -329,6 +355,14 @@ static func turn_end(w, pid: int) -> bool:
 			if best != null:
 				push(w, best, best.pos - s.pos, 0.8, s.owner, "metronome")
 				moved = true
+			if P.up(s, "metronome"):
+				for o2 in w.stones:
+					if o2.alive and o2.id != s.id and o2 != best:
+						var off2: Vector2 = o2.pos - s.pos
+						if off2.length() < 1.5 * CELL + R * 2.0 and off2.normalized().dot(-sd) > 0.5:
+							push(w, o2, off2, 0.8, s.owner, "metronome")
+							moved = true
+							break
 	var st := state(w)
 	var keep_r: Array = []
 	for rp in st["replays"]:
@@ -338,6 +372,10 @@ static func turn_end(w, pid: int) -> bool:
 		_ev(w, rp["path"][0], int(rp["owner"]), "replay_spring", "다시보기!", true)
 		w.emit({"t": "replay", "path": rp["path"], "owner": int(rp["owner"])})
 		moved = _sweep_path(w, rp["path"], int(rp["owner"]), "replay_spring", -1) or moved
+		rp["left"] = int(rp.get("left", 1)) - 1
+		if int(rp["left"]) > 0:
+			rp["turn"] = w.turn_no
+			keep_r.append(rp)
 	st["replays"] = keep_r
 	var keep_w: Array = []
 	for wk in st["walkers"]:

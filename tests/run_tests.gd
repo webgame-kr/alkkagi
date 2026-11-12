@@ -36,7 +36,7 @@ func _initialize() -> void:
 		"test_mushroom_and_wind", "test_second_step", "test_rebound_and_string", "test_at_field_and_beam",
 		"test_hero_band_and_shoes", "test_all_parts_have_art",
 		"test_workshop_pools", "test_offer_fits_empty_slots", "test_min_power_moves_one_cell",
-		"test_knockout_causes", "test_derby_mode", "test_gimmicks_junk", "test_start_placement", "test_upgrades", "test_gimmicks_magic_toon", "test_lab_parts", "test_lab_gimmicks", "test_draft_pass", "test_playtest_fixes", "test_crown_rules", "test_crown_match", "test_parcel_physics", "test_parcel_match", "test_clock_parts", "test_clock_flow", "test_pirate_board", "test_pirate_parts", "test_pirate_flow",
+		"test_knockout_causes", "test_derby_mode", "test_gimmicks_junk", "test_start_placement", "test_upgrades", "test_gimmicks_magic_toon", "test_lab_parts", "test_lab_gimmicks", "test_draft_pass", "test_playtest_fixes", "test_crown_rules", "test_crown_match", "test_parcel_physics", "test_parcel_match", "test_clock_parts", "test_clock_flow", "test_pirate_board", "test_pirate_parts", "test_pirate_flow", "test_ws_upgrades",
 	]
 	for t in tests:
 		var before := failures
@@ -2046,3 +2046,34 @@ func test_pirate_flow() -> void:
 		else:
 			m.skip_turn()
 	check(m.round_no >= 10 or m.phase == "over", "pirate match keeps running: round %d" % m.round_no)
+
+
+func test_ws_upgrades() -> void:
+	for id in PartsData.WORKSHOPS["clock"]["parts"] + PartsData.WORKSHOPS["pirate"]["parts"]:
+		if PartsData.set_of(id) == "":
+			check(PartsData.upgradable(id), "upgradable: " + id)
+	# 구멍 대포 ★: 구멍 둘
+	var w := _pirate_world()
+	var a := w.add_stone(0, Vector2(-250, 0), 0)
+	w.add_stone(1, Vector2(250, 200), 0)
+	a.parts["weapon"] = "hole_cannon"
+	a.ups["weapon"] = true
+	shoot(w, a.id, Vector2.RIGHT, 0.2)
+	check(w.pirate["holes"].size() == 2, "two holes: %d" % w.pirate["holes"].size())
+	# 구명보트 ★: 돌아와도 차례를 쉬지 않음
+	var w2 := _pirate_world()
+	var l := w2.add_stone(0, Vector2(300, 0), 0)
+	w2.add_stone(1, Vector2(-300, 0), 0)
+	l.parts["prop"] = "lifeboat"
+	l.ups["prop"] = true
+	shoot(w2, l.id, Vector2.RIGHT, 1.0)
+	World.Pirate.turn_start(w2, 0)
+	check(l.alive and int(w2.pirate["skip"]) == -1, "upgraded lifeboat: no skipped turn")
+	# 느린 화살 ★: 세 차례
+	var w3 := make_world("circle", 400.0)
+	var b := w3.add_stone(0, Vector2(-250, 0), 0)
+	w3.add_stone(1, Vector2(250, 200), 0)
+	b.parts["weapon"] = "slow_arrow"
+	b.ups["weapon"] = true
+	shoot(w3, b.id, Vector2.UP, 0.1)
+	check(int(w3.clock["walkers"][0]["left"]) == 3, "slow arrow flies three turns")
