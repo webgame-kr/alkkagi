@@ -375,6 +375,10 @@ func _debug_args() -> void:
 			get_viewport().get_texture().get_image().save_png("%s/s%03d.png" % [_shot_dir, _shot_n]))
 		add_child(t)
 	mu_force_cut = args.has("--cut")
+	if args.has("--chatdemo"):
+		for cd in [["민지", "빨리 와!", 1], ["도윤", "궤도 마법 미쳤다 ㅋㅋ", 2], ["나", "한 판 더!", 0]]:
+			chat_log.append({"name": cd[0], "text": cd[1], "t": 0.0, "c": m.players[cd[2]].color})
+		chat_log[2]["t"] = 9999.0
 	if args.has("--mudemo"):
 		# 공방 연출 확인용: 처음부터 부품을 달아 둔다
 		var kits := [["hour_hammer", "late_key", "minute_spring"], ["time_spring", "metronome", "replay_spring"], ["rewind_watch", "alarm_clock", "tick_step"], ["order_swap", "wind_mouse", "slow_spring"]] if m.workshop == "clock" else []
@@ -9013,16 +9017,32 @@ func _show_room() -> void:
 		col.add_child(chat)
 		var talk := HBoxContainer.new()
 		talk.add_theme_constant_override("separation", 10)
+		var logp := PanelContainer.new()
+		var lps := StyleBoxFlat.new()
+		lps.bg_color = Color(0.08, 0.06, 0.05, 0.72)
+		lps.set_corner_radius_all(8)
+		lps.content_margin_left = 12
+		lps.content_margin_right = 12
+		lps.content_margin_top = 6
+		lps.content_margin_bottom = 6
+		logp.add_theme_stylebox_override("panel", lps)
+		logp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		logp.custom_minimum_size = Vector2(200, 0)
 		var logv := VBoxContainer.new()
 		logv.add_theme_constant_override("separation", 2)
-		logv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		for cl in chat_log.slice(maxi(0, chat_log.size() - 3)):
+		for cl in chat_log.slice(maxi(0, chat_log.size() - 4)):
 			var ll := _label("%s: %s" % [cl["name"], cl["text"]], 15, Color("F3EAD3"))
+			ll.autowrap_mode = TextServer.AUTOWRAP_OFF
+			ll.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 			ll.clip_text = true
 			logv.add_child(ll)
 		if chat_log.is_empty():
-			logv.add_child(_label("아직 대화가 없어요", 14, Color("9A8E7A")))
-		talk.add_child(logv)
+			var el := _label("아직 대화가 없어요 · 아래 칸에 입력하고 엔터", 14, Color("9A8E7A"))
+			el.autowrap_mode = TextServer.AUTOWRAP_OFF
+			el.clip_text = true
+			logv.add_child(el)
+		logp.add_child(logv)
+		talk.add_child(logp)
 		var le := LineEdit.new()
 		le.max_length = 40
 		le.placeholder_text = "채팅 입력 · 엔터"
@@ -9343,7 +9363,9 @@ var chat_box: LineEdit = null
 
 
 func _take_chat(d: Dictionary) -> void:
-	chat_log.append({"name": str(d.get("name", "")), "text": str(d.get("text", "")), "t": time})
+	var pid0 := int(d.get("pid", -1))
+	var c0: Color = m.players[pid0].color if m != null and pid0 >= 0 and pid0 < m.players.size() else Color("FFE08A")
+	chat_log.append({"name": str(d.get("name", "")), "text": str(d.get("text", "")), "t": time, "c": c0})
 	if chat_log.size() > 30:
 		chat_log.pop_front()
 	snd.play("ui_click", -4.0, 1.3)
@@ -9367,8 +9389,8 @@ func _open_game_chat() -> void:
 	var le := LineEdit.new()
 	le.max_length = 40
 	le.placeholder_text = "메시지 입력 · 엔터로 보내기 · Esc 닫기"
-	le.custom_minimum_size = Vector2(minf(460.0, vs.x - 32.0), 44)
-	le.position = Vector2(vs.x * 0.5 - le.custom_minimum_size.x * 0.5, vs.y - 120.0)
+	le.custom_minimum_size = Vector2(_chat_w(vs), 44)
+	le.position = Vector2(_chat_x(vs), float(_chat_slot(vs)["bottom"]) - 44.0)
 	le.add_theme_font_size_override("font_size", 16)
 	le.theme = theme_
 	ui.add_child(le)
@@ -9385,24 +9407,66 @@ func _open_game_chat() -> void:
 	le.grab_focus()
 
 
+## 채팅 창 자리: x, 아래 끝, 폭, 위 한계. 넓은 화면은 왼쪽 차례 순서 아래 · 힘 판 위, 좁은 화면은 아래 판 위.
+func _chat_slot(vs: Vector2) -> Dictionary:
+	if hud.has("power"):
+		var pw: Rect2 = hud["power"]
+		return {"x": pw.position.x, "bottom": pw.position.y - 12.0, "w": pw.size.x, "top": float(hud.get("order_end", 164.0)) + 12.0}
+	var od: Rect2 = hud.get("order", Rect2(12, vs.y - 196, vs.x - 24, 184))
+	return {"x": 12.0, "bottom": od.position.y - 10.0, "w": vs.x - 24.0, "top": od.position.y - 150.0}
+
+
+func _chat_w(vs: Vector2) -> float:
+	return float(_chat_slot(vs)["w"])
+
+
+func _chat_x(vs: Vector2) -> float:
+	return float(_chat_slot(vs)["x"])
+
+
+## 경기 중 채팅 창 (왼쪽 아래): 최근 4줄. 새 말이 오거나 입력 중이면 진하게, 아니면 흐리게.
 func _draw_chat_toasts(vs: Vector2) -> void:
-	if state != "play" or chat_toasts.is_empty():
+	if state != "play" or m == null or (online == "" and chat_log.is_empty()):
 		return
-	var y := vs.y - 170.0
-	for i in range(chat_toasts.size() - 1, -1, -1):
-		var c: Dictionary = chat_toasts[i]
-		var age := time - float(c["t"])
-		if age > 6.0:
-			continue
-		var a := clampf((6.0 - age) / 0.6, 0.0, 1.0)
-		var t := "%s: %s" % [c["name"], c["text"]]
-		var w := font_bold.get_string_size(t, HORIZONTAL_ALIGNMENT_LEFT, -1, 15).x + 32.0
-		var r := Rect2(vs.x * 0.5 - w * 0.5, y, w, 32.0)
-		_round_rect(r, Color(0.08, 0.09, 0.1, 0.78 * a), 16)
-		draw_circle(r.position + Vector2(14, 16), 5.0, Color(c["c"], a))
-		draw_string(font_bold, r.position + Vector2(24, 21), t, HORIZONTAL_ALIGNMENT_LEFT, w - 28, 15, Color(1, 1, 1, a))
-		y -= 38.0
-	chat_toasts = chat_toasts.filter(func(x): return time - float(x["t"]) < 6.0)
+	var typing := is_instance_valid(chat_box)
+	var w := _chat_w(vs)
+	var x := _chat_x(vs)
+	var slot := _chat_slot(vs)
+	var bottom: float = float(slot["bottom"]) - (52.0 if typing else 0.0)
+	var lh := 22.0
+	var room := int(floor((bottom - float(slot["top"]) - 46.0) / lh))
+	if room < 1:
+		return
+	var shown: Array = chat_log.slice(maxi(0, chat_log.size() - 4))
+	var lines: Array = []
+	var n := 0
+	for e in shown:
+		var ls: Array = _wrap("%s: %s" % [e["name"], e["text"]], font, 14, w - 44)
+		lines.append(ls)
+		n += ls.size()
+	while n > room and shown.size() > 1:
+		n -= (lines[0] as Array).size()
+		shown.pop_front()
+		lines.pop_front()
+	var h := 36.0 + maxf(1.0, float(mini(n, room))) * lh + 10.0
+	var last_t: float = float(shown[shown.size() - 1]["t"]) if not shown.is_empty() else -99.0
+	var fresh := time - last_t < 8.0
+	var a := 1.0 if typing or fresh else 0.55
+	var r := Rect2(x, bottom - h, w, h)
+	_round_rect(r, Color(0.07, 0.08, 0.1, 0.82 * a), 14)
+	draw_string(font_semi, r.position + Vector2(16, 24), "채팅", HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(SUB, a))
+	draw_string(font, r.position + Vector2(56, 24), "엔터로 입력" if not typing else "엔터로 보내기 · Esc 닫기", HORIZONTAL_ALIGNMENT_LEFT, w - 70, 12, Color(SUB, 0.7 * a))
+	var y := r.position.y + 50.0
+	if shown.is_empty():
+		draw_string(font, Vector2(r.position.x + 16, y), "아직 대화가 없어요", HORIZONTAL_ALIGNMENT_LEFT, w - 32, 14, Color(SUB, a))
+	for k in shown.size():
+		var e: Dictionary = shown[k]
+		var ec: Color = e.get("c", Color("FFE08A"))
+		draw_circle(Vector2(r.position.x + 20, y - 5), 4.0, Color(ec, a))
+		var newest := k == shown.size() - 1 and fresh
+		for ln in lines[k]:
+			draw_string(font, Vector2(r.position.x + 32, y), ln, HORIZONTAL_ALIGNMENT_LEFT, w - 44, 14, Color(1, 1, 1, a) if newest else Color(0.86, 0.86, 0.86, a))
+			y += lh
 
 
 # ── 4. 알 꾸미기 ─────────────────────────────────────────
