@@ -698,6 +698,7 @@ func _process_inner(delta: float) -> void:
 	_place()
 	if online != "":
 		_net_poll()
+		_update_join_detail()
 	if overlay != null and overlay.has_meta("wk") and get_viewport_rect().size.distance_to(wk_built_size) > 2.0:
 		_wk_rebuild(str(overlay.get_meta("wk")))
 	if state == "setup" and is_instance_valid(lobby_col):
@@ -11510,6 +11511,18 @@ func _draw_ms_transform(vs: Vector2) -> void:
 		_text_outline(p + Vector2(0, 110), "미친 과학자!", 26, MS_NEON, true)
 
 
+var guest_detail_label: Label = null
+
+
+## 연결 단계 글 (매 프레임): 「1단계 · 연결 서버 접속 중 (2/3번째 시도 · 14초)」
+func _update_join_detail() -> void:
+	if not is_instance_valid(guest_detail_label):
+		return
+	var d: Array = net.detail()
+	var stage_txt := "1단계 · 연결 서버에 접속 중" if d[0] == "signal" else ("2단계 · 방장 기기와 연결 중" if d[0] == "connect" else "준비 중")
+	guest_detail_label.text = "%s  (%d/3번째 시도 · %d초)" % [stage_txt, int(d[1]), int(d[2])]
+
+
 ## 손님이 아직 자리를 받지 못했을 때: 연결 중 · 연결 실패 · 방이 꽉 참
 func _wk_guest_wait(root: Control) -> void:
 	var vs := get_viewport_rect().size
@@ -11547,6 +11560,12 @@ func _wk_guest_wait(root: Control) -> void:
 	var l2 := _label(sub, 15, Color("C9BBA0"))
 	l2.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	col.add_child(l2)
+	if st == "joining" or st == "opening" or st == "idle":
+		var l3 := _label("", 14, Color("FFE08A"), 2)
+		l3.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		l3.set_meta("join_detail", true)
+		col.add_child(l3)
+		guest_detail_label = l3
 	var row := HBoxContainer.new()
 	row.alignment = BoxContainer.ALIGNMENT_CENTER
 	row.add_theme_constant_override("separation", 14)

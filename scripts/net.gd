@@ -20,6 +20,14 @@ func error_text() -> String:
 	return str(_js.error) if available else "웹에서만 친구 초대를 쓸 수 있어요"
 
 
+## [단계(signal|connect), 시도 번호, 지난 초]
+func detail() -> Array:
+	if not available:
+		return ["", 1, 0]
+	var parts := str(_js.detail()).split(" ")
+	return [parts[0] if parts.size() > 0 else "", int(parts[1]) if parts.size() > 1 else 1, int(parts[2]) if parts.size() > 2 else 0]
+
+
 func code() -> String:
 	return str(_js.code) if available else ""
 

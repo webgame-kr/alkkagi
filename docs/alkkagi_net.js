@@ -79,16 +79,21 @@
       net.code = code;
       net.status = "joining";
       net.tryNo = tryNo;
+      net.stage = "signal";
+      if (tryNo === 1) net.t0 = Date.now();
       var mine = net.peer = new Peer({ config: ICE });
       clearTimeout(net._timer);
       net._timer = setTimeout(function () {
         if (net.peer !== mine || net.status !== "joining") return;
         if (tryNo < JOIN_TRIES) { net.join(code, tryNo + 1); return; }
         net.status = "error";
-        net.error = "방장과 연결이 안 돼요 (네트워크가 막혀 있을 수 있어요. 와이파이를 바꾸거나 잠시 뒤 다시 해 보세요)";
+        net.error = net.stage === "signal"
+          ? "연결 서버에 닿지 못했어요 (VPN · 광고 차단 · 회사/학교 네트워크가 막고 있을 수 있어요)"
+          : "방장 기기와 직접 연결이 안 돼요 (와이파이를 바꾸거나 휴대폰 핫스팟으로 해 보세요)";
       }, JOIN_WAIT);
       net.peer.on("open", function (id) {
         net.myId = id;
+        net.stage = "connect";
         var conn = net.peer.connect(PREFIX + code, { reliable: true });
         conn.on("open", function () {
           net.conns[conn.peer] = conn;
@@ -120,6 +125,11 @@
       var out = JSON.stringify(net.inbox);
       net.inbox = [];
       return out;
+    },
+
+    // 연결이 어디까지 왔는지: "signal 2 14" = 연결 서버 접속 중 · 2번째 시도 · 14초째
+    detail: function () {
+      return (net.stage || "") + " " + (net.tryNo || 1) + " " + Math.floor((Date.now() - (net.t0 || Date.now())) / 1000);
     },
 
     peers: function () { return JSON.stringify(Object.keys(net.conns)); },
