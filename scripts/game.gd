@@ -231,6 +231,7 @@ func _ready() -> void:
 	if room != "":
 		if str(my_profile["nick"]) == "":
 			my_profile["nick"] = "친구"
+			ask_nick_in_room = true
 		_join_room(room)
 	elif args0.is_empty():
 		_show_home()
@@ -329,6 +330,8 @@ func _debug_args() -> void:
 		my_profile["nick"] = "나"
 		chat_log = [{"name": "민지", "text": "한 판 더!", "t": 0.0}]
 		_show_setup()
+		if args.has("--nickdemo"):
+			_ask_nick(true)
 		if args.has("--resultdemo"):
 			chat_log.clear()
 			_start_from_room()
@@ -7829,7 +7832,8 @@ func _puck_view(prof: Dictionary, size: float, team_col := Color(0, 0, 0, 0)) ->
 
 # ── 시작 화면 ────────────────────────────────────────────
 ## 처음 실행: 닉네임을 한 번 묻고, 기본 알(금속 퍽, 무작위 색·기호)을 정해 둔다.
-func _ask_nick() -> void:
+## in_room: 방 안에서 닉네임 바꾸기 (대기실이 다시 그려져도 닫히지 않게 따로 위 층에 띄운다)
+func _ask_nick(in_room := false) -> void:
 	var root := Control.new()
 	root.set_anchors_preset(Control.PRESET_FULL_RECT)
 	root.mouse_filter = Control.MOUSE_FILTER_STOP
@@ -7837,7 +7841,16 @@ func _ask_nick() -> void:
 	dim.color = Color(0, 0, 0, 0.55)
 	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
 	root.add_child(dim)
-	overlay.add_child(root)
+	if in_room:
+		if is_instance_valid(nick_layer):
+			nick_layer.queue_free()
+		nick_layer = CanvasLayer.new()
+		nick_layer.layer = 60
+		add_child(nick_layer)
+		root.theme = theme_
+		nick_layer.add_child(root)
+	else:
+		overlay.add_child(root)
 	var cc := CenterContainer.new()
 	cc.set_anchors_preset(Control.PRESET_FULL_RECT)
 	root.add_child(cc)
@@ -7848,24 +7861,63 @@ func _ask_nick() -> void:
 	v.add_theme_constant_override("separation", 12)
 	v.custom_minimum_size = Vector2(minf(420.0, get_viewport_rect().size.x - 40.0), 0)
 	pc.add_child(v)
-	v.add_child(_label("닉네임을 정해 주세요", 22, TEXT, 2))
-	v.add_child(_label("방에서 친구들에게 보이는 이름이에요. 나중에 알 꾸미기에서 바꿀 수 있어요.", 13, SUB))
+	v.add_child(_label("닉네임 바꾸기" if in_room else "닉네임을 정해 주세요", 22, TEXT, 2))
+	v.add_child(_label("방에서 친구들에게 보이는 이름이에요." + ("" if in_room else " 나중에 방 안에서도 바꿀 수 있어요."), 13, SUB))
 	var le := LineEdit.new()
 	le.max_length = 10
 	le.placeholder_text = "알까기왕"
+	if in_room and str(my_profile.get("nick", "")) != "친구":
+		le.text = str(my_profile.get("nick", ""))
+		le.caret_column = le.text.length()
 	le.custom_minimum_size = Vector2(0, 48)
 	le.add_theme_font_size_override("font_size", 18)
 	v.add_child(le)
-	var ok := _primary(_button("좋아요", func():
+	var done := func():
 		var t := le.text.strip_edges()
+		if in_room:
+			if t != "":
+				my_profile["nick"] = t
+				_save_profile()
+				_send_my_nick()
+			if is_instance_valid(nick_layer):
+				nick_layer.queue_free()
+			return
 		my_profile["nick"] = t if t != "" else "알까기왕"
 		my_profile["color"] = randi() % 8
 		my_profile["symbol"] = randi() % 8
 		_save_profile()
-		root.queue_free()))
+		root.queue_free()
+	le.text_submitted.connect(func(_t): done.call())
+	var ok := _primary(_button("좋아요", done))
 	ok.custom_minimum_size = Vector2(0, 50)
 	v.add_child(ok)
+	if in_room:
+		v.add_child(_button("취소", func():
+			if is_instance_valid(nick_layer):
+				nick_layer.queue_free()))
 	le.grab_focus()
+
+
+var nick_layer: CanvasLayer = null
+var ask_nick_in_room := false   # 초대 링크로 바로 들어와 닉네임이 없을 때: 방에 들어가면 물어본다
+
+
+## 방 안에서 바꾼 닉네임을 내 자리에 반영 (손님은 방장에게 보내고, 방장은 모두에게)
+func _send_my_nick() -> void:
+	if online == "guest":
+		var pf: Dictionary = my_profile.duplicate()
+		if guest_lobby.has("seats") and my_seat < guest_lobby["seats"].size():
+			var cur: Dictionary = guest_lobby["seats"][my_seat].get("prof", {})
+			if not cur.is_empty():
+				pf = cur.duplicate()
+				pf["nick"] = my_profile["nick"]
+		net.send_to(host_peer, {"t": "prof", "prof": pf})
+		return
+	_refresh_seat_profiles()
+	if online == "host":
+		_host_broadcast_lobby()
+	if state == "setup":
+		_show_setup()
 
 
 func _create_room() -> void:
@@ -8878,9 +8930,16 @@ func _show_room() -> void:
 		_show_home(), 18)
 	leave.custom_minimum_size = Vector2(150, 70)
 	bot.add_child(leave)
+	var nick_btn := _wk_steel("닉네임", func(): _ask_nick(true), 18)
+	nick_btn.custom_minimum_size = Vector2(130, 70)
+	nick_btn.tooltip_text = "방에서 보이는 내 이름 바꾸기"
+	bot.add_child(nick_btn)
 	var mine_btn := _wk_steel("내 알 바꾸기", func(): _show_puck_picker("room"), 18)
-	mine_btn.custom_minimum_size = Vector2(240, 70)
+	mine_btn.custom_minimum_size = Vector2(200, 70)
 	bot.add_child(mine_btn)
+	if ask_nick_in_room and online == "guest" and guest_lobby.has("seats"):
+		ask_nick_in_room = false
+		_ask_nick.call_deferred(true)
 	if online == "guest":
 		var mine_ready := seats.size() > my_seat and bool(seats[my_seat].get("ready", false))
 		var rb := _wk_brass("준비 취소" if mine_ready else "준비 완료", func():
@@ -8997,7 +9056,7 @@ func _wk_cubby(i: int, st: Dictionary, editable: bool) -> Control:
 	nh.alignment = BoxContainer.ALIGNMENT_CENTER
 	nh.add_theme_constant_override("separation", 8)
 	nh.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var nm := "나" if mine else str(pf.get("nick", "친구"))
+	var nm := (str(pf.get("nick", "")) if str(pf.get("nick", "")) != "" else "나") if mine else str(pf.get("nick", "친구"))
 	if kind == "wait":
 		nm = "친구 자리"
 	nh.add_child(_wk_tag(nm, 18))
