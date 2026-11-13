@@ -3928,6 +3928,13 @@ func _host_assign(peer: String) -> void:
 				settings["friend"][i] = true
 				seat = i
 				break
+	if seat < 0 and int(settings["n"]) < 8:
+		var nn := int(settings["n"]) + 1
+		_set_room_size(nn)
+		seat = nn - 1
+		settings["empty"][seat] = false
+		settings["friend"][seat] = true
+		_log("자리가 모자라 %d명 방으로 늘렸어요" % nn, SUB)
 	if seat < 0:
 		net.send_to(peer, {"t": "full", "why": "방이 꽉 찼어요 (%d/%d)" % [settings["n"], settings["n"]]})
 		return
@@ -8850,6 +8857,9 @@ func _show_room() -> void:
 	var root := _lobby_root()
 	var bgr := _wk_bg(root)
 	root.move_child(bgr, 0)
+	if online == "guest" and not guest_lobby.has("seats"):
+		_wk_guest_wait(root)
+		return
 	var vs := get_viewport_rect().size
 	var narrow := vs.x < 900
 	var left_w := (vs.x - 72.0) * 0.64 if not narrow else vs.x - 24.0
@@ -11498,3 +11508,55 @@ func _draw_ms_transform(vs: Vector2) -> void:
 			draw_polyline(PackedVector2Array([cp, cp + Vector2(side * -10, -14), cp + Vector2(side * 6, -26), cp + Vector2(side * -4, -40)]), MS_NEON, 3.0, true)
 	if t > 1.3:
 		_text_outline(p + Vector2(0, 110), "미친 과학자!", 26, MS_NEON, true)
+
+
+## 손님이 아직 자리를 받지 못했을 때: 연결 중 · 연결 실패 · 방이 꽉 참
+func _wk_guest_wait(root: Control) -> void:
+	var vs := get_viewport_rect().size
+	var w := minf(620.0, vs.x - 32.0)
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", 18)
+	col.custom_minimum_size = Vector2(w, 0)
+	col.position = Vector2(vs.x * 0.5 - w * 0.5, maxf(40.0, vs.y * 0.18))
+	root.add_child(col)
+	lobby_col = col
+	var code: String = net.code().to_upper() if net.code() != "" else "······"
+	var ph := HBoxContainer.new()
+	ph.add_theme_constant_override("separation", 30)
+	ph.alignment = BoxContainer.ALIGNMENT_CENTER
+	ph.add_child(_wk_title("방 코드", 26))
+	ph.add_child(_wk_title(code, 50))
+	col.add_child(_wk_plaque(ph, 14))
+	var st: String = net.status()
+	var msg := "친구 방에 연결하는 중…"
+	var sub := "방장 화면이 켜져 있어야 들어갈 수 있어요. 방장이 다른 앱이나 다른 탭에 가 있으면 돌아올 때 이어서 들어가져요."
+	var col_t := Color("F3EAD3")
+	if guest_lobby.has("full"):
+		msg = "들어갈 수 없어요"
+		sub = str(guest_lobby["full"])
+		col_t = Color("FF8A7A")
+	elif st == "error":
+		msg = "연결하지 못했어요"
+		sub = net.error_text() + " · 코드를 다시 확인하거나 잠시 뒤 다시 들어가 보세요."
+		col_t = Color("FF8A7A")
+	elif st == "joined":
+		msg = "방장에게 자리를 받는 중…"
+	var l1 := _label(msg, 26, col_t, 3)
+	l1.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	col.add_child(l1)
+	var l2 := _label(sub, 15, Color("C9BBA0"))
+	l2.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	col.add_child(l2)
+	var row := HBoxContainer.new()
+	row.alignment = BoxContainer.ALIGNMENT_CENTER
+	row.add_theme_constant_override("separation", 14)
+	var leave := _wk_steel("나가기", func():
+		_leave_online()
+		_show_home(), 18)
+	leave.custom_minimum_size = Vector2(160, 64)
+	row.add_child(leave)
+	if guest_lobby.has("full") or st == "error":
+		var again := _wk_brass("다시 들어가기", func(): _join_room(net.code()), 22)
+		again.custom_minimum_size = Vector2(220, 64)
+		row.add_child(again)
+	col.add_child(row)
