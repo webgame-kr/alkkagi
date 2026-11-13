@@ -130,6 +130,7 @@ var lobby_preview: Control = null  # 오른쪽 열 맨 위: 이 자리에 판 �
 var lobby_col: Control = null  # 대기실 왼쪽 열: 매 프레임 세로 위치를 맞춘다 (웹 첫 프레임은 화면 크기가 늦게 잡힌다)
 var sound_btn: Button
 var ff_btn: Button
+var chat_btn: Button
 var fast_forward := false     # CPU 차례 빠른 진행 (내 차례가 오면 자동으로 꺼진다)
 var view_opts := {"shake": true, "hitstop": true, "reduce_motion": false}
 var _cancel_state := false    # 조준이 취소 원 안에 있었는지 (소리용)
@@ -196,6 +197,13 @@ func _ready() -> void:
 	ff_btn.custom_minimum_size = Vector2(0, 44)
 	ff_btn.visible = false
 	ui.add_child(ff_btn)
+	chat_btn = _button("채팅", func(): _open_game_chat())
+	chat_btn.theme = theme_
+	chat_btn.add_theme_font_size_override("font_size", 14)
+	chat_btn.custom_minimum_size = Vector2(64, 44)
+	chat_btn.tooltip_text = "채팅 (엔터)"
+	chat_btn.visible = false
+	ui.add_child(chat_btn)
 	_update_sound_btn()
 	get_viewport().size_changed.connect(_layout)
 	arena_node = Node2D.new()
@@ -559,6 +567,10 @@ func _place() -> void:
 		if ff_btn:
 			ff_btn.position = sound_btn.position - Vector2(ff_btn.size.x + 8, 0)
 			ff_btn.visible = state == "play" and m != null and _has_cpu()
+		if chat_btn:
+			var left_of: Vector2 = ff_btn.position if ff_btn.visible else sound_btn.position
+			chat_btn.position = left_of - Vector2(chat_btn.size.x + 8, 0)
+			chat_btn.visible = state == "play" and m != null and online != ""
 
 
 func w2s(p: Vector2) -> Vector2:
@@ -718,7 +730,10 @@ func _process_inner(delta: float) -> void:
 		f["t"] += delta
 	fx = fx.filter(func(f): return f["t"] < f["life"])
 	if state == "play" and m != null:
-		_update_play(delta)
+		if catchup:
+			_catch_up()
+		else:
+			_update_play(delta)
 	_decay_motion(delta)
 	_update_arena_cache()
 	queue_redraw()
@@ -742,6 +757,7 @@ func _update_play(delta: float) -> void:
 	_mo_tick(delta)
 	_mo2_tick(delta)
 	_mo3_tick(delta)
+	_orbit_tick()
 	_ms_tick(delta)
 	if turn_hold > 0.0:
 		turn_hold -= delta
@@ -787,6 +803,17 @@ func _update_play(delta: float) -> void:
 			last_fastest = fastest
 		"draft":
 			var pid := m.current_drafter()
+			if online == "host" and friend_peer.has(pid) and not m.players[pid].cpu and not pending_picks.has(pid):
+				draft_idle += delta
+				if draft_idle > 45.0:
+					draft_idle = 0.0
+					var rng0 := RandomNumberGenerator.new()
+					rng0.seed = randi()
+					var c0 := Bot.choose_draft(m, pid, rng0)
+					_log("%s 대신 골랐어요 (시간 초과)" % m.players[pid].name, m.players[pid].color)
+					pending_picks[pid] = {"k": "equip", "pid": pid, "part": c0["part"], "stone": c0["stone"], "side": c0["side"], "reserve": ""}
+			else:
+				draft_idle = 0.0
 			if m.players[pid].cpu and _drives_cpu():
 				draft_wait -= delta
 				if draft_wait <= 0.0:
@@ -838,7 +865,8 @@ func _update_cpu(delta: float, pid: int) -> void:
 		if cpu_aim["t"] <= 0.0:
 			var c: Dictionary = cpu_aim
 			cpu_aim = {}
-			_act({"k": "shot", "pid": pid, "stone": c["stone"], "dir": [c["dir"].x, c["dir"].y], "power": c["power"], "charged": true})
+			_act({"k": "shot", "pid": pid, "stone": c["stone"], "dir": [c["dir"].x, c["dir"].y], "power": c["power"], "charged": true,
+				"orbit_side": _cpu_orbit_side(int(c["stone"]), c["dir"])})
 		return
 	if bot == null:
 		bot_wait -= delta
@@ -900,6 +928,10 @@ func _on_phase_changed() -> void:
 					_mo2_set_flash(st_a.pos)
 					if PartsData.set_complete(st_a.parts, "madsci"):
 						_ms_transform(st_a.pos)
+					if PartsData.set_complete(st_a.parts, "moon") and _is_mine(st_a.owner) and not bool(my_stats.get("orbit_tut", false)):
+						my_stats["orbit_tut"] = true
+						_save_profile()
+						_orbit_tutorial.call_deferred()
 				set_alerts.clear()
 				snd.play("set_complete", -4.0)
 				turn_hold = 0.4 if _reduced() else 1.1
@@ -1185,6 +1217,15 @@ func _consume_events() -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	if state != "play" or m == null:
 		return
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_TAB and orbit_btn != null:
+		orbit_side = -orbit_side
+		orbit_pop = time
+		get_viewport().set_input_as_handled()
+		return
+	if online != "" and event is InputEventKey and event.pressed and not event.echo and (event.keycode == KEY_ENTER or event.keycode == KEY_KP_ENTER):
+		_open_game_chat()
+		get_viewport().set_input_as_handled()
+		return
 	if shutter_t >= 0.0 and ((event is InputEventMouseButton and event.pressed) or (event is InputEventScreenTouch and event.pressed) or (event is InputEventKey and event.pressed)):
 		if _skip_intro():
 			get_viewport().set_input_as_handled()
@@ -1256,7 +1297,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		drag_stone = -1
 		if not aim.is_empty():
 			_act({"k": "shot", "pid": m.current_player(), "stone": sid3, "dir": [aim["dir"].x, aim["dir"].y],
-				"power": aim["power"], "charged": _charged(sid3), "from_cloud": drag_cloud})
+				"power": aim["power"], "charged": _charged(sid3), "from_cloud": drag_cloud, "orbit_side": orbit_side})
 		elif not drag_cloud and not _remote_targets(sid3).is_empty():
 			# 리모컨 단 알을 당기지 않고 누르기만 하면: 조종할 상대 알 고르기
 			remote_pick = sid3
@@ -1377,7 +1418,7 @@ func _apply_equip(pid: int, part: String, sid: int, side: int, reserve := "") ->
 
 ## 온라인: 내 자리 중 아직 안 고른 자리의 카드를 바로 보여준다 (모두 동시에 고르고, 차례대로 공개).
 func _online_draft_ui() -> void:
-	if m == null or m.phase != "draft":
+	if m == null or m.phase != "draft" or catchup:
 		return
 	for p in m.draft_queue:
 		if my_seats.has(p) and not m.players[p].cpu and picked_round.get(p, -1) != m.round_no:
@@ -1526,6 +1567,8 @@ func _draw_inner() -> void:
 	_perf_sec["fx"] = _perf_sec.get("fx", 0.0) + float(Time.get_ticks_usec() - _ts)
 	_ts = Time.get_ticks_usec()
 	_draw_museum_screen(vs)
+	_draw_net_notice(vs)
+	_draw_chat_toasts(vs)
 	_draw_ms_chip(vs)
 	_draw_ms_transform(vs)
 	_draw_mo2_screen(vs)
@@ -2217,6 +2260,7 @@ func _draw_aim_over() -> void:
 
 	_draw_pirate_aim(info)
 	_draw_goggles_aim(info)
+	_draw_orbit_aim(info)
 
 
 ## 메카 티라노 조준: 팔이 닿는 측면(주인 색 부채꼴)과 던질 방향(황동 점선).
@@ -3712,6 +3756,7 @@ func _act(a: Dictionary) -> void:
 func _host_seq(a: Dictionary) -> void:
 	net_seq_out += 1
 	var msg := {"t": "act", "seq": net_seq_out, "a": a}
+	act_log.append(msg)
 	net.broadcast(msg)
 	net_queue.append(msg)
 
@@ -3766,7 +3811,7 @@ func _apply_action(a: Dictionary) -> void:
 			cpu_aim = {}
 			mu_rec.clear()
 			mu_rec_n = 0
-			m.shoot(int(a["stone"]), dir, power, {"charged": bool(a.get("charged", false)), "from_cloud": bool(a.get("from_cloud", false))})
+			m.shoot(int(a["stone"]), dir, power, {"charged": bool(a.get("charged", false)), "from_cloud": bool(a.get("from_cloud", false)), "orbit_side": int(a.get("orbit_side", 1))})
 		"equip":
 			_do_equip(pid, str(a["part"]), int(a["stone"]), int(a.get("side", 1)), str(a.get("reserve", "")))
 		"relic":
@@ -3824,10 +3869,15 @@ func _host_msg(from: String, d: Dictionary) -> void:
 		"_joined":
 			pass
 		"hello":
+			var tok := str(d.get("token", ""))
+			if _seat_of_peer(from) < 0 and tok != "" and _host_rejoin(from, tok):
+				return
 			if _seat_of_peer(from) < 0:
 				_host_assign(from)
 			var seat0 := _seat_of_peer(from)
 			if seat0 >= 0:
+				if tok != "":
+					room_tokens[_room_seat_of(seat0)] = tok
 				_host_set_prof(seat0, d.get("prof", {}), from)
 		"prof":
 			var seat1 := _seat_of_peer(from)
@@ -3987,11 +4037,13 @@ func _host_start() -> void:
 			my_seats.append(i)
 	plan["cpu"] = cpu
 	var seed_value := randi()
-	net.broadcast({"t": "start", "seed": seed_value, "n": settings["n"], "cpu": cpu, "timed": settings["timed"],
+	last_start = {"t": "start", "seed": seed_value, "n": settings["n"], "cpu": cpu, "timed": settings["timed"],
 		"workshop": settings.get("workshop", "junk"), "mode": settings.get("mode", "survival"),
 		"speed": settings["speed"], "owners": owners, "map": map_id, "plan": plan,
 		"stones": settings.get("stones", 3), "crown_goal": settings.get("crown_goal", 5), "skins": settings.get("skins", false),
-		"teams": settings.get("teams", []), "parcel_every": settings.get("parcel_every", 2), "parcel_goal": settings.get("parcel_goal", 3)})
+		"teams": settings.get("teams", []), "parcel_every": settings.get("parcel_every", 2), "parcel_goal": settings.get("parcel_goal", 3)}
+	net.broadcast(last_start)
+	act_log.clear()
 	_start_match(seed_value)
 
 
@@ -4084,7 +4136,11 @@ func _guest_msg(from: String, d: Dictionary) -> void:
 	match str(d.get("t", "")):
 		"_open":
 			host_peer = from
-			net.send_to(from, {"t": "hello", "prof": my_profile})
+			net.send_to(from, {"t": "hello", "prof": my_profile, "token": net.token()})
+			if guest_reconnecting:
+				guest_reconnecting = false
+				guest_retry = 0
+				_banner("다시 연결됐어요", HINT_GOLD)
 		"note":
 			_banner(str(d.get("text", "")))
 		"chat":
@@ -4134,6 +4190,25 @@ func _guest_msg(from: String, d: Dictionary) -> void:
 		"act":
 			if state == "play":
 				net_queue.append(d)
+		"resync":
+			_guest_msg(from, d["start"])
+			for i in (d.get("cpu_now", []) as Array).size():
+				if m != null and i < m.players.size():
+					m.players[i].cpu = bool(d["cpu_now"][i])
+			for a2 in d.get("acts", []):
+				net_queue.append(a2)
+			catchup = true
+			shutter_t = -1.0
+			if shutter != null:
+				shutter.visible = false
+			_banner("경기에 다시 들어왔어요", HINT_GOLD, "지난 진행을 빠르게 따라잡는 중")
+		"uncpu":
+			if m != null:
+				var seat3 := int(d["seat"])
+				m.players[seat3].cpu = false
+				_log("%s 다시 들어왔어요" % m.players[seat3].name, m.players[seat3].color)
+		"_away":
+			host_away = bool(d.get("on", false))
 		"cpu":
 			if m != null:
 				var seat := int(d["seat"])
@@ -4144,8 +4219,14 @@ func _guest_msg(from: String, d: Dictionary) -> void:
 			m = null
 			_show_setup()
 		"_left":
+			if guest_retry < 3 and net.code() != "":
+				guest_retry += 1
+				guest_reconnecting = true
+				_banner("방장과 다시 연결하는 중…", HINT_GOLD, "%d번째 시도" % guest_retry)
+				net.join(net.code())
+				return
 			_leave_online()
-			_banner("호스트와 연결이 끊겼어요")
+			_banner("방장과 연결이 끊겼어요")
 
 
 func _show_guest_lobby() -> void:
@@ -8929,10 +9010,53 @@ func _show_room() -> void:
 		var sp := Control.new()
 		sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		chat.add_child(sp)
-		if not chat_log.is_empty():
-			var last: Dictionary = chat_log[chat_log.size() - 1]
-			chat.add_child(_nw(_label("%s: %s" % [last["name"], last["text"]], 16, Color("F3EAD3"))))
 		col.add_child(chat)
+		var talk := HBoxContainer.new()
+		talk.add_theme_constant_override("separation", 10)
+		var logv := VBoxContainer.new()
+		logv.add_theme_constant_override("separation", 2)
+		logv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		for cl in chat_log.slice(maxi(0, chat_log.size() - 3)):
+			var ll := _label("%s: %s" % [cl["name"], cl["text"]], 15, Color("F3EAD3"))
+			ll.clip_text = true
+			logv.add_child(ll)
+		if chat_log.is_empty():
+			logv.add_child(_label("아직 대화가 없어요", 14, Color("9A8E7A")))
+		talk.add_child(logv)
+		var le := LineEdit.new()
+		le.max_length = 40
+		le.placeholder_text = "채팅 입력 · 엔터"
+		le.text = chat_draft
+		le.custom_minimum_size = Vector2(300, 46)
+		le.add_theme_font_size_override("font_size", 16)
+		var lsb := StyleBoxFlat.new()
+		lsb.bg_color = WK_PAPER
+		lsb.set_corner_radius_all(8)
+		lsb.content_margin_left = 12
+		le.add_theme_stylebox_override("normal", lsb)
+		le.add_theme_stylebox_override("focus", lsb)
+		le.add_theme_color_override("font_color", WK_INK)
+		le.add_theme_color_override("font_placeholder_color", Color(WK_INK, 0.45))
+		le.text_changed.connect(func(t: String): chat_draft = t)
+		le.focus_entered.connect(func(): chat_focus = true)
+		le.focus_exited.connect(func(): chat_focus = false)
+		le.text_submitted.connect(func(t: String):
+			chat_draft = ""
+			chat_focus = true
+			_send_chat(t)
+			le.text = "")
+		talk.add_child(le)
+		var sendb := _wk_steel("보내기", func():
+			var t2 := le.text
+			chat_draft = ""
+			le.text = ""
+			_send_chat(t2), 16)
+		sendb.custom_minimum_size = Vector2(96, 46)
+		talk.add_child(sendb)
+		col.add_child(talk)
+		if chat_focus:
+			le.grab_focus.call_deferred()
+			le.caret_column = le.text.length()
 	var bot := HBoxContainer.new()
 	bot.add_theme_constant_override("separation", 14)
 	var leave := _wk_steel("나가기" if online != "" else "처음으로", func():
@@ -9179,30 +9303,106 @@ func _wk_settings(v: VBoxContainer, editable: bool) -> void:
 
 ## 한마디: 방장이 모두에게 다시 보낸다
 func _send_chat(text: String) -> void:
+	text = text.strip_edges().left(40)
+	if text == "":
+		return
 	if online == "guest":
 		net.send_to(host_peer, {"t": "chat", "text": text})
 	elif online == "host":
-		_host_chat(0, text)
+		_host_chat(my_seats[0] if (state == "play" or state == "result") and not my_seats.is_empty() else 0, text)
 
 
+## seat: 대기실이면 대기실 자리, 경기 중이면 경기 자리(pid). 글은 40자까지, 한 사람이 0.8초에 한 번.
 func _host_chat(seat: int, text: String) -> void:
-	if not CHAT_LINES.has(text):
+	text = text.strip_edges().replace("\n", " ").replace("\r", " ").left(40)
+	if text == "":
 		return
-	var nm := str(my_profile["nick"]) if seat == 0 else str(settings["prof"][seat].get("nick", "친구")) if settings["prof"][seat] is Dictionary else "친구"
-	var msg := {"t": "chat", "name": nm, "text": text}
+	var now := Time.get_ticks_msec()
+	if now - int(chat_last.get(seat, 0)) < 800:
+		return
+	chat_last[seat] = now
+	var nm := "친구"
+	var col_i := -1
+	if (state == "play" or state == "result") and m != null and seat < m.players.size():
+		nm = str(m.players[seat].name)
+		col_i = seat
+	elif seat == 0:
+		nm = str(my_profile["nick"])
+	elif settings["prof"][seat] is Dictionary:
+		nm = str(settings["prof"][seat].get("nick", "친구"))
+	var msg := {"t": "chat", "name": nm, "text": text, "pid": col_i}
 	net.broadcast(msg)
 	_take_chat(msg)
 
 
+var chat_last := {}
+var chat_draft := ""
+var chat_focus := false
+var chat_toasts: Array = []   # 경기 중 화면 아래에 잠깐 뜨는 채팅 {name, text, t, c}
+var chat_box: LineEdit = null
+
+
 func _take_chat(d: Dictionary) -> void:
 	chat_log.append({"name": str(d.get("name", "")), "text": str(d.get("text", "")), "t": time})
-	if chat_log.size() > 20:
+	if chat_log.size() > 30:
 		chat_log.pop_front()
 	snd.play("ui_click", -4.0, 1.3)
 	if state == "setup":
 		_show_setup()
 	else:
-		_banner("%s: %s" % [d.get("name", ""), d.get("text", "")])
+		var pid := int(d.get("pid", -1))
+		var c: Color = m.players[pid].color if m != null and pid >= 0 and pid < m.players.size() else TEXT
+		chat_toasts.append({"name": str(d.get("name", "")), "text": str(d.get("text", "")), "t": time, "c": c})
+		if chat_toasts.size() > 4:
+			chat_toasts.pop_front()
+		if m != null:
+			_log("[채팅] %s: %s" % [d.get("name", ""), d.get("text", "")], c)
+
+
+## 경기 중 채팅: 엔터 또는 말풍선 버튼으로 입력 칸을 열고, 엔터로 보낸다
+func _open_game_chat() -> void:
+	if online == "" or is_instance_valid(chat_box):
+		return
+	var vs := get_viewport_rect().size
+	var le := LineEdit.new()
+	le.max_length = 40
+	le.placeholder_text = "메시지 입력 · 엔터로 보내기 · Esc 닫기"
+	le.custom_minimum_size = Vector2(minf(460.0, vs.x - 32.0), 44)
+	le.position = Vector2(vs.x * 0.5 - le.custom_minimum_size.x * 0.5, vs.y - 120.0)
+	le.add_theme_font_size_override("font_size", 16)
+	le.theme = theme_
+	ui.add_child(le)
+	chat_box = le
+	le.text_submitted.connect(func(t: String):
+		if t.strip_edges() != "":
+			_send_chat(t)
+		le.queue_free()
+		chat_box = null)
+	le.gui_input.connect(func(e):
+		if e is InputEventKey and e.pressed and e.keycode == KEY_ESCAPE:
+			le.queue_free()
+			chat_box = null)
+	le.grab_focus()
+
+
+func _draw_chat_toasts(vs: Vector2) -> void:
+	if state != "play" or chat_toasts.is_empty():
+		return
+	var y := vs.y - 170.0
+	for i in range(chat_toasts.size() - 1, -1, -1):
+		var c: Dictionary = chat_toasts[i]
+		var age := time - float(c["t"])
+		if age > 6.0:
+			continue
+		var a := clampf((6.0 - age) / 0.6, 0.0, 1.0)
+		var t := "%s: %s" % [c["name"], c["text"]]
+		var w := font_bold.get_string_size(t, HORIZONTAL_ALIGNMENT_LEFT, -1, 15).x + 32.0
+		var r := Rect2(vs.x * 0.5 - w * 0.5, y, w, 32.0)
+		_round_rect(r, Color(0.08, 0.09, 0.1, 0.78 * a), 16)
+		draw_circle(r.position + Vector2(14, 16), 5.0, Color(c["c"], a))
+		draw_string(font_bold, r.position + Vector2(24, 21), t, HORIZONTAL_ALIGNMENT_LEFT, w - 28, 15, Color(1, 1, 1, a))
+		y -= 38.0
+	chat_toasts = chat_toasts.filter(func(x): return time - float(x["t"]) < 6.0)
 
 
 # ── 4. 알 꾸미기 ─────────────────────────────────────────
@@ -11579,3 +11779,308 @@ func _wk_guest_wait(root: Control) -> void:
 		again.custom_minimum_size = Vector2(220, 64)
 		row.add_child(again)
 	col.add_child(row)
+
+
+# ══ 멀티 안정화: 다시 들어오기 · 따라잡기 · 방장 자리비움 ══
+var room_tokens := {}         # 방장: 대기실 자리 → 기기 표시
+var act_log: Array = []       # 방장: 이번 판의 모든 행동 (다시 들어온 손님이 따라잡게)
+var last_start := {}          # 방장: 이번 판 시작 메시지
+var catchup := false          # 손님: 지난 진행을 빠르게 따라잡는 중
+var guest_retry := 0
+var guest_reconnecting := false
+var host_away := false        # 손님: 방장이 다른 탭·앱에 가 있음
+var draft_idle := 0.0
+
+
+## 경기 자리(pid) → 대기실 자리
+func _room_seat_of(pid: int) -> int:
+	if state == "play" or state == "result":
+		return int(match_seats[pid]) if pid < match_seats.size() else pid
+	return pid
+
+
+## 아는 기기가 다시 들어왔다: 같은 자리를 돌려준다. 처리했으면 true.
+func _host_rejoin(peer: String, tok: String) -> bool:
+	var rs := -1
+	for k in room_tokens:
+		if room_tokens[k] == tok:
+			rs = int(k)
+	if rs < 0:
+		return false
+	if state == "setup":
+		# 대기실: 그 자리가 비어 있거나 끊긴 친구 자리면 그대로
+		if rs < int(settings["n"]) and (not friend_peer.has(rs) or not net_peer_alive(friend_peer[rs])):
+			friend_peer[rs] = peer
+			settings["empty"][rs] = false
+			settings["cpu"][rs] = false
+			settings["friend"][rs] = true
+			_host_broadcast_lobby()
+			_show_setup()
+			return true
+		return false
+	if (state == "play" or state == "result") and m != null:
+		var pid := match_seats.find(rs)
+		if pid < 0:
+			return false
+		friend_peer[pid] = peer
+		room_peer[rs] = peer
+		m.players[pid].cpu = false
+		net.broadcast({"t": "uncpu", "seat": pid}, peer)
+		_log("%s 다시 들어왔어요" % m.players[pid].name, m.players[pid].color)
+		var st: Dictionary = last_start.duplicate(true)
+		var owners: Dictionary = st.get("owners", {})
+		owners[str(pid)] = peer
+		st["owners"] = owners
+		var cpu_now: Array = []
+		for p in m.players:
+			cpu_now.append(p.cpu)
+		net.send_to(peer, {"t": "resync", "start": st, "acts": act_log, "cpu_now": cpu_now})
+		return true
+	return false
+
+
+func net_peer_alive(peer: String) -> bool:
+	return net.quiet(peer) >= 0 and net.quiet(peer) < 15
+
+
+## 따라잡기: 남은 행동을 소리 없이 빠르게 적용한다 (한 프레임에 최대 40ms)
+func _catch_up() -> void:
+	var t0 := Time.get_ticks_msec()
+	snd.hush = true
+	while Time.get_ticks_msec() - t0 < 40:
+		turn_hold = 0.0
+		_update_play(0.1)
+		if m == null or state != "play":
+			break
+		var busy: bool = m.phase == "moving" or m.phase == "fx" or m.phase == "place"
+		if net_queue.is_empty() and not busy:
+			catchup = false
+			fx.clear()
+			turn_key = ""
+			if overlay != null and m.phase != "draft":
+				_clear_overlay()
+			break
+	snd.hush = false
+
+
+## 손님 화면: 방장이 자리를 비웠거나 다시 연결하는 중이면 위쪽에 띠
+func _draw_net_notice(vs: Vector2) -> void:
+	if online != "guest":
+		return
+	var t := ""
+	if guest_reconnecting:
+		t = "방장과 다시 연결하는 중…"
+	elif catchup:
+		t = "지난 진행을 따라잡는 중…"
+	elif host_away:
+		t = "방장이 잠깐 다른 화면에 가 있어요 · 돌아오면 이어서 진행돼요"
+	elif host_peer != "" and net.quiet(host_peer) >= 6:
+		t = "방장 연결이 불안정해요 (%d초째 응답 없음)" % net.quiet(host_peer)
+	if t == "":
+		return
+	var w := font_bold.get_string_size(t, HORIZONTAL_ALIGNMENT_LEFT, -1, 15).x + 40.0
+	var r := Rect2(vs.x * 0.5 - w * 0.5, vs.y - 64.0, w, 36.0)
+	_round_rect(r, Color(0.1, 0.1, 0.12, 0.88), 18)
+	draw_string(font_bold, r.position + Vector2(0, 24), t, HORIZONTAL_ALIGNMENT_CENTER, w, 15, Color("FFE08A"))
+
+
+# ══ 궤도 마법 (모션 「궤도 마법 · 모션」): 표식 알을 옆으로 정확히 4칸 · 꺾는 쪽은 내가 고른다 ══
+const MOONLIGHT := Color("C8D3F5")
+var orbit_side := 1              # 1 = 왼쪽, -1 = 오른쪽
+var orbit_btn: Button = null
+var orbit_pop := -9.0
+var orbit_tut: Control = null
+
+
+## 조준 중인 알이 달그림자 마도사 세트면: 방향 버튼
+func _orbit_tick() -> void:
+	if m == null:
+		return
+	var show := false
+	if state == "play" and m.phase == "aim" and m.current_player() >= 0 and _is_mine(m.current_player()) and turn_hold <= 0.0:
+		for s in m.world.alive_stones_of(m.current_player()):
+			if PartsData.set_complete(s.parts, "moon"):
+				show = true
+	if show and orbit_btn == null:
+		orbit_btn = _button("", func():
+			orbit_side = -orbit_side
+			orbit_pop = time)
+		orbit_btn.custom_minimum_size = Vector2(180, 44)
+		orbit_btn.add_theme_font_override("font", font_bold)
+		orbit_btn.add_theme_font_size_override("font_size", 16)
+		orbit_btn.add_theme_stylebox_override("normal", _sb(Color("3A2A6E"), Color("B7A3FF"), 22))
+		orbit_btn.add_theme_stylebox_override("hover", _sb(Color("4A3A8E"), Color("B7A3FF"), 22))
+		for k in ["font_color", "font_hover_color", "font_pressed_color"]:
+			orbit_btn.add_theme_color_override(k, Color("F1EEFF"))
+		orbit_btn.mouse_filter = Control.MOUSE_FILTER_STOP
+		ui.add_child(orbit_btn)
+	if orbit_btn != null:
+		if not show:
+			orbit_btn.queue_free()
+			orbit_btn = null
+		else:
+			var vs := get_viewport_rect().size
+			orbit_btn.text = ("◐ 왼쪽으로" if orbit_side > 0 else "오른쪽으로 ◑") + "  (Tab)"
+			var k := 1.12 if time - orbit_pop < 0.2 else 1.0
+			orbit_btn.pivot_offset = orbit_btn.size * 0.5
+			orbit_btn.scale = Vector2(k, k)
+			orbit_btn.position = Vector2(vs.x * 0.5 - 90.0, 110.0)
+
+
+## 조준 가이드: 표식이 될 알(빛 구슬이 먼저 닿는 상대 알)에 닿으면 달빛 · 휘어 갈 길 · 도착 원 · 「4칸」/「탈락!」 · 내 착지
+func _draw_orbit_aim(info: Dictionary) -> void:
+	if not info.has("dir") or info.has("cancel"):
+		return
+	var s = info["stone"]
+	if not PartsData.set_complete(s.parts, "moon"):
+		return
+	var dir: Vector2 = info["dir"]
+	var best = null
+	var bt := 99999.0
+	for o in m.world.stones:
+		if not o.alive or o.id == s.id or o.owner == s.owner:
+			continue
+		var off: Vector2 = o.pos - s.pos
+		var along := off.dot(dir)
+		var side := absf(off.cross(dir))
+		var rr: float = World.STONE_R * 2.0
+		if along > 0.0 and side < rr and along < bt:
+			bt = along
+			best = o
+	if best == null:
+		return
+	var plan: Dictionary = World.Ex.orbit_plan(s.pos, best.pos, dir, orbit_side)
+	var off_board: bool = not m.world.is_inside(plan["land"])
+	var col: Color = Color("FF6B5A") if off_board else MOONLIGHT
+	var k := view_scale
+	# 달빛 조준선 (닿는 곳까지)
+	var a := w2s(s.pos)
+	var c := w2s(plan["contact"])
+	var n := int(a.distance_to(c) / 15.0)
+	for i in n:
+		draw_line(a.lerp(c, i / float(maxi(1, n))), a.lerp(c, (i + 0.5) / float(maxi(1, n))), MOONLIGHT, 4.0, true)
+	# 닿는 지점 초승달
+	draw_circle(c, 9.0, Color("1A1250"))
+	draw_arc(c, 9.0, 0, TAU, 16, MOONLIGHT, 1.6, true)
+	draw_arc(c + Vector2(2, 0), 5.5, PI * 0.5, PI * 1.5, 10, MOONLIGHT, 3.0, true)
+	# 휘어 갈 길
+	var pts := PackedVector2Array()
+	for i in 21:
+		pts.append(w2s(World.Ex._qb(best.pos, plan["ctrl"], plan["land"], i / 20.0)))
+	for i in range(0, 20, 2):
+		draw_line(pts[i], pts[i + 1], col, 3.0, true)
+	# 도착 원 · 글
+	var lp := w2s(plan["land"])
+	draw_circle(lp, World.STONE_R * k * 0.9, Color(col, 0.22))
+	draw_arc(lp, World.STONE_R * k * 0.9, 0, TAU, 28, col, 2.5, true)
+	_text_outline(lp + Vector2(0, -World.STONE_R * k - 10.0), "탈락!" if off_board else "4칸", 15, Color("FFB4A8") if off_board else MOONLIGHT, true)
+	# 내 착지 그림자
+	var ml := w2s(plan["me_land"])
+	var mid := (c + ml) * 0.5 + Vector2(0, -24)
+	var hop := PackedVector2Array()
+	for i in 9:
+		var t := i / 8.0
+		hop.append(c.lerp(mid, t).lerp(mid.lerp(ml, t), t))
+	draw_polyline(hop, Color("FFE08A", 0.8), 2.0, true)
+	draw_circle(ml, World.STONE_R * k, Color(m.players[s.owner].color, 0.35))
+
+
+## CPU: 상대를 판 밖(또는 끝 쪽)으로 보내는 쪽을 고른다
+func _cpu_orbit_side(sid: int, dir_v) -> int:
+	var s = m.world.get_stone(sid)
+	if s == null or not PartsData.set_complete(s.parts, "moon"):
+		return 1
+	var dir: Vector2 = (dir_v as Vector2).normalized()
+	var best = null
+	var bt := 99999.0
+	for o in m.world.stones:
+		if o.alive and o.owner != s.owner:
+			var off: Vector2 = o.pos - s.pos
+			if off.dot(dir) > 0.0 and absf(off.cross(dir)) < World.STONE_R * 2.0 and off.dot(dir) < bt:
+				bt = off.dot(dir)
+				best = o
+	if best == null:
+		return 1
+	var l: Dictionary = World.Ex.orbit_plan(s.pos, best.pos, dir, 1)
+	var r: Dictionary = World.Ex.orbit_plan(s.pos, best.pos, dir, -1)
+	return 1 if (l["land"] as Vector2).length() >= (r["land"] as Vector2).length() else -1
+
+
+## 처음 세트를 모았을 때: 세 컷 안내 (카드마다 1.4초, 누르면 넘어감)
+func _orbit_tutorial() -> void:
+	if is_instance_valid(orbit_tut):
+		return
+	var root := Control.new()
+	root.set_anchors_preset(Control.PRESET_FULL_RECT)
+	root.mouse_filter = Control.MOUSE_FILTER_STOP
+	ui.add_child(root)
+	orbit_tut = root
+	var vs := get_viewport_rect().size
+	var t0 := time
+	var state_box := {"idx": 0, "at": time}
+	var caps := ["1. 초승달 표식 알을 노려요", "2. 옆으로 4칸 휘어 날아가요", "3. 꺾는 방향은 내가 골라요"]
+	root.draw.connect(func():
+		root.draw_rect(Rect2(Vector2.ZERO, vs), Color(0.1, 0.06, 0.25, 0.75))
+		var idx: int = state_box["idx"]
+		var kk := clampf((time - float(state_box["at"])) / 0.25, 0.0, 1.0)
+		var e := 1.0 - pow(1.0 - kk, 3.0)
+		var r := Rect2(vs.x * 0.5 - 180.0 + (1.0 - e) * 40.0, vs.y * 0.5 - 110.0, 360, 200)
+		var sb := StyleBoxFlat.new()
+		sb.bg_color = Color("1A1238")
+		sb.border_color = Color("B7A3FF")
+		sb.set_border_width_all(2)
+		sb.set_corner_radius_all(16)
+		sb.draw(root.get_canvas_item(), r)
+		var c := r.get_center()
+		match idx:
+			0:
+				root.draw_line(c + Vector2(-100, 60), c + Vector2(20, -10), MOONLIGHT, 4.0, true)
+				Art.draw_puck_top(root, c + Vector2(-100, 60), 18, Match.COLORS[0], 0, -PI / 4.0)
+				Art.draw_puck_top(root, c + Vector2(30, -20), 20, Match.COLORS[1], 1, -PI / 2.0)
+				root.draw_arc(c + Vector2(50, -40), 7, PI * 0.5, PI * 1.5, 10, MOONLIGHT, 3.0, true)
+			1:
+				Art.draw_puck_top(root, c + Vector2(-60, 30), 18, Match.COLORS[1], 1, -PI / 2.0)
+				var pts := PackedVector2Array()
+				for i in 13:
+					var t := i / 12.0
+					pts.append((c + Vector2(-60, 30)).lerp(c + Vector2(-10, -20), t).lerp((c + Vector2(-10, -20)).lerp(c + Vector2(80, -40), t), t))
+				for i in range(0, 12, 2):
+					root.draw_line(pts[i], pts[i + 1], MOONLIGHT, 3.0, true)
+				root.draw_arc(c + Vector2(80, -40), 20, 0, TAU, 24, MOONLIGHT, 2.5, true)
+				root.draw_string(font_bold, c + Vector2(50, -68), "4칸", HORIZONTAL_ALIGNMENT_CENTER, 60, 15, MOONLIGHT)
+			2:
+				for q in 2:
+					var br := Rect2(c + Vector2(-126 + q * 140, -20), Vector2(112, 40))
+					var on := q == 0
+					var bs := StyleBoxFlat.new()
+					bs.bg_color = Color("3A2A6E") if on else Color(0, 0, 0, 0)
+					bs.border_color = Color("B7A3FF") if on else Color("8C82B8")
+					bs.set_border_width_all(2)
+					bs.set_corner_radius_all(12)
+					bs.draw(root.get_canvas_item(), br)
+					root.draw_string(font_bold, br.position + Vector2(0, 26), ["◐ 왼쪽", "오른쪽 ◑"][q], HORIZONTAL_ALIGNMENT_CENTER, 112, 15, Color("F1EEFF"))
+		root.draw_string(font_bold, Vector2(0, r.end.y + 34), caps[idx], HORIZONTAL_ALIGNMENT_CENTER, vs.x, 18, Color("F1EEFF", e))
+		for i in 3:
+			root.draw_circle(Vector2(vs.x * 0.5 - 18 + i * 18, r.position.y - 18), 5, Color("F1EEFF") if i == idx else Color("8C82B8"))
+		root.draw_string(font_display, Vector2(0, r.position.y - 40), "궤도 마법", HORIZONTAL_ALIGNMENT_CENTER, vs.x, 26, MOONLIGHT))
+	var advance := func():
+		if not is_instance_valid(root):
+			return
+		state_box["idx"] = int(state_box["idx"]) + 1
+		state_box["at"] = time
+		if int(state_box["idx"]) >= 3:
+			root.queue_free()
+			orbit_tut = null
+	root.gui_input.connect(func(e):
+		if e is InputEventMouseButton and e.pressed:
+			advance.call())
+	var tick := Timer.new()
+	tick.wait_time = 1.4
+	tick.autostart = true
+	root.add_child(tick)
+	tick.timeout.connect(func(): advance.call())
+	var redraw := Timer.new()
+	redraw.wait_time = 0.03
+	redraw.autostart = true
+	root.add_child(redraw)
+	redraw.timeout.connect(func(): root.queue_redraw())

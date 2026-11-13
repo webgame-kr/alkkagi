@@ -22,6 +22,7 @@ const FAMILY_SOUND := {"mech": "fx_mech_spring", "trex": "fx_trex_bite", "magic"
 	"awaken": "fx_awaken_flame", "system": "fx_system_mark"}
 
 var enabled := true
+var hush := false          # 따라잡기 중에는 소리를 내지 않는다
 var music_on := true
 var vol := {"sfx": 1.0, "music": 1.0, "ui": 1.0}   # 효과음 · 배경음악 · 화면 소리
 var _streams := {}
@@ -72,7 +73,7 @@ func _load(name: String) -> AudioStream:
 
 ## 같은 소리는 0.05초 안에 다시 내지 않는다 (충돌이 몰릴 때).
 func play(name: String, db := 0.0, pitch := 1.0) -> void:
-	if not enabled or name == "":
+	if not enabled or hush or name == "":
 		return
 	var v: float = vol["ui"] if name.begins_with("ui_") else vol["sfx"]
 	if v <= 0.01:

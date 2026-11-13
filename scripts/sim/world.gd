@@ -482,6 +482,8 @@ func launch(stone_id: int, dir: Vector2, power: float, opts := {}) -> void:
 	shot = ShotCtx.new()
 	shot.stone_id = s.id
 	shot.owner = s.owner
+	if opts.has("orbit_side"):
+		shot.ex["orbit_side"] = 1 if int(opts["orbit_side"]) >= 0 else -1
 	if opts.has("remote_by"):
 		shot.owner = int(opts["remote_by"])
 		shot.ex["remote_of"] = s.owner

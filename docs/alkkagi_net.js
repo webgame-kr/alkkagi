@@ -28,20 +28,60 @@
       net.inbox.push({ from: from, data: data });
     },
 
+    seen: {},         // peerId -> 마지막으로 무엇이든 받은 시각 (ms)
+
+    _gone: function (conn) {
+      if (conn._gone) return;
+      conn._gone = true;
+      if (net.conns[conn.peer] === conn) delete net.conns[conn.peer];
+      delete net.seen[conn.peer];
+      net._push(conn.peer, { t: "_left" });
+    },
+
     _wire: function (conn) {
       conn.on("data", function (d) {
+        net.seen[conn.peer] = Date.now();
         var msg = d;
         if (typeof d === "string") { try { msg = JSON.parse(d); } catch (e) { return; } }
+        // 연결 확인은 게임이 멈춰 있어도(다른 탭) 여기서 바로 답한다
+        if (msg && msg.t === "_ping") { try { conn.send('{"t":"_pong"}'); } catch (e) {} return; }
+        if (msg && msg.t === "_pong") return;
         net._push(conn.peer, msg);
       });
-      conn.on("close", function () {
-        delete net.conns[conn.peer];
-        net._push(conn.peer, { t: "_left" });
-      });
-      conn.on("error", function () {
-        delete net.conns[conn.peer];
-        net._push(conn.peer, { t: "_left" });
-      });
+      conn.on("open", function () { net.seen[conn.peer] = Date.now(); });
+      conn.on("close", function () { net._gone(conn); });
+      conn.on("error", function () { net._gone(conn); });
+    },
+
+    // 2초마다 연결 확인. 15초 동안 아무것도 못 받으면 끊긴 것으로 본다.
+    _tick: function () {
+      var now = Date.now();
+      for (var k in net.conns) {
+        var c = net.conns[k];
+        if (!c.open) continue;
+        try { c.send('{"t":"_ping"}'); } catch (e) {}
+        var last = net.seen[k] || now;
+        if (!net.seen[k]) net.seen[k] = now;
+        if (now - last > 15000) { try { c.close(); } catch (e) {} net._gone(c); }
+      }
+    },
+
+    // 이 기기 표시 (다시 들어와도 같은 자리를 돌려받기 위해)
+    token: function () {
+      try {
+        var t = localStorage.getItem("alk_token");
+        if (!t) { t = Math.random().toString(36).slice(2) + Date.now().toString(36); localStorage.setItem("alk_token", t); }
+        return t;
+      } catch (e) {
+        if (!net._tok) net._tok = Math.random().toString(36).slice(2);
+        return net._tok;
+      }
+    },
+
+    // 마지막 연락 뒤 지난 초 (손님: 방장)
+    quiet: function (peer) {
+      var t = net.seen[peer];
+      return t ? Math.floor((Date.now() - t) / 1000) : -1;
     },
 
     randomCode: function () {
@@ -156,5 +196,10 @@
       try { navigator.clipboard.writeText(text); return true; } catch (e) { return false; }
     }
   };
+  setInterval(net._tick, 2000);
+  // 방장이 다른 탭·앱으로 가면 게임이 멈춘다: 손님들에게 알린다
+  document.addEventListener("visibilitychange", function () {
+    if (net.status === "hosting") net.broadcast(JSON.stringify({ t: "_away", on: document.hidden }));
+  });
   window.AlkNet = net;
 })();

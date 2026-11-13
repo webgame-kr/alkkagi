@@ -899,7 +899,17 @@ func test_moon_orbit_magic() -> void:
 	shoot(w, a.id, Vector2.RIGHT, 0.6)
 	check(count_events(w, "mark") >= 1, "orb marked the target")
 	check(count_events(w, "part", "moon_set") == 1, "orbit magic fired")
-	check(absf(b.pos.y) > 40.0, "target flung along the tangent")
+	# 바뀐 규칙: 고른 쪽(기본 왼쪽 = 위)으로 정확히 4칸, 내 알은 앞으로 뛰어 착지
+	check(absf(b.pos.x - (-60.0)) < 2.0 and absf(b.pos.y - (-176.0)) < 2.0, "target landed 4 cells to the left: %s" % b.pos)
+	check(a.pos.x > -150.0, "my stone hopped forward: %s" % a.pos)
+	var w2 := make_world()
+	var a2 := w2.add_stone(0, Vector2(-200, 0), 0)
+	var b2 := w2.add_stone(1, Vector2(-60, 0), 0)
+	_moon(a2)
+	w2.launch(a2.id, Vector2.RIGHT, 0.6, {"orbit_side": -1})
+	w2.run_until_settled()
+	w2.end_shot()
+	check(absf(b2.pos.y - 176.0) < 2.0, "right side: %s" % b2.pos)
 
 
 func _hero(s) -> void:

@@ -28,6 +28,16 @@ func detail() -> Array:
 	return [parts[0] if parts.size() > 0 else "", int(parts[1]) if parts.size() > 1 else 1, int(parts[2]) if parts.size() > 2 else 0]
 
 
+## 이 기기 표시 (다시 들어와도 같은 자리를 돌려받기 위해)
+func token() -> String:
+	return str(_js.token()) if available else "local"
+
+
+## peer 에게서 마지막으로 받은 뒤 지난 초 (-1 = 모름)
+func quiet(peer: String) -> int:
+	return int(_js.quiet(peer)) if available else -1
+
+
 func code() -> String:
 	return str(_js.code) if available else ""
 

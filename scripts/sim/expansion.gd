@@ -150,7 +150,27 @@ static func before_move(w, dt: float) -> void:
 
 ## 시간 정지 중인 알은 움직이지도, 부딪히지도 않는다.
 static func is_frozen(w, s) -> bool:
-	return w.shot != null and _ex(w).get("frozen", {}).has(s.id)
+	if w.shot == null:
+		return false
+	var ex = _ex(w)
+	if ex.has("orbit") and (int(ex["orbit"]["id"]) == s.id or int(ex["orbit"]["me"]) == s.id):
+		return true
+	return ex.get("frozen", {}).has(s.id)
+
+
+## 궤도 마법 길: 표식 알은 옆으로 4칸(호), 내 알은 앞으로 1.1칸 뛴다. side 1 = 왼쪽, -1 = 오른쪽
+const ORBIT_CELLS := 4.0
+static func orbit_plan(me: Vector2, tpos: Vector2, dir: Vector2, side: int) -> Dictionary:
+	var sv: Vector2 = Vector2(dir.y, -dir.x) if side > 0 else Vector2(-dir.y, dir.x)
+	var land: Vector2 = tpos + sv * ORBIT_CELLS * 2.0 * R
+	var ctrl: Vector2 = tpos + dir * 0.77 * 2.0 * R + sv * 0.68 * 2.0 * R
+	var off: Vector2 = tpos - me
+	var contact: Vector2 = me + dir * maxf(0.0, off.dot(dir) - sqrt(maxf(0.0, 4.0 * R * R - pow(off.cross(dir), 2.0))))
+	return {"land": land, "ctrl": ctrl, "contact": contact, "me_land": contact + dir * 1.1 * 2.0 * R}
+
+
+static func _qb(a: Vector2, c: Vector2, b: Vector2, t: float) -> Vector2:
+	return a.lerp(c, t).lerp(c.lerp(b, t), t)
 
 
 static func friction_scale(w, p: Vector2) -> float:
@@ -170,6 +190,22 @@ static func timers(w, dt: float) -> void:
 		return
 	var ex = _ex(w)
 	var s = w.shooter()
+	if ex.has("orbit"):
+		var ob: Dictionary = ex["orbit"]
+		ob["t"] = float(ob["t"]) + dt
+		var tt = w.get_stone(int(ob["id"]))
+		var me = w.get_stone(int(ob["me"]))
+		var k := 1.0 - pow(1.0 - minf(1.0, float(ob["t"]) / 0.6), 3.0)
+		var km := 1.0 - pow(1.0 - minf(1.0, float(ob["t"]) / 0.5), 3.0)
+		if tt != null and tt.alive:
+			tt.pos = _qb(ob["a"], ob["c"], ob["b"], k)
+			tt.vel = Vector2.ZERO
+		if me != null and me.alive:
+			me.pos = (ob["ma"] as Vector2).lerp(ob["mb"], km)
+			me.vel = Vector2.ZERO
+		if float(ob["t"]) >= 0.6:
+			ex.erase("orbit")
+			w.emit({"t": "magic_circle", "pos": ob["b"], "owner": me.owner if me != null else -1})
 	if ex.has("beam_timer"):
 		ex["beam_timer"] -= dt
 		if ex["beam_timer"] <= 0.0:
@@ -223,7 +259,7 @@ static func busy(w) -> bool:
 	if w.shot == null:
 		return false
 	var ex = _ex(w)
-	return ex.has("beam_timer") or ex.has("echo") or ex.has("freeze_t") or ex.get("retracing", false)
+	return ex.has("beam_timer") or ex.has("echo") or ex.has("freeze_t") or ex.get("retracing", false) or ex.has("orbit")
 
 
 # ── 충돌 ─────────────────────────────────────────────────
@@ -290,11 +326,13 @@ static func on_contact(w, s, t, n: Vector2, v_before: Vector2, t_before: Vector2
 	if first and opp and D.set_complete(s.parts, "moon") and ex.get("marks", {}).has(t.id) and not ctx.used.has("moon_set"):
 		for k in ["moon_set", "moon_staff_push", "star_cloak", "moon_boots"]:
 			ctx.used[k] = true
-		var tan: Vector2 = n.orthogonal()
-		if tan.dot(dir) < 0.0:
-			tan = -tan
-		t.vel = tan * D.SETS["moon"]["power"] + t.vel * 0.3
-		_leap(w, s, true)
+		# 바뀐 규칙: 표식 알은 고른 쪽(왼쪽 · 오른쪽)으로 정확히 4칸 떨어진 자리까지 호를 그리며 날아가고, 내 알은 앞으로 뛰어 착지한다.
+		var orb := orbit_plan(s.pos, t.pos, dir, int(ctx.ex.get("orbit_side", 1)))
+		ex["orbit"] = {"id": t.id, "a": t.pos, "c": orb["ctrl"], "b": orb["land"], "t": 0.0, "me": s.id, "ma": s.pos, "mb": orb["me_land"]}
+		t.vel = Vector2.ZERO
+		s.vel = Vector2.ZERO
+		if w.record_events:
+			t.cause = {"owner": s.owner, "part": "moon_set"}
 		w.emit({"t": "part", "part": "moon_set", "pos": contact, "owner": s.owner, "text": "궤도 마법", "big": true})
 		w.emit({"t": "magic_circle", "pos": contact, "owner": s.owner})
 		return true
