@@ -16,6 +16,7 @@
   var JOIN_WAIT = 12000;   // 이만큼 지나도 안 이어지면 한 번 더 시도
   var JOIN_TRIES = 3;
   var net = {
+    ver: 5,
     peer: null,
     conns: {},        // peerId -> DataConnection
     inbox: [],
@@ -53,7 +54,7 @@
       conn.on("error", function () { net._gone(conn); });
     },
 
-    // 2초마다 연결 확인. 15초 동안 아무것도 못 받으면 끊긴 것으로 본다.
+    // 2초마다 연결 확인. 30초 동안 아무것도 못 받으면 끊긴 것으로 본다 (휴대폰이 잠깐 다른 앱에 가도 버티게).
     _tick: function () {
       var now = Date.now();
       for (var k in net.conns) {
@@ -62,7 +63,7 @@
         try { c.send('{"t":"_ping"}'); } catch (e) {}
         var last = net.seen[k] || now;
         if (!net.seen[k]) net.seen[k] = now;
-        if (now - last > 15000) { try { c.close(); } catch (e) {} net._gone(c); }
+        if (now - last > 30000) { try { c.close(); } catch (e) {} net._gone(c); }
       }
     },
 

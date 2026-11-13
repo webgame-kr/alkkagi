@@ -234,6 +234,8 @@ func _ready() -> void:
 	_layout()
 	_load_profile()
 	_ensure_room_arrays()
+	if net.available and net.js_ver() < 5:
+		_banner.call_deferred("새 버전이 나왔어요 · 새로고침해 주세요", HINT_GOLD, "PC: Ctrl+Shift+R · 휴대폰: 닫았다가 링크 다시 열기")
 	var args0 := OS.get_cmdline_user_args()
 	var room: String = net.room_param() if net.available else ""
 	if room != "":
@@ -11818,6 +11820,10 @@ func _wk_guest_wait(root: Control) -> void:
 		col_t = Color("FF8A7A")
 	elif st == "joined":
 		msg = "방장에게 자리를 받는 중…"
+	if net.available and net.js_ver() < 5:
+		msg = "새 버전이 나왔어요 · 새로고침해 주세요"
+		sub = "이 브라우저에 예전 파일이 남아 있어요. PC는 Ctrl+Shift+R, 휴대폰은 페이지를 닫았다가 링크를 다시 열어 주세요."
+		col_t = Color("FFE08A")
 	var l1 := _label(msg, 26, col_t, 3)
 	l1.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	col.add_child(l1)
@@ -11904,7 +11910,7 @@ func _host_rejoin(peer: String, tok: String) -> bool:
 
 
 func net_peer_alive(peer: String) -> bool:
-	return net.quiet(peer) >= 0 and net.quiet(peer) < 15
+	return net.quiet(peer) >= 0 and net.quiet(peer) < 30
 
 
 ## 따라잡기: 남은 행동을 소리 없이 빠르게 적용한다 (한 프레임에 최대 40ms)

@@ -20,9 +20,19 @@ func error_text() -> String:
 	return str(_js.error) if available else "웹에서만 친구 초대를 쓸 수 있어요"
 
 
+## 연결 스크립트(alkkagi_net.js)에 그 기능이 있나. 브라우저가 옛 스크립트를 들고 있으면 없을 수 있다.
+func has_fn(name: String) -> bool:
+	return available and _js[name] != null
+
+
+## 연결 스크립트 버전 (옛 스크립트면 0)
+func js_ver() -> int:
+	return int(_js.ver) if has_fn("ver") else 0
+
+
 ## [단계(signal|connect), 시도 번호, 지난 초]
 func detail() -> Array:
-	if not available:
+	if not has_fn("detail"):
 		return ["", 1, 0]
 	var parts := str(_js.detail()).split(" ")
 	return [parts[0] if parts.size() > 0 else "", int(parts[1]) if parts.size() > 1 else 1, int(parts[2]) if parts.size() > 2 else 0]
@@ -30,12 +40,14 @@ func detail() -> Array:
 
 ## 이 기기 표시 (다시 들어와도 같은 자리를 돌려받기 위해)
 func token() -> String:
-	return str(_js.token()) if available else "local"
+	if not available:
+		return "local"
+	return str(_js.token()) if has_fn("token") else ""
 
 
 ## peer 에게서 마지막으로 받은 뒤 지난 초 (-1 = 모름)
 func quiet(peer: String) -> int:
-	return int(_js.quiet(peer)) if available else -1
+	return int(_js.quiet(peer)) if has_fn("quiet") else -1
 
 
 func code() -> String:
