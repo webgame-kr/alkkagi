@@ -233,10 +233,10 @@ func _process(_delta: float) -> bool:
 	if afk_mode and afk_seen and frames == afk_frame + 5 and not guest.my_afk:
 		print("NET AFK FAIL: guest did not get afk notice")
 		quit(1)
-	if afk_mode and afk_seen and not afk_back and frames > afk_frame + 300:
+	if afk_mode and afk_seen and not afk_back and frames > afk_frame + 60:
 		afk_back = true
 		guest._afk_come_back()
-	if afk_mode and afk_back and frames == afk_frame + 340:
+	if afk_mode and afk_back and frames == afk_frame + 100:
 		if not host.afk.is_empty() or guest.my_afk or host.m.players[1].cpu:
 			print("NET AFK FAIL: did not come back afk=%s my_afk=%s cpu=%s" % [host.afk, guest.my_afk, host.m.players[1].cpu])
 			quit(1)
