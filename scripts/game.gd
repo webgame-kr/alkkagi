@@ -377,6 +377,14 @@ func _debug_args() -> void:
 			get_viewport().get_texture().get_image().save_png("%s/s%03d.png" % [_shot_dir, _shot_n]))
 		add_child(t)
 	mu_force_cut = args.has("--cut")
+	if args.has("--afkdemo"):
+		# 자리 비움 안내 확인용
+		online = "host"
+		my_seats = [0]
+		m.players[0].cpu = true
+		afk[0] = true
+		my_afk = true
+		_log("%s 자리 비움 · CPU가 대신 둬요" % m.players[0].name, m.players[0].color)
 	if args.has("--chatdemo"):
 		for cd in [["민지", "빨리 와!", 1], ["도윤", "궤도 마법 미쳤다 ㅋㅋ", 2], ["나", "한 판 더!", 0]]:
 			chat_log.append({"name": cd[0], "text": cd[1], "t": 0.0, "c": m.players[cd[2]].color})
@@ -592,6 +600,9 @@ func s2w(p: Vector2) -> Vector2:
 # ── 경기 시작 ────────────────────────────────────────────
 
 func _start_match(seed_value := -1) -> void:
+	afk.clear()
+	afk_idle.clear()
+	my_afk = false
 	if online == "host" and seed_value < 0:
 		_host_start()
 		return
@@ -765,6 +776,7 @@ func _update_play(delta: float) -> void:
 	_mo3_tick(delta)
 	_orbit_tick()
 	_ms_tick(delta)
+	_afk_tick(delta)
 	if turn_hold > 0.0:
 		turn_hold -= delta
 		return
@@ -809,17 +821,6 @@ func _update_play(delta: float) -> void:
 			last_fastest = fastest
 		"draft":
 			var pid := m.current_drafter()
-			if online == "host" and friend_peer.has(pid) and not m.players[pid].cpu and not pending_picks.has(pid):
-				draft_idle += delta
-				if draft_idle > 45.0:
-					draft_idle = 0.0
-					var rng0 := RandomNumberGenerator.new()
-					rng0.seed = randi()
-					var c0 := Bot.choose_draft(m, pid, rng0)
-					_log("%s 대신 골랐어요 (시간 초과)" % m.players[pid].name, m.players[pid].color)
-					pending_picks[pid] = {"k": "equip", "pid": pid, "part": c0["part"], "stone": c0["stone"], "side": c0["side"], "reserve": ""}
-			else:
-				draft_idle = 0.0
 			if m.players[pid].cpu and _drives_cpu():
 				draft_wait -= delta
 				if draft_wait <= 0.0:
@@ -2693,7 +2694,7 @@ func _draw_order(r: Rect2) -> void:
 			# 더비: 사람/CPU 대신 점수를 이름 옆 자기 칸에 (UI-01: 「지금」「다음」과 붙지 않게)
 			_txt(Vector2(nx + name_w + 8, cy + 5), "%d점" % m.scores[pid], 14, Color(POWER, a), font_bold, 40)
 		else:
-			_txt(Vector2(nx + name_w + 8, cy + 4), _seat_word(pid), 12, Color(SUB, a), font, 40)
+			_txt(Vector2(nx + name_w + 8, cy + 4), _seat_word(pid), 12, Color(HINT_GOLD, a) if afk.has(pid) else Color(SUB, a), font, 56)
 		var gmax := -1
 		for hs in m.world.alive_stones_of(pid):
 			if World.Hero.is_hero(hs):
@@ -3735,6 +3736,8 @@ func _drives_cpu() -> bool:
 
 
 func _seat_word(pid: int) -> String:
+	if m.players[pid].cpu and afk.has(pid):
+		return "자리 비움"
 	if m.players[pid].cpu:
 		return "CPU"
 	if online == "":
@@ -3903,9 +3906,23 @@ func _host_msg(from: String, d: Dictionary) -> void:
 				settings["ready"][seat2r] = bool(d.get("on", false))
 				_host_broadcast_lobby()
 				_show_setup()
+		"touch":
+			var seatt := _seat_of_peer(from)
+			if state == "play" and seatt >= 0:
+				_afk_touch(seatt)
+		"back":
+			var seatb := _seat_of_peer(from)
+			if state == "play" and seatb >= 0 and afk.has(seatb):
+				_afk_set(seatb, false)
 		"req":
 			var a: Dictionary = d.get("a", {})
 			var seat := _seat_of_peer(from)
+			if state == "play" and seat >= 0:
+				_afk_touch(seat)
+				if afk.has(seat):
+					# 자리 비움 중에 온 행동은 돌아온 것으로만 보고 버린다 (CPU가 이미 두고 있을 수 있다)
+					_afk_set(seat, false)
+					return
 			if state == "play" and seat >= 0 and int(a.get("pid", -1)) == seat:
 				if str(a.get("k", "")) == "equip":
 					pending_picks[seat] = a
@@ -4212,14 +4229,26 @@ func _guest_msg(from: String, d: Dictionary) -> void:
 			if m != null:
 				var seat3 := int(d["seat"])
 				m.players[seat3].cpu = false
-				_log("%s 다시 들어왔어요" % m.players[seat3].name, m.players[seat3].color)
+				afk.erase(seat3)
+				if bool(d.get("afk", false)):
+					_log("%s 돌아왔어요" % m.players[seat3].name, m.players[seat3].color)
+					if my_seats.has(seat3):
+						_afk_returned()
+				else:
+					_log("%s 다시 들어왔어요" % m.players[seat3].name, m.players[seat3].color)
 		"_away":
 			host_away = bool(d.get("on", false))
 		"cpu":
 			if m != null:
 				var seat := int(d["seat"])
 				m.players[seat].cpu = true
-				_log("%s 연결이 끊겨 CPU가 대신 둬요" % m.players[seat].name, m.players[seat].color)
+				if bool(d.get("afk", false)):
+					afk[seat] = true
+					_log("%s 자리 비움 · CPU가 대신 둬요" % m.players[seat].name, m.players[seat].color)
+					if my_seats.has(seat):
+						_afk_went()
+				else:
+					_log("%s 연결이 끊겨 CPU가 대신 둬요" % m.players[seat].name, m.players[seat].color)
 		"tosetup":
 			state = "setup"
 			m = null
@@ -11931,6 +11960,8 @@ func _host_rejoin(peer: String, tok: String) -> bool:
 		friend_peer[pid] = peer
 		room_peer[rs] = peer
 		m.players[pid].cpu = false
+		afk.erase(pid)
+		afk_idle[pid] = 0.0
 		net.broadcast({"t": "uncpu", "seat": pid}, peer)
 		_log("%s 다시 들어왔어요" % m.players[pid].name, m.players[pid].color)
 		var st: Dictionary = last_start.duplicate(true)
@@ -11971,10 +12002,14 @@ func _catch_up() -> void:
 
 ## 손님 화면: 방장이 자리를 비웠거나 다시 연결하는 중이면 위쪽에 띠
 func _draw_net_notice(vs: Vector2) -> void:
-	if online != "guest":
+	if online == "":
 		return
 	var t := ""
-	if guest_reconnecting:
+	if my_afk and state == "play":
+		t = "자리 비움 · CPU가 대신 두는 중이에요 · 아무 곳이나 누르면 돌아와요"
+	elif online != "guest":
+		return
+	elif guest_reconnecting:
 		t = "방장과 다시 연결하는 중…"
 	elif catchup:
 		t = "지난 진행을 따라잡는 중…"
@@ -12190,3 +12225,126 @@ func _orbit_tutorial() -> void:
 	redraw.autostart = true
 	root.add_child(redraw)
 	redraw.timeout.connect(func(): root.queue_redraw())
+
+
+# ══ 자리 비움: 내 차례(조준 · 개조)에 30초 동안 아무 조작이 없으면 CPU가 대신 두고, 다시 조작하면 돌아온다 ══
+const AFK_SEC := 30.0
+var afk := {}            # 방장: pid → true (자리 비움이라 CPU가 맡은 자리)
+var afk_idle := {}       # 방장: pid → 그 사람을 기다린 초 (조작하면 0)
+var my_afk := false      # 내 자리가 자리 비움 상태
+var afk_touch_ms := 0    # 손님: 마지막으로 「조작 중」을 알린 시각
+
+
+## 지금 누구의 조작을 기다리나 (-1 = 아무도)
+func _afk_awaited() -> int:
+	if m == null:
+		return -1
+	if m.phase == "aim":
+		return m.current_player()
+	if m.phase == "draft":
+		var p := m.current_drafter()
+		return -1 if pending_picks.has(p) else p
+	return -1
+
+
+## 방장만 센다. 손님 자리와 방장 자기 자리 모두.
+func _afk_tick(delta: float) -> void:
+	if online != "host" or m == null or state != "play":
+		return
+	var pid := _afk_awaited()
+	if pid < 0 or pid >= m.players.size() or m.players[pid].cpu:
+		return
+	if not (friend_peer.has(pid) or my_seats.has(pid)):
+		return
+	afk_idle[pid] = float(afk_idle.get(pid, 0.0)) + delta
+	if float(afk_idle[pid]) >= AFK_SEC:
+		_afk_set(pid, true)
+
+
+func _afk_touch(pid: int) -> void:
+	afk_idle[pid] = 0.0
+
+
+func _afk_set(pid: int, on: bool) -> void:
+	if m == null or pid < 0 or pid >= m.players.size():
+		return
+	afk_idle[pid] = 0.0
+	if on:
+		if afk.has(pid) or m.players[pid].cpu:
+			return
+		afk[pid] = true
+		m.players[pid].cpu = true
+		net.broadcast({"t": "cpu", "seat": pid, "afk": true})
+		_log("%s 자리 비움 · CPU가 대신 둬요" % m.players[pid].name, m.players[pid].color)
+		if my_seats.has(pid):
+			_afk_went()
+	else:
+		if not afk.has(pid):
+			return
+		afk.erase(pid)
+		m.players[pid].cpu = false
+		# CPU가 이 사람 대신 생각하던 것은 버린다
+		if m.phase == "aim" and m.current_player() == pid:
+			bot = null
+			cpu_aim = {}
+			aim_left = m.aim_limit
+		net.broadcast({"t": "uncpu", "seat": pid, "afk": true})
+		_log("%s 돌아왔어요" % m.players[pid].name, m.players[pid].color)
+		if my_seats.has(pid):
+			_afk_returned()
+
+
+## 내 자리가 자리 비움이 됐다
+func _afk_went() -> void:
+	my_afk = true
+	drag_stone = -1
+	if overlay != null and m != null and m.phase == "draft":
+		_clear_overlay()
+	_banner("자리 비움", HINT_GOLD, "CPU가 대신 둬요 · 아무 곳이나 누르면 돌아와요")
+
+
+## 내 자리가 다시 내 것이 됐다
+func _afk_returned() -> void:
+	my_afk = false
+	_banner("다시 내가 둬요", HINT_GOLD)
+	if m == null:
+		return
+	if m.phase == "draft":
+		_online_draft_ui()
+	elif m.phase == "aim" and _is_mine(m.current_player()):
+		aim_left = m.aim_limit
+		_banner("내 차례", m.players[m.current_player()].color, "알을 당겨 조준하세요")
+
+
+## 자리 비움에서 돌아오기 (아무 조작)
+func _afk_come_back() -> void:
+	if online == "host":
+		for sp in my_seats:
+			if afk.has(sp):
+				_afk_set(sp, false)
+	elif online == "guest" and my_afk:
+		my_afk = false
+		net.send_to(host_peer, {"t": "back"})
+
+
+## 모든 조작을 본다 (버튼·카드에 먹히는 것까지): 조작 중임을 알리고, 자리 비움이면 돌아온다
+func _input(event: InputEvent) -> void:
+	if online == "" or state != "play" or m == null:
+		return
+	var press: bool = (event is InputEventMouseButton and event.pressed) or (event is InputEventScreenTouch and event.pressed) \
+		or (event is InputEventKey and event.pressed and not event.echo) or event is InputEventScreenDrag \
+		or (event is InputEventMouseMotion and (event as InputEventMouseMotion).button_mask != 0)
+	if not press:
+		return
+	if my_afk:
+		_afk_come_back()
+		get_viewport().set_input_as_handled()
+		return
+	if online == "host":
+		for sp in my_seats:
+			_afk_touch(sp)
+	elif online == "guest":
+		var now := Time.get_ticks_msec()
+		if now - afk_touch_ms > 2000:
+			afk_touch_ms = now
+			net.send_to(host_peer, {"t": "touch"})

@@ -68,6 +68,15 @@ class FakeNet:
 	func detail() -> Array:
 		return ["", 1, 0]
 
+	func js_ver() -> int:
+		return 99
+
+	func errcode() -> String:
+		return ""
+
+	func how(_p: String) -> String:
+		return "direct"
+
 
 var host
 var guest
@@ -80,6 +89,10 @@ var drop_mode := ""          # "draft": 손님이 첫 개조 중에 끊긴다 ·
 var dropped := false
 var drop_frame := -1
 var rejoined := false
+var afk_mode := false        # 손님이 2바퀴부터 손을 놓는다
+var afk_seen := false        # 방장이 자리 비움으로 바꿨나
+var afk_back := false        # 손님이 돌아왔나
+var afk_frame := -1
 
 
 func _initialize() -> void:
@@ -180,6 +193,8 @@ func _process(_delta: float) -> bool:
 		for a in OS.get_cmdline_user_args():
 			if a == "drop" or a == "rejoin":
 				drop_mode = a
+			if a == "afk":
+				afk_mode = true
 	if drop_mode != "" and started and not dropped and host.state == "play" and host.m != null and host.m.phase == "draft" and host.m.round_no >= 2:
 		_drop_guest()
 	if drop_mode == "rejoin" and dropped and not rejoined and frames > drop_frame + 40:
@@ -204,12 +219,27 @@ func _process(_delta: float) -> bool:
 			for g in [host, guest]:
 				if g == guest and dropped and not rejoined:
 					continue
-				_drive(g)
+				var idle: bool = g == guest and afk_mode and not afk_back and g.m != null and g.m.round_no >= 2
+				if not idle:
+					_drive(g)
 				if g.state == "play":
 					if g.catchup:
 						g._catch_up()
 					else:
 						g._update_play(0.05)
+	if afk_mode and started and not afk_seen and not host.afk.is_empty():
+		afk_seen = true
+		afk_frame = frames
+	if afk_mode and afk_seen and frames == afk_frame + 5 and not guest.my_afk:
+		print("NET AFK FAIL: guest did not get afk notice")
+		quit(1)
+	if afk_mode and afk_seen and not afk_back and frames > afk_frame + 300:
+		afk_back = true
+		guest._afk_come_back()
+	if afk_mode and afk_back and frames == afk_frame + 340:
+		if not host.afk.is_empty() or guest.my_afk or host.m.players[1].cpu:
+			print("NET AFK FAIL: did not come back afk=%s my_afk=%s cpu=%s" % [host.afk, guest.my_afk, host.m.players[1].cpu])
+			quit(1)
 	if started and frames == 200 and host.state == "play" and not dropped:
 		guest._send_chat("경기 중 채팅")
 	if started and frames == 210 and host.state == "play" and not dropped:
@@ -228,6 +258,9 @@ func _process(_delta: float) -> bool:
 		if stale_hint > 0:
 			print("  '골랐어요' 안내가 쏘는 차례에도 남아 있음: %d프레임" % stale_hint)
 			ok = false
+		if afk_mode:
+			print("  afk seen=%s back=%s" % [afk_seen, afk_back])
+			ok = ok and afk_seen and afk_back
 		if drop_mode == "rejoin":
 			print("  rejoined=%s" % rejoined)
 			ok = ok and rejoined
