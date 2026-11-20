@@ -234,7 +234,7 @@ func _ready() -> void:
 	_layout()
 	_load_profile()
 	_ensure_room_arrays()
-	if net.available and net.js_ver() < 6:
+	if net.available and net.js_ver() < 7:
 		_banner.call_deferred("새 버전이 나왔어요 · 새로고침해 주세요", HINT_GOLD, "PC: Ctrl+Shift+R · 휴대폰: 닫았다가 링크 다시 열기")
 	var args0 := OS.get_cmdline_user_args()
 	var room: String = net.room_param() if net.available else ""
@@ -4231,8 +4231,9 @@ func _guest_msg(from: String, d: Dictionary) -> void:
 				_banner("방장과 다시 연결하는 중…", HINT_GOLD, "%d번째 시도" % guest_retry)
 				net.join(net.code())
 				return
+			var lost_code := _diag_code()
 			_leave_online()
-			_banner("방장과 연결이 끊겼어요")
+			_banner("방장과 연결이 끊겼어요", TEXT, "진단 코드: " + lost_code)
 
 
 func _show_guest_lobby() -> void:
@@ -11781,7 +11782,33 @@ var guest_detail_label: Label = null
 
 
 ## 연결 단계 글 (매 프레임): 「1단계 · 연결 서버 접속 중 (2/3번째 시도 · 14초)」
+## 진단 코드: 연결하며 실패한 단계 + 지금 상태. 친구가 이걸 알려 주면 무엇이 문제인지 알 수 있다.
+##  E10 직접연결 라이브러리 없음 · E11 중계 라이브러리 없음 · E20 연결서버 못 닿음 · E21xx 연결서버 오류
+##  E30 방장과 직접연결 실패 · E40 방 없음 · E50/E51 중계서버 못 닿음 · E55/E56 중계는 됐는데 방장 무응답
+##  E60 연결됐는데 방장이 자리를 안 줌 · E61 방 꽉 참 · E70 옛 파일 · E80 끊김 · E81 30초 무응답 · E82 중계 끊김
+func _diag_code() -> String:
+	var parts: Array = []
+	var tr: String = net.errcode()
+	if tr != "":
+		parts.append(tr)
+	var st: String = net.status()
+	var d: Array = net.detail()
+	if guest_lobby.has("full"):
+		parts.append("E61")
+	elif st == "joined" and not guest_lobby.has("seats") and int(d[2]) >= 15:
+		parts.append("E60")
+	if net.available and net.js_ver() < 7:
+		parts.append("E70")
+	var c := "-".join(parts) if not parts.is_empty() else "OK"
+	return "%s · %s · %s · %d초 · v%d" % [c, st, str(d[0]) if str(d[0]) != "" else "-", int(d[2]), net.js_ver()]
+
+
+var guest_code_label: Label = null
+
+
 func _update_join_detail() -> void:
+	if is_instance_valid(guest_code_label):
+		guest_code_label.text = "진단 코드: " + _diag_code()
 	if not is_instance_valid(guest_detail_label):
 		return
 	var d: Array = net.detail()
@@ -11820,7 +11847,7 @@ func _wk_guest_wait(root: Control) -> void:
 		col_t = Color("FF8A7A")
 	elif st == "joined":
 		msg = "방장에게 자리를 받는 중…"
-	if net.available and net.js_ver() < 6:
+	if net.available and net.js_ver() < 7:
 		msg = "새 버전이 나왔어요 · 새로고침해 주세요"
 		sub = "이 브라우저에 예전 파일이 남아 있어요. PC는 Ctrl+Shift+R, 휴대폰은 페이지를 닫았다가 링크를 다시 열어 주세요."
 		col_t = Color("FFE08A")
@@ -11836,6 +11863,10 @@ func _wk_guest_wait(root: Control) -> void:
 		l3.set_meta("join_detail", true)
 		col.add_child(l3)
 		guest_detail_label = l3
+	var lc := _label("진단 코드: " + _diag_code(), 16, Color("E8D9B8"), 2)
+	lc.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	col.add_child(lc)
+	guest_code_label = lc
 	var row := HBoxContainer.new()
 	row.alignment = BoxContainer.ALIGNMENT_CENTER
 	row.add_theme_constant_override("separation", 14)
@@ -11844,6 +11875,11 @@ func _wk_guest_wait(root: Control) -> void:
 		_show_home(), 18)
 	leave.custom_minimum_size = Vector2(160, 64)
 	row.add_child(leave)
+	var cp := _wk_steel("코드 복사", func():
+		net.copy("알까기 진단 코드: " + _diag_code())
+		_banner("진단 코드를 복사했어요", HINT_GOLD, "방장에게 보내 주세요"), 16)
+	cp.custom_minimum_size = Vector2(130, 64)
+	row.add_child(cp)
 	if guest_lobby.has("full") or st == "error":
 		var again := _wk_brass("다시 들어가기", func(): _join_room(net.code()), 22)
 		again.custom_minimum_size = Vector2(220, 64)

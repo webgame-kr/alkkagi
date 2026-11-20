@@ -19,8 +19,15 @@
   var TOPIC = "alkkagi-v1/";
   function rid() { return Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 6); }
   var net = {
-    ver: 6,
+    ver: 7,
     relays: [],       // 연결된 중계 클라이언트
+    trail: [],        // 진단 코드: 연결하며 실패한 단계들 (예: E30-E50)
+
+    _fail: function (c) {
+      if (net.trail[net.trail.length - 1] !== c) net.trail.push(c);
+      if (net.trail.length > 8) net.trail.shift();
+    },
+    errcode: function () { return net.trail.join("-"); },
     peer: null,
     conns: {},        // peerId -> DataConnection
     inbox: [],
@@ -39,6 +46,7 @@
       if (conn._gone) return;
       conn._gone = true;
       if (net.conns[conn.peer] === conn) delete net.conns[conn.peer];
+      if (net.status === "joined") net._fail(conn._timeout ? "E81" : (conn.relay ? "E82" : "E80"));
       delete net.seen[conn.peer];
       net._push(conn.peer, { t: "_left" });
     },
@@ -67,7 +75,7 @@
         try { c.send('{"t":"_ping"}'); } catch (e) {}
         var last = net.seen[k] || now;
         if (!net.seen[k]) net.seen[k] = now;
-        if (now - last > 30000) { try { c.close(); } catch (e) {} net._gone(c); }
+        if (now - last > 30000) { c._timeout = true; try { c.close(); } catch (e) {} net._gone(c); }
       }
     },
 
@@ -195,8 +203,11 @@
     _relayJoin: function (code, bi) {
       bi = bi || 0;
       if (bi >= BROKERS.length) {
+        if (typeof mqtt === "undefined") net._fail("E11");
         net.status = "error";
-        net.error = "방장 기기와 연결이 안 되고 중계 서버에도 닿지 못했어요 (와이파이를 바꾸거나 휴대폰 핫스팟으로 해 보세요)";
+        net.error = net.trail.indexOf("E55") >= 0 || net.trail.indexOf("E56") >= 0
+          ? "방장이 응답하지 않아요 (방장 화면이 켜져 있는지, 방이 아직 열려 있는지 확인해 주세요)"
+          : "방장 기기와 연결이 안 되고 중계 서버에도 닿지 못했어요 (와이파이를 바꾸거나 휴대폰 핫스팟으로 해 보세요)";
         return;
       }
       net.status = "joining";
@@ -217,6 +228,7 @@
           if (welcomed || net._joinToken !== token) return;
           try { cli.end(true); } catch (e) {}
           net.relays = net.relays.filter(function (x) { return x !== cli; });
+          net._fail("E" + (55 + bi));   // 중계 서버엔 닿았는데 방장이 답이 없음
           net._relayJoin(code, bi + 1);
         }, 9000);
         cli.on("message", function (topic, payload) {
@@ -240,6 +252,7 @@
         });
       }, function () {
         if (net._joinToken !== token) return;
+        net._fail("E" + (50 + bi));     // 중계 서버에 닿지 못함
         net._relayJoin(code, bi + 1);
       });
     },
@@ -248,8 +261,9 @@
       tryNo = tryNo || 1;
       net.close();
       net.code = code;
-      if (tryNo === 1) net.t0 = Date.now();
+      if (tryNo === 1) { net.t0 = Date.now(); if (code !== net._lastCode) net.trail = []; net._lastCode = code; }
       // 직접 연결 라이브러리가 없거나 주소에 relay=1 이 있으면 바로 중계로
+      if (typeof Peer === "undefined") net._fail("E10");
       if (typeof Peer === "undefined" || /[?&]relay=1/.test(location.search)) { net._relayJoin(code, 0); return; }
       net.status = "joining";
       net.tryNo = tryNo;
@@ -261,6 +275,7 @@
       clearTimeout(net._timer);
       net._timer = setTimeout(function () {
         if (net.peer !== mine || net.status !== "joining") return;
+        net._fail(net.stage === "signal" ? "E20" : "E30");
         if (tryNo < JOIN_TRIES) { net.join(code, tryNo + 1); return; }
         try { mine.destroy(); } catch (e) {}
         net.peer = null;
@@ -281,11 +296,13 @@
         if (net.peer !== mine) return;
         clearTimeout(net._timer);
         if (e && e.type === "peer-unavailable") {
+          net._fail("E40");
           net.status = "error";
           net.error = "방을 찾을 수 없어요 (호스트가 닫았거나 코드가 틀려요)";
           return;
         }
         // 연결 서버가 막혀 있거나 다른 문제: 중계로 들어가 본다
+        net._fail("E21" + String(e && e.type || "x").replace(/[^a-z]/gi, "").slice(0, 10));
         try { mine.destroy(); } catch (e2) {}
         net.peer = null;
         net._relayJoin(code, 0);
@@ -353,4 +370,45 @@
     if (net.status === "hosting") net.broadcast(JSON.stringify({ t: "_away", on: document.hidden }));
   });
   window.AlkNet = net;
+
+  // ── 게임 로딩 진단: 로딩이 안 끝나거나 실패하면 화면에 코드를 띄운다 ──
+  var loadErr = "";
+  window.addEventListener("error", function (e) {
+    if (!loadErr) loadErr = String((e && (e.message || (e.target && (e.target.src || e.target.href)))) || "?").slice(0, 80);
+  }, true);
+  window.addEventListener("unhandledrejection", function (e) {
+    if (!loadErr) loadErr = String((e && e.reason && (e.reason.message || e.reason)) || "?").slice(0, 80);
+  });
+  function loadCode(notice) {
+    var c = [];
+    if (notice) { c.push("L8"); if (!loadErr) loadErr = notice.slice(0, 80); }
+    var gl = false;
+    try { gl = !!document.createElement("canvas").getContext("webgl2"); } catch (e) {}
+    if (!gl) c.push("L2");
+    if (typeof WebAssembly === "undefined") c.push("L3");
+    if (navigator.onLine === false) c.push("L5");
+    if (typeof Peer === "undefined") c.push("L6");
+    if (typeof mqtt === "undefined") c.push("L7");
+    if (loadErr) c.push("L4");
+    if (!c.length) c.push("L1");   // 그냥 느림 (네트워크가 느리거나 파일을 받는 중)
+    return c.join("-") + " · v" + net.ver + (loadErr ? " · " + loadErr : "");
+  }
+  net.loadCode = loadCode;
+  var t0 = Date.now();
+  var shown = false;
+  var watch = setInterval(function () {
+    var st = document.getElementById("status");
+    if (!st) return;
+    var hidden = st.style.display === "none" || st.style.visibility === "hidden" || getComputedStyle(st).display === "none";
+    if (hidden) { clearInterval(watch); return; }
+    var notice = document.getElementById("status-notice");
+    var failed = notice && notice.textContent.trim() !== "" && getComputedStyle(notice).display !== "none";
+    if (shown || (!failed && Date.now() - t0 < 40000)) return;
+    shown = true;
+    var box = document.createElement("div");
+    box.id = "alk-loadcode";
+    box.style.cssText = "position:fixed;left:50%;bottom:24px;transform:translateX(-50%);max-width:92vw;background:#1c1a17;color:#ffe08a;font:600 15px/1.5 sans-serif;padding:12px 16px;border-radius:10px;border:1px solid #6b5a3a;z-index:99;text-align:center;user-select:text";
+    box.textContent = (failed ? "게임을 불러오지 못했어요" : "로딩이 너무 오래 걸려요") + " · 오류 코드: " + loadCode(failed ? notice.textContent.trim() : "") + " · 새로고침(Ctrl+Shift+R)해 보고, 안 되면 이 코드를 알려 주세요";
+    document.body.appendChild(box);
+  }, 2000);
 })();

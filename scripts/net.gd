@@ -55,6 +55,11 @@ func how(peer: String) -> String:
 	return str(_js.how(peer)) if has_fn("how") else ""
 
 
+## 진단 코드 (연결하며 실패한 단계들)
+func errcode() -> String:
+	return str(_js.errcode()) if has_fn("errcode") else ""
+
+
 func code() -> String:
 	return str(_js.code) if available else ""
 
