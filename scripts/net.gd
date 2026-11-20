@@ -50,6 +50,11 @@ func quiet(peer: String) -> int:
 	return int(_js.quiet(peer)) if has_fn("quiet") else -1
 
 
+## 그 친구와 어떻게 이어졌나: "relay" | "direct" | ""
+func how(peer: String) -> String:
+	return str(_js.how(peer)) if has_fn("how") else ""
+
+
 func code() -> String:
 	return str(_js.code) if available else ""
 

@@ -234,7 +234,7 @@ func _ready() -> void:
 	_layout()
 	_load_profile()
 	_ensure_room_arrays()
-	if net.available and net.js_ver() < 5:
+	if net.available and net.js_ver() < 6:
 		_banner.call_deferred("새 버전이 나왔어요 · 새로고침해 주세요", HINT_GOLD, "PC: Ctrl+Shift+R · 휴대폰: 닫았다가 링크 다시 열기")
 	var args0 := OS.get_cmdline_user_args()
 	var room: String = net.room_param() if net.available else ""
@@ -11785,8 +11785,8 @@ func _update_join_detail() -> void:
 	if not is_instance_valid(guest_detail_label):
 		return
 	var d: Array = net.detail()
-	var stage_txt := "1단계 · 연결 서버에 접속 중" if d[0] == "signal" else ("2단계 · 방장 기기와 연결 중" if d[0] == "connect" else "준비 중")
-	guest_detail_label.text = "%s  (%d/3번째 시도 · %d초)" % [stage_txt, int(d[1]), int(d[2])]
+	var stage_txt := "1단계 · 연결 서버에 접속 중" if d[0] == "signal" else ("2단계 · 방장 기기와 직접 연결 중" if d[0] == "connect" else ("3단계 · 직접 연결이 안 돼서 중계 서버로 연결 중" if d[0] == "relay" else "준비 중"))
+	guest_detail_label.text = "%s  (%d초)" % [stage_txt, int(d[2])]
 
 
 ## 손님이 아직 자리를 받지 못했을 때: 연결 중 · 연결 실패 · 방이 꽉 참
@@ -11820,7 +11820,7 @@ func _wk_guest_wait(root: Control) -> void:
 		col_t = Color("FF8A7A")
 	elif st == "joined":
 		msg = "방장에게 자리를 받는 중…"
-	if net.available and net.js_ver() < 5:
+	if net.available and net.js_ver() < 6:
 		msg = "새 버전이 나왔어요 · 새로고침해 주세요"
 		sub = "이 브라우저에 예전 파일이 남아 있어요. PC는 Ctrl+Shift+R, 휴대폰은 페이지를 닫았다가 링크를 다시 열어 주세요."
 		col_t = Color("FFE08A")
